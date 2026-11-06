@@ -7,7 +7,7 @@
 # --arch     defaults to this machine's. aarch64 is the Steam Frame's: its AppImage starts in VR
 #            with `--gl-vr`; the x86_64 one starts the flat-screen menu (packaging/linux/AppRun).
 # --binary   the release build to package (default target[/aarch64-unknown-linux-gnu]/release/
-#            lasertag, under $CARGO_TARGET_DIR if set). It must be built without the `dev`
+#            neon-lasertag, under $CARGO_TARGET_DIR if set). It must be built without the `dev`
 #            feature (no libbevy_dylib).
 # --build    build it first: `cargo build --release --no-default-features --features glvr`,
 #            cross-compiled for aarch64 on an x86-64 PC like tools/frame.sh.
@@ -49,8 +49,8 @@ version=${version//\//-}
 cross=0
 if [ "$arch" != "$host" ]; then cross=1; fi
 if [ -z "$binary" ]; then
-    binary=${CARGO_TARGET_DIR:-target}/release/lasertag
-    if [ $cross = 1 ]; then binary=${CARGO_TARGET_DIR:-target}/$arch-unknown-linux-gnu/release/lasertag; fi
+    binary=${CARGO_TARGET_DIR:-target}/release/neon-lasertag
+    if [ $cross = 1 ]; then binary=${CARGO_TARGET_DIR:-target}/$arch-unknown-linux-gnu/release/neon-lasertag; fi
 fi
 
 if [ $build = 1 ]; then
@@ -67,9 +67,9 @@ if [ $build = 1 ]; then
         export CFLAGS_aarch64_unknown_linux_gnu="--sysroot=$SR" CXXFLAGS_aarch64_unknown_linux_gnu="--sysroot=$SR"
         export PKG_CONFIG_ALLOW_CROSS=1 PKG_CONFIG_SYSROOT_DIR=$SR
         export PKG_CONFIG_LIBDIR=$SR/usr/lib/aarch64-linux-gnu/pkgconfig:$SR/usr/share/pkgconfig
-        cargo build --release --target "$arch-unknown-linux-gnu" -p lasertag --no-default-features --features glvr
+        cargo build --release --target "$arch-unknown-linux-gnu" -p neon-lasertag --no-default-features --features glvr
     else
-        cargo build --release -p lasertag --no-default-features --features glvr
+        cargo build --release -p neon-lasertag --no-default-features --features glvr
     fi
 fi
 [ -x "$binary" ] || { echo "no build at $binary (build it, or pass --build or --binary)" >&2; exit 1; }
@@ -104,7 +104,7 @@ mkdir -p "$app/usr/bin" "$app/usr/share/lasertag" "$app/usr/share/applications" 
     "$app/usr/share/icons/hicolor/256x256/apps" "$app/usr/share/doc/lasertag"
 strip=strip
 if [ $cross = 1 ]; then strip=aarch64-linux-gnu-strip; fi
-$strip -o "$app/usr/bin/lasertag" "$binary"
+$strip -o "$app/usr/bin/neon-lasertag" "$binary"
 cp -L "$loader" "$app/usr/bin/libopenxr_loader.so"
 if [ -e "$loader_license" ]; then cp "$loader_license" "$app/usr/share/doc/lasertag/"; fi
 cp README.md "$app/usr/share/doc/lasertag/"

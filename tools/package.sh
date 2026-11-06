@@ -63,8 +63,8 @@ case $what in
         name=lasertag-$version-$target
         d=$stage/$name
         mkdir -p "$d"
-        cp "$bin/lasertag$ext" "$d/"
-        strip_ "$d/lasertag$ext"
+        cp "$bin/neon-lasertag$ext" "$d/"
+        strip_ "$d/neon-lasertag$ext"
         cp -r assets "$d/"
         cp README.md "$d/"
         if [ -n "$loader" ]; then

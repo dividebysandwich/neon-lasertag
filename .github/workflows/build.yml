@@ -26,10 +26,10 @@ jobs:
         include:
           # glvr: OpenXR, plus our own OpenGL headset renderer (`--gl-vr`, Linux only).
           - os: ubuntu-24.04
-            features: --features lasertag/glvr
+            features: --features neon-lasertag/glvr
           # bevy_mod_openxr links the OpenXR loader statically on Windows.
           - os: windows-latest
-            features: --features lasertag/xr
+            features: --features neon-lasertag/xr
           # No OpenXR on macOS (no runtime; bevy_mod_openxr doesn't build there).
           - os: macos-latest
             features: ""
@@ -110,8 +110,8 @@ jobs:
       - name: Build
         shell: bash
         run: |
-          cargo build --release --target ${{ matrix.target }} -p lasertag --no-default-features \
-            ${{ matrix.features && format('--features lasertag/{0}', matrix.features) || '' }}
+          cargo build --release --target ${{ matrix.target }} -p neon-lasertag --no-default-features \
+            ${{ matrix.features && format('--features neon-lasertag/{0}', matrix.features) || '' }}
 
       - name: Package
         id: package
@@ -126,7 +126,7 @@ jobs:
       - name: Package (AppImage)
         if: runner.os == 'Linux'
         run: |
-          tools/appimage.sh --binary target/${{ matrix.target }}/release/lasertag --loader openxr \
+          tools/appimage.sh --binary target/${{ matrix.target }}/release/neon-lasertag --loader openxr \
             --version "${GITHUB_REF_NAME//\//-}"
           ls -l dist
 

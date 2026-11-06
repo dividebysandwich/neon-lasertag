@@ -32,7 +32,7 @@ HOST=${FRAME_HOST:-frame}
 DIR=lasertag-dev
 TARGET=aarch64-unknown-linux-gnu
 SR=${LT_SYSROOT:-$PWD/target/sysroot-arm64}
-BIN=target/$TARGET/release/lasertag
+BIN=target/$TARGET/release/neon-lasertag
 
 build=1 launch=1 secs="" detach=0
 envs=() args=()
@@ -52,7 +52,7 @@ done
 [ ${#args[@]} -eq 0 ] && args=(--gl-vr)
 
 remote() { ssh -o BatchMode=yes "$HOST" "$@"; }
-stop_game() { remote 'pkill -INT -x lasertag; sleep 2; pkill -KILL -x lasertag' || true; }
+stop_game() { remote 'pkill -INT -x neon-lasertag; sleep 2; pkill -KILL -x neon-lasertag' || true; }
 
 if [ "${stop:-0}" = 1 ]; then
     stop_game
@@ -70,7 +70,7 @@ if [ $build = 1 ]; then
     export CFLAGS_aarch64_unknown_linux_gnu="--sysroot=$SR" CXXFLAGS_aarch64_unknown_linux_gnu="--sysroot=$SR"
     export PKG_CONFIG_ALLOW_CROSS=1 PKG_CONFIG_SYSROOT_DIR=$SR
     export PKG_CONFIG_LIBDIR=$SR/usr/lib/aarch64-linux-gnu/pkgconfig:$SR/usr/share/pkgconfig
-    cargo build --release --target $TARGET -p lasertag --no-default-features --features ${FRAME_FEATURES:-glvr}
+    cargo build --release --target $TARGET -p neon-lasertag --no-default-features --features ${FRAME_FEATURES:-glvr}
     # The Frame gets a stripped copy; the unstripped one stays here for backtraces.
     aarch64-linux-gnu-strip -o "$BIN.stripped" "$BIN"
 fi
@@ -85,14 +85,14 @@ remote "mkdir -p $DIR && cd $DIR && if [ ! -e libopenxr_loader.so ]; then
     fi
 fi"
 rsync -az --delete --exclude '*.blend*' assets "$HOST:$DIR/"
-rsync -az "$BIN.stripped" "$HOST:$DIR/lasertag"
+rsync -az "$BIN.stripped" "$HOST:$DIR/neon-lasertag"
 [ $launch = 1 ] || exit 0
 
 # The game runs in the Frame's gamescope session, detached from this ssh connection.
 log=run-$(date +%Y%m%d-%H%M%S).log
 limit=${secs:+timeout -s INT -k 10 $secs}
 remote "cd $DIR && DISPLAY=:0 XDG_RUNTIME_DIR=/run/user/\$(id -u) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/\$(id -u)/bus \
-    BEVY_ASSET_ROOT=\$PWD ${envs[*]} setsid nohup $limit ./lasertag ${args[*]} > $log 2>&1 < /dev/null &"
+    BEVY_ASSET_ROOT=\$PWD ${envs[*]} setsid nohup $limit ./neon-lasertag ${args[*]} > $log 2>&1 < /dev/null &"
 echo "launched: ${envs[*]} ${args[*]} (log $DIR/$log)"
 if [ $detach = 1 ]; then
     exit 0
@@ -112,5 +112,5 @@ finish() {
 }
 trap finish INT TERM
 # Follow the log until the game exits (or Ctrl-C).
-remote "cd $DIR && tail -n +1 --pid=\$(pgrep -nx lasertag || echo 1) -f $log" || true
+remote "cd $DIR && tail -n +1 --pid=\$(pgrep -nx neon-lasertag || echo 1) -f $log" || true
 finish

@@ -1,7 +1,7 @@
 //! Neon lasertag: Red vs Blue in procedurally built arenas, in VR or on a flat screen.
 //!
 //! ```text
-//! lasertag [--vr | --gl-vr | --flat] [--seed N] [--bots N] [--name NAME]
+//! neon-lasertag [--vr | --gl-vr | --flat] [--seed N] [--bots N] [--name NAME]
 //!          [--host [PORT]] [--connect HOST[:PORT]] [--autopilot]
 //!          [--difficulty easy|normal|hard] [--arena small|medium|large|random]
 //!          [--mode classic|megatarget]

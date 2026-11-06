@@ -25,7 +25,7 @@ done
 if [ ! -t 2 ]; then
     logdir="${XDG_STATE_HOME:-$HOME/.local/state}/lasertag"
     if mkdir -p "$logdir" 2> /dev/null; then
-        NO_COLOR=1 exec "$HERE/usr/bin/lasertag" "${args[@]}" > "$logdir/lasertag.log" 2>&1
+        NO_COLOR=1 exec "$HERE/usr/bin/neon-lasertag" "${args[@]}" > "$logdir/lasertag.log" 2>&1
     fi
 fi
-exec "$HERE/usr/bin/lasertag" "${args[@]}"
+exec "$HERE/usr/bin/neon-lasertag" "${args[@]}"
