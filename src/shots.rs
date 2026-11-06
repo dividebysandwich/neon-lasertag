@@ -374,7 +374,8 @@ mod tests {
         let world = sim.level.world();
         let nav = &sim.level.nav;
         let open: Vec<Vec3> = (0..nav.pos.len())
-            .filter(|&i| nav.valid[i])
+            // (Off the spawn pads: the enemy's tag out.)
+            .filter(|&i| nav.valid[i] && sim.level.spawn_at(nav.pos[i]).is_none())
             .map(|i| nav.pos[i])
             .collect();
         let (p, q) = open
