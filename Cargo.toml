@@ -51,6 +51,8 @@ openxr = { version = "0.21", optional = true }
 glow = { version = "0.18", optional = true }
 khronos-egl = { version = "6", features = ["dynamic"], optional = true }
 libloading = { version = "0.8", optional = true }
+ttf-parser = "0.25"
+lyon_tessellation = "1.0.23"
 
 [patch.crates-io]
 # bevy_mod_openxr 0.6.0 from stealth-mission-89: skips frames the runtime refuses

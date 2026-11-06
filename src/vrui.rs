@@ -28,6 +28,7 @@ use crate::materials::{AccentMaterial, GlowMaterial, NeonUniform, Palette, team_
 use crate::menu::{InternetList, MenuAct, MenuModel, Outcome, Screen};
 use crate::segtext::{self, Align};
 use crate::session::{Session, SessionCmd};
+use crate::vfont;
 use crate::vr::{PoseSet, Rumble, VrState, XrInput};
 
 /// Distance of the panels from the eyes.
@@ -141,13 +142,11 @@ struct UiMats {
     dim: Handle<AccentMaterial>,
     /// The awards' titles.
     gold: Handle<AccentMaterial>,
-    frame: Handle<AccentMaterial>,
     laser: Handle<AccentMaterial>,
     laser_hot: Handle<AccentMaterial>,
     /// Text in team colours (red, blue, white).
     team: [Handle<AccentMaterial>; 3],
     glow: [Handle<GlowMaterial>; 3],
-    hover: Handle<GlowMaterial>,
     /// One's own row (red, blue, white).
     mine: [Handle<GlowMaterial>; 3],
     back: Handle<StandardMaterial>,
@@ -155,6 +154,54 @@ struct UiMats {
     /// A unit cube (strips, lasers) and a unit square of even glow.
     cube: Handle<Mesh>,
     fill: Handle<Mesh>,
+    /// The flat screen's neon colours (src/neonui.rs), by `Hue`.
+    tints: Vec<Tint>,
+}
+
+/// The flat screen's neon colours, for the panels to match its menus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Hue {
+    Cyan,
+    Magenta,
+    Violet,
+    Pink,
+    Amber,
+    Green,
+}
+
+impl Hue {
+    const ALL: [Hue; 6] = [
+        Hue::Cyan,
+        Hue::Magenta,
+        Hue::Violet,
+        Hue::Pink,
+        Hue::Amber,
+        Hue::Green,
+    ];
+
+    fn color(self) -> Vec3 {
+        let c = match self {
+            Hue::Cyan => crate::neonui::CYAN,
+            Hue::Magenta => crate::neonui::MAGENTA,
+            Hue::Violet => crate::neonui::VIOLET,
+            Hue::Pink => crate::neonui::PINK,
+            Hue::Amber => crate::neonui::AMBER,
+            Hue::Green => crate::neonui::GREEN,
+        };
+        let l = c.to_linear();
+        Vec3::new(l.red, l.green, l.blue)
+    }
+}
+
+/// A colour's materials: lines and text, and fills (a button as it is, pointed at, chosen)
+/// and a soft glow around a panel.
+struct Tint {
+    line: Handle<AccentMaterial>,
+    text: Handle<AccentMaterial>,
+    idle: Handle<GlowMaterial>,
+    hot: Handle<GlowMaterial>,
+    chosen: Handle<GlowMaterial>,
+    aura: Handle<GlowMaterial>,
 }
 
 fn make_mats(
@@ -174,7 +221,6 @@ fn make_mats(
             neon: NeonUniform::fixed(c, i),
         })
     };
-    let purple = Vec3::new(0.5, 0.15, 1.0);
     let teams = [Some(Team::Red), Some(Team::Blue), None];
     // A square glowing evenly (uv.y sets a halo's strength).
     let mut fill = MeshData::default();
@@ -186,14 +232,12 @@ fn make_mats(
     fill.idx.extend([0, 1, 2, 0, 2, 3]);
     let mats = UiMats {
         white: fixed(&mut accents, Vec3::ONE, 3.0),
-        dim: fixed(&mut accents, Vec3::new(0.6, 0.62, 0.75), 1.2),
+        dim: fixed(&mut accents, Vec3::new(0.4, 0.44, 0.75), 2.0),
         gold: fixed(&mut accents, Vec3::new(1.0, 0.75, 0.2), 3.0),
-        frame: fixed(&mut accents, purple, 2.5),
         laser: fixed(&mut accents, Vec3::new(0.7, 0.8, 1.0), 1.5),
         laser_hot: fixed(&mut accents, Vec3::new(1.0, 0.85, 0.3), 4.0),
         team: teams.map(|t| fixed(&mut accents, team_color(t), 3.5)),
         glow: teams.map(|t| glow(&mut glows, team_color(t), 1.5)),
-        hover: glow(&mut glows, Vec3::new(1.0, 0.8, 0.3), 1.6),
         mine: teams.map(|t| glow(&mut glows, team_color(t), 2.0)),
         back: std.add(StandardMaterial {
             base_color: Color::linear_rgb(0.004, 0.004, 0.012),
@@ -206,6 +250,20 @@ fn make_mats(
             .collect(),
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         fill: meshes.add(fill.to_mesh()),
+        tints: Hue::ALL
+            .iter()
+            .map(|h| {
+                let c = h.color();
+                Tint {
+                    line: fixed(&mut accents, c, 2.6),
+                    text: fixed(&mut accents, c, 3.2),
+                    idle: glow(&mut glows, c, 0.3),
+                    hot: glow(&mut glows, c, 1.8),
+                    chosen: glow(&mut glows, c, 2.6),
+                    aura: glow(&mut glows, c, 0.9),
+                }
+            })
+            .collect(),
     };
     commands.insert_resource(mats);
 }
@@ -218,7 +276,36 @@ struct Builder<'a, 'w, 's> {
     root: Entity,
 }
 
+/// A rectangle glowing softly, strongest inside, fading out over `feather` past `size`.
+fn soft_rect(size: Vec2, feather: f32) -> MeshData {
+    let mut m = MeshData::default();
+    let (i, o) = (size / 2.0, size / 2.0 + Vec2::splat(feather));
+    for (h, v) in [(i, 0.0), (o, 1.0)] {
+        for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+            m.pos.push([x * h.x, y * h.y, 0.0]);
+            m.nrm.push([0.0, 0.0, 1.0]);
+            m.uv.push([0.0, v]);
+        }
+    }
+    m.idx.extend([0, 1, 2, 0, 2, 3]);
+    for k in 0..4u32 {
+        let n = (k + 1) % 4;
+        m.idx.extend([k, 4 + k, 4 + n, k, 4 + n, n]);
+    }
+    m
+}
+
+/// Text weights (as the flat screen's: src/neonui.rs).
+const TEXT: u16 = 600;
+const BOLD: u16 = 800;
+const BLACK: u16 = 900;
+
 impl Builder<'_, '_, '_> {
+    fn tint(&self, h: Hue) -> &Tint {
+        &self.mats.tints[h as usize]
+    }
+
+    /// Text in the neon font, its capitals `h` high, with a soft glow behind it if asked.
     fn text(
         &mut self,
         s: &str,
@@ -228,17 +315,55 @@ impl Builder<'_, '_, '_> {
         mat: &Handle<AccentMaterial>,
         glow: Option<&Handle<GlowMaterial>>,
     ) -> Entity {
-        segtext::spawn(
-            self.commands,
-            self.meshes,
-            self.root,
-            s,
-            h,
-            at.extend(0.004),
-            align,
-            mat,
-            glow,
-        )
+        self.text_w(s, h, TEXT, at, align, mat, glow)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn text_w(
+        &mut self,
+        s: &str,
+        h: f32,
+        weight: u16,
+        at: Vec2,
+        align: Align,
+        mat: &Handle<AccentMaterial>,
+        glow: Option<&Handle<GlowMaterial>>,
+    ) -> Entity {
+        let w = vfont::width(s, h, weight);
+        let x = match align {
+            Align::Left => 0.0,
+            Align::Center => -w / 2.0,
+            Align::Right => -w,
+        };
+        let root = self
+            .commands
+            .spawn((
+                Transform::from_translation(Vec3::new(at.x + x, at.y, 0.004)),
+                Visibility::default(),
+                ChildOf(self.root),
+            ))
+            .id();
+        let m = vfont::mesh(s, h, weight);
+        if !m.idx.is_empty() {
+            self.commands.spawn((
+                Mesh3d(self.meshes.add(m.to_mesh())),
+                MeshMaterial3d(mat.clone()),
+                Transform::IDENTITY,
+                ChildOf(root),
+            ));
+        }
+        if let Some(g) = glow {
+            self.commands.spawn((
+                Mesh3d(
+                    self.meshes
+                        .add(soft_rect(Vec2::new(w, h * 0.6), h).to_mesh()),
+                ),
+                MeshMaterial3d(g.clone()),
+                Transform::from_xyz(w / 2.0, 0.0, -0.002),
+                ChildOf(root),
+            ));
+        }
+        root
     }
 
     /// A strip from `a` to `b`.
@@ -283,27 +408,73 @@ impl Builder<'_, '_, '_> {
             .id()
     }
 
-    /// The dark backing and the frame.
-    fn backing(&mut self, size: Vec2) {
+    /// A soft glow around a rectangle (as the flat screen's box shadows).
+    fn aura(&mut self, c: Vec2, size: Vec2, feather: f32, mat: &Handle<GlowMaterial>, z: f32) {
+        self.commands.spawn((
+            Mesh3d(self.meshes.add(soft_rect(size, feather).to_mesh())),
+            MeshMaterial3d(mat.clone()),
+            Transform::from_translation(c.extend(z)),
+            ChildOf(self.root),
+        ));
+    }
+
+    /// The dark backing, framed and glowing in `hue`.
+    fn backing(&mut self, size: Vec2, hue: Hue) {
         self.commands.spawn((
             Mesh3d(self.meshes.add(Rectangle::new(size.x, size.y))),
             MeshMaterial3d(self.mats.back.clone()),
             Transform::from_xyz(0.0, 0.0, -0.004),
             ChildOf(self.root),
         ));
-        let frame = self.mats.frame.clone();
-        self.outline(Vec2::ZERO, size, 0.008, &frame);
+        let (line, aura) = (self.tint(hue).line.clone(), self.tint(hue).aura.clone());
+        self.aura(Vec2::ZERO, size, 0.07, &aura, -0.006);
+        self.outline(Vec2::ZERO, size, 0.005, &line);
     }
 
-    fn button(&mut self, label: &str, act: Act, c: Vec2, size: Vec2) -> Button {
-        let (white, frame, hover) = (
-            self.mats.white.clone(),
-            self.mats.frame.clone(),
-            self.mats.hover.clone(),
+    /// A title in pink, black weight, with a glowing line under it (as the flat screen's).
+    fn title(&mut self, s: &str, h: f32, y: f32) {
+        let pink = self.tint(Hue::Pink).text.clone();
+        let (line, aura) = (
+            self.tint(Hue::Pink).line.clone(),
+            self.tint(Hue::Pink).aura.clone(),
         );
-        self.outline(c, size, 0.006, &frame);
-        let hover = self.fill(c, size, &hover, false);
-        self.text(label, size.y * 0.42, c, Align::Center, &white, None);
+        self.text_w(s, h, BLACK, Vec2::new(0.0, y), Align::Center, &pink, None);
+        let w = vfont::width(s, h, BLACK);
+        let ly = y - h * 0.85;
+        self.strip(
+            Vec2::new(-w / 2.0, ly),
+            Vec2::new(w / 2.0, ly),
+            0.004,
+            &line,
+        );
+        self.aura(Vec2::new(0.0, ly), Vec2::new(w, 0.004), 0.025, &aura, 0.001);
+    }
+
+    /// A button in `hue`: a thin frame, a faint fill, brighter when pointed at, lit when it
+    /// shows the current choice.
+    fn button(
+        &mut self,
+        label: &str,
+        act: Act,
+        c: Vec2,
+        size: Vec2,
+        hue: Hue,
+        chosen: bool,
+    ) -> Button {
+        let t = self.tint(hue);
+        let (line, idle, hot, lit) = (
+            t.line.clone(),
+            t.idle.clone(),
+            t.hot.clone(),
+            t.chosen.clone(),
+        );
+        let white = self.mats.white.clone();
+        self.outline(c, size, 0.004, &line);
+        self.fill(c, size, if chosen { &lit } else { &idle }, true);
+        let hover = self.fill(c + Vec2::new(0.0, 0.0), size, &hot, false);
+        // As big as fits.
+        let h = (size.y * 0.36).min(size.x * 0.84 / vfont::width(label, 1.0, TEXT).max(0.01));
+        self.text_w(label, h, TEXT, c, Align::Center, &white, None);
         Button {
             act,
             center: c,
@@ -324,31 +495,25 @@ fn short(name: &str, n: usize) -> String {
 
 fn build_menu(b: &mut Builder, local: bool) -> Vec<Button> {
     let size = Vec2::new(0.8, if local { 0.88 } else { 0.72 });
-    b.backing(size);
-    let (white, glow) = (b.mats.white.clone(), b.mats.glow[2].clone());
+    b.backing(size, Hue::Magenta);
     let top = size.y / 2.0;
-    b.text(
-        "MENU",
-        0.07,
-        Vec2::new(0.0, top - 0.1),
-        Align::Center,
-        &white,
-        Some(&glow),
-    );
-    let mut acts = vec![("RESUME", Act::Resume)];
+    b.title("MENU", 0.06, top - 0.1);
+    let mut acts = vec![("RESUME", Act::Resume, Hue::Cyan)];
     if local {
-        acts.push(("NEW MATCH", Act::NewMatch));
+        acts.push(("NEW MATCH", Act::NewMatch, Hue::Amber));
     }
-    acts.push(("MAIN MENU", Act::Leave));
-    acts.push(("QUIT", Act::Quit));
+    acts.push(("MAIN MENU", Act::Leave, Hue::Magenta));
+    acts.push(("QUIT", Act::Quit, Hue::Pink));
     acts.iter()
         .enumerate()
-        .map(|(k, (label, act))| {
+        .map(|(k, (label, act, hue))| {
             b.button(
                 label,
                 act.clone(),
                 Vec2::new(0.0, top - 0.25 - k as f32 * 0.16),
                 Vec2::new(0.56, 0.12),
+                *hue,
+                false,
             )
         })
         .collect()
@@ -358,21 +523,16 @@ fn build_menu(b: &mut Builder, local: bool) -> Vec<Button> {
 fn button_row(
     b: &mut Builder,
     buttons: &mut Vec<Button>,
-    items: Vec<(String, Act, bool)>,
+    items: Vec<(String, Act, Hue, bool)>,
     y: f32,
     w: f32,
     h: f32,
 ) {
-    let lit = b.mats.mine[2].clone();
     let pitch = w + 0.02;
     let x0 = -(items.len() as f32 - 1.0) * pitch / 2.0;
-    for (k, (name, act, on)) in items.into_iter().enumerate() {
+    for (k, (name, act, hue, on)) in items.into_iter().enumerate() {
         let c = Vec2::new(x0 + k as f32 * pitch, y);
-        let sz = Vec2::new(w, h);
-        if on {
-            b.fill(c, sz, &lit, true);
-        }
-        buttons.push(b.button(&name, act, c, sz));
+        buttons.push(b.button(&name, act, c, Vec2::new(w, h), hue, on));
     }
 }
 
@@ -385,7 +545,7 @@ fn lobby_choices(b: &mut Builder, buttons: &mut Vec<Button>, m: &MenuModel, mut 
     let dim = b.mats.dim.clone();
     let white = b.mats.white.clone();
     let label = |b: &mut Builder, s: &str, y: f32| {
-        b.text(s, 0.026, Vec2::new(0.0, y), Align::Center, &dim, None);
+        b.text_w(s, 0.022, BOLD, Vec2::new(0.0, y), Align::Center, &dim, None);
     };
     label(b, "BOTS", y);
     y -= 0.07;
@@ -394,10 +554,13 @@ fn lobby_choices(b: &mut Builder, buttons: &mut Vec<Button>, m: &MenuModel, mut 
         menu(MenuAct::MoreBots(-1)),
         Vec2::new(-0.2, y),
         Vec2::new(0.12, 0.09),
+        Hue::Violet,
+        false,
     ));
-    b.text(
+    b.text_w(
         &m.bots.to_string(),
-        0.045,
+        0.04,
+        BOLD,
         Vec2::new(0.0, y),
         Align::Center,
         &white,
@@ -408,6 +571,8 @@ fn lobby_choices(b: &mut Builder, buttons: &mut Vec<Button>, m: &MenuModel, mut 
         menu(MenuAct::MoreBots(1)),
         Vec2::new(0.2, y),
         Vec2::new(0.12, 0.09),
+        Hue::Violet,
+        false,
     ));
     y -= 0.09;
     let item = |name: &str, a: MenuAct| (name.to_uppercase(), a.clone(), m.selected(&a));
@@ -418,7 +583,7 @@ fn lobby_choices(b: &mut Builder, buttons: &mut Vec<Button>, m: &MenuModel, mut 
         .collect::<Vec<_>>();
     let skills = skills
         .into_iter()
-        .map(|(n, a, on)| (n, menu(a), on))
+        .map(|(n, a, on)| (n, menu(a), Hue::Cyan, on))
         .collect();
     button_row(b, buttons, skills, y - 0.07, 0.3, 0.09);
     y -= 0.16;
@@ -426,7 +591,7 @@ fn lobby_choices(b: &mut Builder, buttons: &mut Vec<Button>, m: &MenuModel, mut 
     let arenas = SizeChoice::ALL
         .iter()
         .map(|&a| item(a.name(), MenuAct::Arena(a)))
-        .map(|(n, a, on)| (n, menu(a), on))
+        .map(|(n, a, on)| (n, menu(a), Hue::Cyan, on))
         .collect();
     button_row(b, buttons, arenas, y - 0.07, 0.24, 0.09);
     y -= 0.16;
@@ -434,7 +599,7 @@ fn lobby_choices(b: &mut Builder, buttons: &mut Vec<Button>, m: &MenuModel, mut 
     let modes = GameMode::ALL
         .iter()
         .map(|&g| item(g.name(), MenuAct::Mode(g)))
-        .map(|(n, a, on)| (n, menu(a), on))
+        .map(|(n, a, on)| (n, menu(a), Hue::Cyan, on))
         .collect();
     button_row(b, buttons, modes, y - 0.07, 0.42, 0.09);
     y - 0.16
@@ -499,6 +664,8 @@ fn lobby_list(b: &mut Builder, buttons: &mut Vec<Button>, m: &MenuModel, y: f32,
             menu(MenuAct::Join(addr)),
             Vec2::new(0.0, y - 0.05 - k as f32 * 0.085),
             Vec2::new(width, 0.075),
+            Hue::Cyan,
+            false,
         ));
     }
 }
@@ -507,42 +674,42 @@ fn lobby_list(b: &mut Builder, buttons: &mut Vec<Button>, m: &MenuModel, y: f32,
 /// name as it is).
 fn build_lobby(b: &mut Builder, m: &MenuModel) -> Vec<Button> {
     let size = Vec2::new(1.1, 1.12);
-    b.backing(size);
+    // The panel's colour, as the flat screen's for this level.
+    let hue = match m.screen {
+        Screen::Botmatch | Screen::Internet | Screen::Host { internet: true } => Hue::Cyan,
+        _ => Hue::Magenta,
+    };
+    b.backing(size, hue);
     let top = size.y / 2.0;
-    let (red, red_glow) = (b.mats.team[0].clone(), b.mats.glow[0].clone());
-    let (blue, dim) = (b.mats.team[1].clone(), b.mats.dim.clone());
-    b.text(
-        "NEON LASERTAG",
-        0.075,
-        Vec2::new(0.0, top - 0.08),
-        Align::Center,
-        &red,
-        Some(&red_glow),
-    );
-    b.text(
+    let (cyan, dim) = (b.tint(Hue::Cyan).text.clone(), b.mats.dim.clone());
+    b.title("NEON LASERTAG", 0.058, top - 0.085);
+    b.text_w(
         m.screen.crumb(),
-        0.028,
-        Vec2::new(0.0, top - 0.15),
+        0.025,
+        BOLD,
+        Vec2::new(0.0, top - 0.17),
         Align::Center,
-        &blue,
+        &cyan,
         None,
     );
     let mut buttons = Vec::new();
-    let big = |b: &mut Builder, buttons: &mut Vec<Button>, items: &[(&str, MenuAct)]| {
-        for (k, (label, a)) in items.iter().enumerate() {
+    let big = |b: &mut Builder, buttons: &mut Vec<Button>, items: &[(&str, MenuAct, Hue)]| {
+        for (k, (label, a, hue)) in items.iter().enumerate() {
             buttons.push(b.button(
                 label,
                 menu(a.clone()),
-                Vec2::new(0.0, top - 0.32 - k as f32 * 0.16),
+                Vec2::new(0.0, top - 0.34 - k as f32 * 0.16),
                 Vec2::new(0.6, 0.12),
+                *hue,
+                false,
             ));
         }
     };
     // Back (and the level's way on) at the bottom.
     let bottom = top - 1.03;
-    let back = |b: &mut Builder, buttons: &mut Vec<Button>, go: Option<(&str, MenuAct)>| {
-        let items = std::iter::once(("BACK".to_string(), menu(MenuAct::Back), false))
-            .chain(go.map(|(l, a)| (l.to_string(), menu(a), false)))
+    let back = |b: &mut Builder, buttons: &mut Vec<Button>, go: Option<(&str, MenuAct, Hue)>| {
+        let items = std::iter::once(("BACK".to_string(), menu(MenuAct::Back), Hue::Violet, false))
+            .chain(go.map(|(l, a, h)| (l.to_string(), menu(a), h, false)))
             .collect();
         button_row(b, buttons, items, bottom, 0.46, 0.09);
     };
@@ -551,22 +718,30 @@ fn build_lobby(b: &mut Builder, m: &MenuModel) -> Vec<Button> {
             b,
             &mut buttons,
             &[
-                ("BOTMATCH", MenuAct::Go(Screen::Botmatch)),
-                ("MULTIPLAYER", MenuAct::Go(Screen::Multiplayer)),
-                ("QUIT", MenuAct::Quit),
+                ("BOTMATCH", MenuAct::Go(Screen::Botmatch), Hue::Cyan),
+                (
+                    "MULTIPLAYER",
+                    MenuAct::Go(Screen::Multiplayer),
+                    Hue::Magenta,
+                ),
+                ("QUIT", MenuAct::Quit, Hue::Pink),
             ],
         ),
         Screen::Botmatch => {
             lobby_choices(b, &mut buttons, m, top - 0.27);
-            back(b, &mut buttons, Some(("START", MenuAct::StartBots)));
+            back(
+                b,
+                &mut buttons,
+                Some(("START", MenuAct::StartBots, Hue::Cyan)),
+            );
         }
         Screen::Multiplayer => {
             big(
                 b,
                 &mut buttons,
                 &[
-                    ("INTERNET", MenuAct::Go(Screen::Internet)),
-                    ("LAN", MenuAct::Go(Screen::Lan)),
+                    ("INTERNET", MenuAct::Go(Screen::Internet), Hue::Cyan),
+                    ("LAN", MenuAct::Go(Screen::Lan), Hue::Magenta),
                 ],
             );
             back(b, &mut buttons, None);
@@ -580,22 +755,25 @@ fn build_lobby(b: &mut Builder, m: &MenuModel) -> Vec<Button> {
                     menu(MenuAct::Refresh),
                     Vec2::new(0.0, bottom + 0.12),
                     Vec2::new(0.3, 0.08),
+                    Hue::Violet,
+                    false,
                 ));
             }
             let host = if internet { "HOST ONLINE" } else { "HOST LAN" };
             back(
                 b,
                 &mut buttons,
-                Some((host, MenuAct::Go(Screen::Host { internet }))),
+                Some((host, MenuAct::Go(Screen::Host { internet }), Hue::Amber)),
             );
         }
         Screen::Host { internet } => {
+            let green = b.tint(Hue::Green).text.clone();
             b.text(
                 &short(&m.server_name, 28),
-                0.034,
+                0.03,
                 Vec2::new(0.0, top - 0.23),
                 Align::Center,
-                &dim,
+                &green,
                 None,
             );
             lobby_choices(b, &mut buttons, m, top - 0.3);
@@ -612,7 +790,11 @@ fn build_lobby(b: &mut Builder, m: &MenuModel) -> Vec<Button> {
                 &dim,
                 None,
             );
-            back(b, &mut buttons, Some(("START HOSTING", MenuAct::StartHost)));
+            back(
+                b,
+                &mut buttons,
+                Some(("START HOSTING", MenuAct::StartHost, Hue::Amber)),
+            );
         }
     }
     buttons
@@ -721,7 +903,7 @@ fn build_end(b: &mut Builder, game: &Game) -> (Vec<Button>, Vec3) {
         + 0.06
         + if local { 0.14 } else { 0.0 }
         + 0.03;
-    b.backing(Vec2::new(width, height));
+    b.backing(Vec2::new(width, height), Hue::Violet);
     let (text, team) = winner(game.snap.scores);
     let ti = team_index(team);
     let (mat, glow) = (b.mats.team[ti].clone(), b.mats.glow[ti].clone());
@@ -797,6 +979,8 @@ fn build_end(b: &mut Builder, game: &Game) -> (Vec<Button>, Vec3) {
             Act::NewMatch,
             Vec2::new(0.0, y - 0.12),
             Vec2::new(0.44, 0.1),
+            Hue::Cyan,
+            false,
         ));
     }
     (buttons, countdown_at)

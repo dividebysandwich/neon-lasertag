@@ -43,6 +43,7 @@ pub mod session;
 pub mod settings;
 pub mod sevenseg;
 pub mod targets;
+pub mod vfont;
 pub mod vr;
 pub mod vrui;
 #[cfg(feature = "xr")]
