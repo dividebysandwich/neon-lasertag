@@ -49,7 +49,7 @@ impl Look {
 pub struct Sway {
     /// Walking: 0 standing still, 1 at full speed (eased).
     amount: f32,
-    /// Advances by half a turn a step.
+    /// Advances by half a turn a step, times `BOB_RATE`.
     phase: f32,
     /// Turning speed (rad/s: yaw, pitch), eased.
     turn: Vec2,
@@ -75,6 +75,9 @@ const ARC_DOTS: usize = 60;
 
 /// Metres a step (as the footsteps in src/audio.rs).
 const STRIDE: f32 = 0.8;
+/// The head bob and the blaster's walking sway run slower than the steps: this many swings a
+/// step (a full step's rate felt jittery).
+const BOB_RATE: f32 = 0.3;
 
 /// Flat-screen overlays that take the mouse (the game ignores the input while one is up).
 #[derive(Resource, Default)]
@@ -276,7 +279,7 @@ impl Sway {
         let speed = if mover.valid && mover.vy.abs() < 0.5 { mover.vel.length() } else { 0.0 };
         let k = |tau: f32| 1.0 - (-dt / tau).exp();
         self.amount += ((speed / max_speed.max(0.1)).min(1.0) - self.amount) * k(0.15);
-        self.phase = (self.phase + speed * dt / STRIDE * std::f32::consts::PI) % std::f32::consts::TAU;
+        self.phase = (self.phase + speed * dt / STRIDE * BOB_RATE * std::f32::consts::PI) % std::f32::consts::TAU;
         self.turn = self.turn.lerp((turned / dt).clamp(Vec2::splat(-12.0), Vec2::splat(12.0)), k(0.07));
         let (a, p) = (self.amount, self.phase);
         // The head dips at each step and sways a little sideways every other.
