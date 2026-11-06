@@ -367,6 +367,8 @@ fn piece_random(level: &Level, kind: PieceKind, pos: Vec3, salt: u64) -> f32 {
 
 /// The share of an ordinary piece's accent shapes it keeps (its outline always stays).
 const KEEP: f32 = 0.6;
+/// Brightness of the floors' white grid.
+const FLOOR_GRID: f32 = 0.3;
 /// The shares of ordinary walls showing only their outline, and their outline and one motif.
 const SIMPLE_OUTLINE: f32 = 0.3;
 const SIMPLE_MOTIF: f32 = 0.25;
@@ -493,7 +495,17 @@ pub fn spawn_arena(
         } else {
             ("accent", "glow")
         };
+        let floor = matches!(p.kind, PieceKind::FloorTile | PieceKind::UpperTile);
         for (i, shape) in kit.shapes.get(&p.kind).into_iter().flatten().enumerate() {
+            // The floors: a plain white grid (each tile's outline on its top; the corner marks
+            // go), the same everywhere. (The upper floor's underside is a ceiling: as it was.)
+            let mut tint = tint;
+            if floor && shape.accent.bounds().0.y > -0.01 {
+                if !outline(shape) {
+                    continue;
+                }
+                tint = (Vec3::ONE * FLOOR_GRID).extend(1.0).to_array();
+            }
             match detail {
                 Detail::Outline if !outline(shape) => continue,
                 // The biggest emblem (not a thin bar), on both faces (shapes come in pairs,
