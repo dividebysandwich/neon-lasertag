@@ -1,6 +1,7 @@
 //! Seven-segment displays made of accent strips: they glow like the arena and draw in every
-//! renderer (the GL headset renderer has no UI). Scoreboards hang on the rear wall of each
-//! base; VR players also get one on the wrist (src/xr.rs).
+//! renderer (the GL headset renderer has no UI). At each end of the arena, on the rear wall
+//! above the base, a board shows the scores (Red's left, Blue's right) and a smaller board
+//! above it the time left; VR players also get one on the wrist (src/xr.rs).
 
 use bevy::prelude::*;
 use lt_sim::level::{HALF_LENGTH, Level};
@@ -82,6 +83,65 @@ pub fn show(text: &str, digits: &[Digit], vis: &mut Query<&mut Visibility>) {
     }
 }
 
+/// The score board: the scores, 1 m digits, centred this high on the rear walls; the clock
+/// on a board of its own above it.
+const SCORE_Y: f32 = 3.65;
+const SCORE_H: f32 = 1.0;
+const CLOCK_Y: f32 = 5.2;
+const CLOCK_H: f32 = 0.65;
+/// The boards stand this far out from the wall, their panels this thick behind the digits.
+const OUT: f32 = 0.16;
+const PANEL_T: f32 = 0.1;
+/// Margin of a panel around its digits, and the width of its neon frame.
+const MARGIN: f32 = 0.25;
+const FRAME: f32 = 0.06;
+
+/// The distance between digits' centres for digits of height `h` (as `spawn_digits`).
+fn pitch(h: f32) -> f32 {
+    h * 0.55 + h * 0.09 * 2.5
+}
+
+/// A board's panel, centred on `centre` (`size` its width and height), behind its digits: a dark
+/// body and a neon frame, left half in `left`'s colour and right half in `right`'s.
+#[allow(clippy::too_many_arguments)]
+fn spawn_panel(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    root: Entity,
+    centre: Vec2,
+    size: Vec2,
+    palette: &Palette,
+    left: &Handle<AccentMaterial>,
+    right: &Handle<AccentMaterial>,
+) {
+    let z = -PANEL_T / 2.0 - 0.02;
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(size.x, size.y, PANEL_T))),
+        MeshMaterial3d(palette.body.clone()),
+        Transform::from_translation(centre.extend(z)),
+        ChildOf(root),
+    ));
+    let fz = -0.02 + FRAME / 2.0;
+    let half = meshes.add(Cuboid::new(size.x / 2.0, FRAME, FRAME));
+    let side = meshes.add(Cuboid::new(FRAME, size.y, FRAME));
+    for (sx, mat) in [(-1.0f32, left), (1.0, right)] {
+        for sy in [-1.0f32, 1.0] {
+            commands.spawn((
+                Mesh3d(half.clone()),
+                MeshMaterial3d(mat.clone()),
+                Transform::from_xyz(centre.x + sx * size.x / 4.0, centre.y + sy * (size.y - FRAME) / 2.0, fz),
+                ChildOf(root),
+            ));
+        }
+        commands.spawn((
+            Mesh3d(side.clone()),
+            MeshMaterial3d(mat.clone()),
+            Transform::from_xyz(centre.x + sx * (size.x - FRAME) / 2.0, centre.y, fz),
+            ChildOf(root),
+        ));
+    }
+}
+
 pub fn spawn_scoreboards(commands: &mut Commands, _level: &Level, palette: &Palette, meshes: &mut Assets<Mesh>) {
     commands.queue(|world: &mut World| {
         let mut boards = world.resource_mut::<Boards>();
@@ -92,33 +152,56 @@ pub fn spawn_scoreboards(commands: &mut Commands, _level: &Level, palette: &Pale
             world.entity_mut(e).despawn();
         }
     });
-    let h = 1.0;
-    let dot = meshes.add(Cuboid::new(0.1, 0.1, 0.05));
+    let red = palette.accent[0].clone();
+    let blue = palette.accent[1].clone();
+    let white = palette.accent[2].clone();
+    // The score board: Red's score on the left, Blue's on the right, a gap between.
+    let sp = pitch(SCORE_H);
+    let score_w = 4.0 * sp + SCORE_H * 0.55;
+    let gap = 1.4;
+    let score_size = Vec2::new(2.0 * score_w + gap + 2.0 * MARGIN, SCORE_H + 2.0 * MARGIN);
+    // The clock: mm:ss, the colon in a gap of its own.
+    let cp = pitch(CLOCK_H);
+    let colon = CLOCK_H * 0.5;
+    let clock_w = 3.0 * cp + CLOCK_H * 0.55 + colon;
+    let clock_size = Vec2::new(clock_w + 2.0 * MARGIN, CLOCK_H + 2.0 * MARGIN);
+    let dot = meshes.add(Cuboid::new(CLOCK_H * 0.1, CLOCK_H * 0.1, 0.05));
+    let divider = meshes.add(Cuboid::new(FRAME, SCORE_H + MARGIN, FRAME));
     for side in [1.0f32, -1.0] {
         let rot = if side > 0.0 { Quat::from_rotation_y(std::f32::consts::PI) } else { Quat::IDENTITY };
         let root = commands
             .spawn((
                 Scoreboard,
                 crate::arena::ArenaPart,
-                Transform::from_translation(Vec3::new(0.0, 4.3, side * (HALF_LENGTH - 0.03))).with_rotation(rot),
+                Transform::from_translation(Vec3::new(0.0, 0.0, side * (HALF_LENGTH - OUT))).with_rotation(rot),
                 Visibility::default(),
             ))
             .id();
-        let step = h * 0.55 + h * 0.09 * 2.5;
-        let red = palette.accent[0].clone();
-        let blue = palette.accent[1].clone();
-        let white = palette.accent[2].clone();
+        spawn_panel(commands, meshes, root, Vec2::new(0.0, SCORE_Y), score_size, palette, &red, &blue);
+        commands.spawn((
+            Mesh3d(divider.clone()),
+            MeshMaterial3d(white.clone()),
+            Transform::from_xyz(0.0, SCORE_Y, -0.02 + FRAME / 2.0),
+            ChildOf(root),
+        ));
+        spawn_panel(commands, meshes, root, Vec2::new(0.0, CLOCK_Y), clock_size, palette, &white, &white);
+
+        let first = |centre: f32, n: usize, p: f32| centre - (n as f32 - 1.0) * p / 2.0;
+        let red_x = -(gap + score_w) / 2.0;
+        let blue_x = (gap + score_w) / 2.0;
+        let min_x = -clock_w / 2.0 + CLOCK_H * 0.55 / 2.0;
+        let sec_x = min_x + 2.0 * cp + colon;
         let mut digits = Vec::new();
-        let x0 = -6.5 * step - 1.0;
-        digits.extend(spawn_digits(commands, meshes, root, Vec3::new(x0, 0.0, 0.0), 5, h, &red));
-        digits.extend(spawn_digits(commands, meshes, root, Vec3::new(x0 + 5.0 * step + 1.0, 0.0, 0.0), 2, h, &white));
-        digits.extend(spawn_digits(commands, meshes, root, Vec3::new(x0 + 7.0 * step + 1.4, 0.0, 0.0), 2, h, &white));
-        digits.extend(spawn_digits(commands, meshes, root, Vec3::new(x0 + 9.0 * step + 2.4, 0.0, 0.0), 5, h, &blue));
+        digits.extend(spawn_digits(commands, meshes, root, Vec3::new(first(red_x, 5, sp), SCORE_Y, 0.0), 5, SCORE_H, &red));
+        digits.extend(spawn_digits(commands, meshes, root, Vec3::new(min_x, CLOCK_Y, 0.0), 2, CLOCK_H, &white));
+        digits.extend(spawn_digits(commands, meshes, root, Vec3::new(sec_x, CLOCK_Y, 0.0), 2, CLOCK_H, &white));
+        digits.extend(spawn_digits(commands, meshes, root, Vec3::new(first(blue_x, 5, sp), SCORE_Y, 0.0), 5, SCORE_H, &blue));
+        let colon_x = min_x + cp + (cp + colon) / 2.0;
         for y in [0.22, -0.22] {
             commands.spawn((
                 Mesh3d(dot.clone()),
                 MeshMaterial3d(white.clone()),
-                Transform::from_xyz(x0 + 6.5 * step + 1.2, y, 0.0),
+                Transform::from_xyz(colon_x, CLOCK_Y + y * CLOCK_H, 0.0),
                 ChildOf(root),
             ));
         }

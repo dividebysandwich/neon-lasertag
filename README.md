@@ -64,7 +64,7 @@ grows and pulses faster while it hovers and fires.
 Stick and key movement has a little inertia (about a tenth of a second to get up to speed or
 to stop); walking in your room doesn't. On the flat screen the view bobs slightly as you walk,
 and the blaster sways with your steps and lags a little behind when you turn. In VR the wrist of your free hand shows the hits you have left, whether you carry a grenade,
-the shots left and the respawn countdown. Scoreboards hang on the back wall of each base.
+the shots left and the respawn countdown. On the back wall of each base hang a score board (Red's score left, Blue's right) and, above it, a board with the time left.
 Hits glow red at the edge of the view on the side they came from (on the flat screen: a red
 arc around the crosshair), and the controllers vibrate: shots, empty clicks, hits (stronger on
 that side), being tagged out, grenades, drawing and holstering. The menu (Esc) leaves the match
@@ -123,7 +123,7 @@ over the accents, and now and then a streak of light races along them. Inside th
 faint shafts of light fall through the holes of the upper floor, low haze drifts over the
 floor, motes float in the air, and the reload stations shine a soft column of light onto
 their pads (`src/ambience.rs`). Waves of colour run from each base towards the centre, and
-target hits and tag-outs send ripples across the walls. Bloom makes them glow in the wgpu
+target hits and tag-outs send ripples across the walls. The border walls around the arena turn slowly through the rainbow and pulse with the music's bass. Bloom makes them glow in the wgpu
 renderers. The GL renderer has no post-processing, because foveation needs a single pass into
 the swapchain, so the kit carries additive glow halos that work in every renderer.
 

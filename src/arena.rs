@@ -308,6 +308,8 @@ fn spawn_movers(commands: &mut Commands, level: &Level, kit: &Kit, palette: &Pal
             match mat.as_str() {
                 "body" => e.insert(MeshMaterial3d(palette.body.clone())),
                 "glow" => e.insert(MeshMaterial3d(palette.arena_glow.clone())),
+                "border accent" => e.insert(MeshMaterial3d(palette.border_accent.clone())),
+                "border glow" => e.insert(MeshMaterial3d(palette.border_glow.clone())),
                 _ => e.insert(MeshMaterial3d(palette.arena_accent.clone())),
             };
         }
@@ -340,13 +342,16 @@ pub fn spawn_arena(
         // Fewer accents on ordinary pieces: a random share of their shapes, the outline kept.
         let thin = !important
             && !matches!(p.kind, PieceKind::FloorTile | PieceKind::UpperTile | PieceKind::BorderWall | PieceKind::BorderPost);
+        // The border walls' accents have their own rainbow material.
+        let border = matches!(p.kind, PieceKind::BorderWall | PieceKind::BorderPost);
+        let (accent_slot, glow_slot) = if border { ("border accent", "border glow") } else { ("accent", "glow") };
         for (i, shape) in kit.shapes.get(&p.kind).into_iter().flatten().enumerate() {
             if thin && i > 0 && piece_random(level, p.kind, p.pos, 10 + i as u64) > KEEP {
                 continue;
             }
-            chunk.entry("accent").or_default().append_tinted(&shape.accent, rot, p.pos, tint);
+            chunk.entry(accent_slot).or_default().append_tinted(&shape.accent, rot, p.pos, tint);
             if !shape.glow.is_empty() {
-                chunk.entry("glow").or_default().append_tinted(&shape.glow, rot, p.pos, tint);
+                chunk.entry(glow_slot).or_default().append_tinted(&shape.glow, rot, p.pos, tint);
             }
         }
     }
@@ -361,6 +366,8 @@ pub fn spawn_arena(
             match slot {
                 "body" => e.insert(MeshMaterial3d(palette.body.clone())),
                 "glow" => e.insert(MeshMaterial3d(palette.arena_glow.clone())),
+                "border accent" => e.insert(MeshMaterial3d(palette.border_accent.clone())),
+                "border glow" => e.insert(MeshMaterial3d(palette.border_glow.clone())),
                 _ => e.insert(MeshMaterial3d(palette.arena_accent.clone())),
             };
         }

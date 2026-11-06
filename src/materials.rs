@@ -202,6 +202,10 @@ pub struct Palette {
     pub fur: Handle<StandardMaterial>,
     pub arena_accent: Handle<AccentMaterial>,
     pub arena_glow: Handle<GlowMaterial>,
+    /// The border walls around the arena: a fixed colour, turned slowly through the rainbow and
+    /// pulsing with the music's bass (`animate_border`).
+    pub border_accent: Handle<AccentMaterial>,
+    pub border_glow: Handle<GlowMaterial>,
     /// Fixed colours: red, blue, white.
     pub accent: [Handle<AccentMaterial>; 3],
     pub glow: [Handle<GlowMaterial>; 3],
@@ -244,6 +248,7 @@ impl Plugin for MaterialsPlugin {
         ))
         .init_resource::<NeonGlobals>()
         .add_systems(PreStartup, make_palette)
+        .add_systems(Update, animate_border)
         .add_systems(PostUpdate, animate);
     }
 }
@@ -278,12 +283,40 @@ fn make_palette(
         fur,
         arena_accent: accents.add(AccentMaterial { neon: NeonUniform::team_zoned(3.0) }),
         arena_glow: glows.add(GlowMaterial { neon: NeonUniform::team_zoned(2.0) }),
+        border_accent: accents.add(AccentMaterial { neon: fixed(RED, BORDER_ACCENT) }),
+        border_glow: glows.add(GlowMaterial { neon: fixed(RED, BORDER_GLOW) }),
         accent: colors.map(|c| accents.add(AccentMaterial { neon: fixed(c, 3.0) })),
         glow: colors.map(|c| glows.add(GlowMaterial { neon: fixed(c, 2.0) })),
         bolt: colors.map(|c| accents.add(AccentMaterial { neon: fixed(c, 9.0) })),
         eyes: colors.map(|c| accents.add(AccentMaterial { neon: fixed(c, 7.0) })),
         flow: colors.map(|c| accents.add(AccentMaterial { neon: NeonUniform::flow(c, 3.0, 0.8) })),
     });
+}
+
+/// The border walls' resting intensities (accents, halos), and the seconds they take to go
+/// once round the rainbow.
+const BORDER_ACCENT: f32 = 2.6;
+const BORDER_GLOW: f32 = 1.6;
+const RAINBOW_PERIOD: f32 = 45.0;
+
+/// Turns the border walls slowly through the rainbow, brighter on each beat of the bass.
+fn animate_border(
+    time: Res<Time>,
+    spectrum: Option<Res<crate::music::MusicSpectrum>>,
+    palette: Res<Palette>,
+    mut accents: ResMut<Assets<AccentMaterial>>,
+    mut glows: ResMut<Assets<GlowMaterial>>,
+) {
+    let hue = (time.elapsed_secs_wrapped() / RAINBOW_PERIOD).fract() * 360.0;
+    let c = Color::hsv(hue, 0.9, 1.0).to_linear();
+    let rgb = Vec3::new(c.red, c.green, c.blue);
+    let bass = spectrum.map_or(0.0, |s| s.bass);
+    if let Some(mut m) = accents.get_mut(&palette.border_accent) {
+        m.neon.color = rgb.extend(BORDER_ACCENT * (0.65 + 0.9 * bass));
+    }
+    if let Some(mut m) = glows.get_mut(&palette.border_glow) {
+        m.neon.color = rgb.extend(BORDER_GLOW * (0.5 + 1.3 * bass));
+    }
 }
 
 fn animate(
