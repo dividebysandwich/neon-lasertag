@@ -13,7 +13,7 @@
 //! team target (`target`). Megatarget mode in local games: both secondary targets hit at once
 //! (`power`), and going to Red's doorway into the megatarget's room (`warp-door`), into the
 //! room (`warp-room`), in front of the first turret (`warp-turret`) or into the first pocket
-//! (`warp-pocket`); in front of the nearest mirror (`warp-mirror`); turning the flat screen's view (`yaw=90`, `pitch=-20`, in degrees).
+//! (`warp-pocket`); in front of the nearest mirror (`warp-mirror`) or jump pad (`warp-pad`); turning the flat screen's view (`yaw=90`, `pitch=-20`, in degrees).
 
 use bevy::prelude::*;
 use lt_sim::bots::Difficulty;
@@ -221,6 +221,43 @@ fn dev_script(
             });
         }
         // Local games: in front of the nearest mirror, facing it at an angle (`warp-mirror`).
+        // Local games: a little way (`warp-pad=M`: M metres) before the nearest jump pad,
+        // facing the way it throws.
+        a if a == "warp-pad" || a.starts_with("warp-pad=") => {
+            let back: f32 = a
+                .strip_prefix("warp-pad=")
+                .and_then(|m| m.parse().ok())
+                .unwrap_or(1.0);
+            commands.queue(move |w: &mut World| {
+                let yaw = {
+                    let Some(mut game) = w.get_resource_mut::<Game>() else {
+                        return;
+                    };
+                    let Some(me) = game.me else { return };
+                    let Source::Local { sim, .. } = &mut game.source else {
+                        return;
+                    };
+                    let Some(at) = sim.player(me).map(|p| p.feet) else {
+                        return;
+                    };
+                    let Some(p) = sim
+                        .level
+                        .pads
+                        .iter()
+                        .min_by(|a, b| a.pos.distance(at).total_cmp(&b.pos.distance(at)))
+                        .copied()
+                    else {
+                        return;
+                    };
+                    let dir = (p.land - p.pos).with_y(0.0).normalize_or(Vec3::NEG_Z);
+                    let feet = p.pos - dir * back;
+                    let yaw = lt_sim::sim::yaw_of(dir);
+                    sim.teleport(me, feet, yaw);
+                    yaw
+                };
+                face(w, yaw);
+            });
+        }
         "warp-mirror" => {
             commands.queue(move |w: &mut World| {
                 let yaw = {

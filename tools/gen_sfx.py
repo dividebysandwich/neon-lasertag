@@ -38,6 +38,8 @@
   discharge.
 - mirror_ping: a bolt bouncing off a mirror: a bright glassy ping bending up, a tiny
   zap and a short shimmering ring.
+- jump_pad: a jump pad throwing someone up: a soft low thump, a rising whoosh of filtered
+  noise and a sine chirp sweeping up two octaves.
 - shield_hum: a forcefield's hum (a seamless two-second loop): a mains-like drone with
   slowly beating partials and faint crackle.
 
@@ -585,6 +587,16 @@ def mirror_ping():
     return echoes(ping + glass + zap, [0.05], [0.25], 7000)
 
 
+def jump_pad():
+    T = 0.9
+    x = seconds(T)
+    thud = thump(T, 70, 0.12) * 0.9
+    whoosh = sweep_noise(T, 300, 6000) * env(T, 0.05, 0.45, hold=0.2) * 0.6
+    f = 220 * 4 ** np.clip(x / 0.5, 0, 1)
+    chirp = np.sin(2 * np.pi * phase(f)) * env(T, 0.01, 0.35, hold=0.25) * 0.35
+    return echoes(thud + whoosh + chirp, [0.07], [0.2], 5000)
+
+
 SOUNDS = {
     # name: (generator, RMS dBFS, seed)
     "footstep_1": (lambda: footstep(1), -27.0, 11),
@@ -616,6 +628,7 @@ SOUNDS = {
     "shield_zap": (shield_zap, -15.0, 221),
     "shield_hum": (shield_hum, -24.0, 231),
     "mirror_ping": (mirror_ping, -21.0, 241),
+    "jump_pad": (jump_pad, -20.0, 251),
 }
 
 # Sounds played as loops.

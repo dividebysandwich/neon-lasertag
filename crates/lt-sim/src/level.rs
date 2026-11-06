@@ -35,7 +35,7 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 
-use crate::collide::{Collider, World};
+use crate::collide::{Collider, GRAVITY, World};
 use crate::kit::{self, CELL, PieceKind, STOREY};
 use crate::types::Team;
 
@@ -586,6 +586,46 @@ impl Panel {
     }
 }
 
+/// A jump pad on the ground: whoever stands on it is thrown up onto the upper floor at `land`
+/// (`launch`: the vertical speed and the horizontal velocity it starts with).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct JumpPad {
+    /// The middle of the pad, on the floor.
+    pub pos: Vec3,
+    /// Where the flight comes down (feet).
+    pub land: Vec3,
+    pub launch: Vec3,
+}
+
+/// How far from a jump pad's middle (horizontally) the feet throw a player.
+pub const PAD_RADIUS: f32 = 0.7;
+/// How high over the landing spot a jump pad's flight peaks (m).
+const PAD_APEX: f32 = 1.2;
+
+impl JumpPad {
+    /// The pad from `pos` up to `land`: its flight peaks `PAD_APEX` over the landing.
+    pub fn new(pos: Vec3, land: Vec3) -> JumpPad {
+        let rise = land.y - pos.y;
+        let apex = rise + PAD_APEX;
+        let vy = (2.0 * GRAVITY * apex).sqrt();
+        let t = vy / GRAVITY + (2.0 * PAD_APEX / GRAVITY).sqrt();
+        let d = land - pos;
+        JumpPad {
+            pos,
+            land,
+            launch: Vec3::new(d.x / t, vy, d.z / t),
+        }
+    }
+
+    fn mirrored(&self) -> JumpPad {
+        JumpPad {
+            pos: mirror_point(self.pos),
+            land: mirror_point(self.land),
+            launch: mirror_point(self.launch),
+        }
+    }
+}
+
 /// A turret guarding a secondary target, on the outer face of the wall in front of it, above
 /// a doorway into the target's pocket.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -885,6 +925,9 @@ pub struct Nav {
     /// Links through doors: the two nodes and the door (index into `Level::movers`), usable
     /// only while the door is open.
     pub doors: Vec<(u32, u32, usize)>,
+    /// Jump pads: from the pad's node to its landing's, one way (and the pad: index into
+    /// `Level::pads`).
+    pub jumps: Vec<(u32, u32, usize)>,
 }
 
 impl Nav {
@@ -923,6 +966,9 @@ impl Nav {
     /// Breadth-first reachability from `start`, with every door open or every door closed.
     pub fn reach_with(&self, start: usize, doors_open: bool) -> Vec<bool> {
         let mut extra: Vec<Vec<u32>> = vec![Vec::new(); self.pos.len()];
+        for &(a, b, _) in &self.jumps {
+            extra[a as usize].push(b);
+        }
         if doors_open {
             for &(a, b, _) in &self.doors {
                 extra[a as usize].push(b);
@@ -992,6 +1038,8 @@ pub struct Level {
     pub mega: Option<Mega>,
     /// Mirror panels on wall faces (bolts bounce off them; the wall still collides).
     pub mirrors: Vec<Panel>,
+    /// Jump pads (`nav.jumps` has their links).
+    pub pads: Vec<JumpPad>,
 }
 
 impl Level {
@@ -1024,6 +1072,14 @@ impl Level {
                     }
                     let mut level = build_level(seed, grid, nav, movers, mode);
                     level.mirrors = mirrors;
+                    level.pads = place_pads(&level, mode, &mut rng);
+                    for (i, p) in level.pads.iter().enumerate() {
+                        if let (Some(a), Some(b)) =
+                            (level.nav.node_at(p.pos), level.nav.node_at(p.land))
+                        {
+                            level.nav.jumps.push((a as u32, b as u32, i));
+                        }
+                    }
                     if level
                         .targets
                         .iter()
@@ -1169,6 +1225,14 @@ impl Level {
         dm.cell_at(feet)
             .filter(|&(ix, iz)| self.grid.ground[dm.idx(ix, iz)] == Ground::Spawn)
             .map(|_| Team::of_z(feet.z))
+    }
+
+    /// The jump pad under feet standing at `feet`, if any.
+    pub fn pad_at(&self, feet: Vec3) -> Option<&JumpPad> {
+        self.pads.iter().find(|p| {
+            (feet.y - p.pos.y).abs() < 0.2
+                && (feet.x - p.pos.x).powi(2) + (feet.z - p.pos.z).powi(2) < PAD_RADIUS * PAD_RADIUS
+        })
     }
 
     pub fn reloads_at(&self, feet: Vec3) -> bool {
@@ -2086,6 +2150,7 @@ fn build_nav(g: &Grid) -> Nav {
         valid: vec![false; n],
         links: vec![Vec::new(); n],
         doors: Vec::new(),
+        jumps: Vec::new(),
     };
     for iz in 0..dm.h {
         for ix in 0..dm.w {
@@ -2538,6 +2603,125 @@ fn place_mirrors(g: &Grid, mode: GameMode, rng: &mut ChaCha8Rng) -> Vec<Panel> {
         .collect()
 }
 
+/// The path of a body thrown from `pos` with `launch` (the sim's own movement, no steering),
+/// until it lands: the feet's positions tick by tick, or `None` if the head, chest or feet
+/// hit something on the way or it never comes down.
+pub fn pad_flight(world: &World, pos: Vec3, launch: Vec3) -> Option<Vec<Vec3>> {
+    let dt = crate::sim::TICK;
+    let air = glam::Vec2::new(launch.x, launch.z);
+    let dir = Vec3::new(launch.x, 0.0, launch.z).normalize_or_zero();
+    let (mut feet, mut vy) = (pos, launch.y);
+    let mut path = vec![feet];
+    for _ in 0..(4.0 / dt) as usize {
+        let (next, nvy) = world.move_body(feet, air * dt, vy, dt);
+        // Nothing in the way of the body's middle and front (move_body has no ceilings).
+        for h in [0.1, 1.0, crate::collide::BODY_HEIGHT] {
+            for side in [Vec3::ZERO, dir * crate::collide::BODY_RADIUS] {
+                let (a, b) = (feet + side + Vec3::Y * h, next + side + Vec3::Y * h);
+                if !world.clear(a, b) {
+                    return None;
+                }
+            }
+        }
+        (feet, vy) = (next, nvy);
+        path.push(feet);
+        if vy == 0.0 {
+            return Some(path);
+        }
+    }
+    None
+}
+
+/// Jump pads: on open ground cells in the middle of Red's half with nothing overhead, each
+/// throwing up onto a cell of the upper floor one to three cells away, the flight clear (with
+/// the doors and panels anywhere on their way) and landing there; mirrored into Blue's half.
+fn place_pads(level: &Level, mode: GameMode, rng: &mut ChaCha8Rng) -> Vec<JumpPad> {
+    let g = &level.grid;
+    let dm = g.dims;
+    let nav = &level.nav;
+    let first = match mode {
+        GameMode::Classic => dm.half() + 1,
+        GameMode::Megatarget => mega_row(dm) + 6,
+    };
+    let rows = first..dm.target_row();
+    let busy = |ix: usize, iz: usize| {
+        (0..4).any(|d| {
+            dm.step(ix, iz, d, 1).is_some_and(|(x, z)| {
+                matches!(
+                    g.ground[dm.idx(x, z)],
+                    Ground::Ramp { .. } | Ground::Reload | Ground::Spawn | Ground::Alcove { .. }
+                )
+            })
+        })
+    };
+    // The arena with the movers at both ends of their way.
+    let worlds: Vec<World> = [0.0, 1.0]
+        .iter()
+        .map(|&f| {
+            let mut w = level.world();
+            w.set_dynamic(level.movers.iter().flat_map(|m| m.colliders(f)).collect());
+            w
+        })
+        .collect();
+    let mut cands: Vec<(f32, JumpPad, (usize, usize))> = Vec::new();
+    for iz in rows {
+        for ix in 0..dm.w {
+            let i = dm.idx(ix, iz);
+            if g.ground[i] != Ground::Open || g.upper[i] || level.on_track(ix, iz) || busy(ix, iz) {
+                continue;
+            }
+            let from = dm.ground_node(ix, iz);
+            if !nav.valid[from] {
+                continue;
+            }
+            let reach = nav.reach(from);
+            for d in 0..4u8 {
+                for k in 1..=3 {
+                    let Some((lx, lz)) = dm.step(ix, iz, d, k) else {
+                        break;
+                    };
+                    let to = dm.upper_node(lx, lz);
+                    if !g.upper_walkable(dm.idx(lx, lz)) || !nav.valid[to] || !reach[to] {
+                        continue;
+                    }
+                    let pos = dm.cell_centre(ix, iz);
+                    let land = nav.pos[to];
+                    let pad = JumpPad::new(pos, land);
+                    let lands = worlds.iter().all(|w| {
+                        pad_flight(w, pos, pad.launch).is_some_and(|path| {
+                            let end = *path.last().unwrap();
+                            (end.y - land.y).abs() < 0.05 && (end - land).with_y(0.0).length() < 0.6
+                        })
+                    });
+                    if lands {
+                        cands.push((rng.random::<f32>(), pad, (ix, iz)));
+                    }
+                    // (Nearer landings first; one per direction.)
+                    break;
+                }
+            }
+        }
+    }
+    cands.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let want = rng.random_range(dm.scaled(1)..=dm.scaled(2));
+    let mut chosen: Vec<(JumpPad, (usize, usize))> = Vec::new();
+    for (_, p, c) in cands {
+        if chosen.len() >= want {
+            break;
+        }
+        if chosen
+            .iter()
+            .all(|(_, o)| o.0.abs_diff(c.0) + o.1.abs_diff(c.1) >= 5)
+        {
+            chosen.push((p, c));
+        }
+    }
+    chosen
+        .into_iter()
+        .flat_map(|(p, _)| [p, p.mirrored()])
+        .collect()
+}
+
 fn build_level(seed: u64, g: Grid, nav: Nav, movers: Vec<Mover>, mode: GameMode) -> Level {
     let dm = g.dims;
     let mut pieces = Vec::new();
@@ -2778,6 +2962,7 @@ fn build_level(seed: u64, g: Grid, nav: Nav, movers: Vec<Mover>, mode: GameMode)
         mode,
         mega,
         mirrors: Vec::new(),
+        pads: Vec::new(),
     }
 }
 
@@ -3266,6 +3451,38 @@ mod tests {
                 assert_eq!(a.mirrors, b.mirrors);
             }
         }
+    }
+
+    #[test]
+    fn jump_pads_land_on_the_upper_floor() {
+        let mut with = 0;
+        let mut total = 0;
+        for (seed, level) in seeds() {
+            total += 1;
+            if !level.pads.is_empty() {
+                with += 1;
+            }
+            assert_eq!(level.pads.len() % 2, 0);
+            assert_eq!(level.nav.jumps.len(), level.pads.len(), "seed {seed}");
+            let world = level.world_at(0);
+            for p in &level.pads {
+                let path = pad_flight(&world, p.pos, p.launch).expect("a clear flight");
+                let end = *path.last().unwrap();
+                assert!(
+                    (end - p.land).length() < 0.6,
+                    "seed {seed}: pad at {} lands at {end}, not {}",
+                    p.pos,
+                    p.land
+                );
+                assert!((p.land.y - STOREY).abs() < 0.01);
+                assert!(level.pad_at(p.pos).is_some());
+            }
+        }
+        println!("{with} of {total} arenas have jump pads");
+        assert!(
+            with * 10 >= total * 8,
+            "{with} of {total} arenas have jump pads"
+        );
     }
 
     #[test]

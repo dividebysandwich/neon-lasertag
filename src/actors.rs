@@ -967,6 +967,18 @@ fn effects(
                     seed,
                 );
             }
+            SimEvent::Launched { pos, .. } => {
+                commands.spawn((
+                    Ring {
+                        life: 0.5,
+                        max: 0.5,
+                        size: 1.4,
+                    },
+                    Mesh3d(meshes.ring.clone()),
+                    MeshMaterial3d(palette.bolt_for(None)),
+                    Transform::from_translation(pos + Vec3::Y * 0.1),
+                ));
+            }
             SimEvent::Reflected { pos, team, normal } => {
                 burst(
                     &mut commands,

@@ -59,6 +59,8 @@ pub struct Player {
     pub bot: bool,
     pub feet: Vec3,
     pub vy: f32,
+    /// Flying from a jump pad: the horizontal velocity it gave (zero on the ground).
+    pub air: Vec2,
     pub cmd: PlayerCmd,
     prev_fire: bool,
     /// Hits taken since the last respawn.
@@ -473,6 +475,7 @@ impl Sim {
             bot,
             feet: Vec3::ZERO,
             vy: 0.0,
+            air: Vec2::ZERO,
             cmd: PlayerCmd::default(),
             prev_fire: false,
             hits: 0,
@@ -637,6 +640,9 @@ impl Sim {
                 continue;
             }
             let pos = nav.pos[n] + Vec3::Y * PICKUP_HEIGHT;
+            if self.level.pad_at(nav.pos[n]).is_some() {
+                continue;
+            }
             if self
                 .slots
                 .iter()
@@ -800,6 +806,7 @@ impl Sim {
                 p.reloading = None;
                 p.feet = s.pos;
                 p.vy = 0.0;
+                p.air = Vec2::ZERO;
                 p.cmd.yaw = s.yaw;
                 p.claim_block = 30;
                 self.events.push(SimEvent::Respawned {
@@ -826,9 +833,12 @@ impl Sim {
                         Vec2::new(c.x - p.feet.x, c.z - p.feet.z).clamp_length_max(max)
                     }
                     _ => {
-                        let stick = p.cmd.stick.clamp_length_max(1.0) * rules.move_speed * TICK;
+                        let stick = p.cmd.stick.clamp_length_max(1.0)
+                            * rules.move_speed
+                            * TICK
+                            * air_control(p.air);
                         let walk = p.cmd.walk.clamp_length_max(rules.walk_speed_max * TICK);
-                        stick + walk
+                        stick + walk + p.air * TICK
                     }
                 };
                 let d = if d.is_finite() { d } else { Vec2::ZERO };
@@ -839,6 +849,15 @@ impl Sim {
             let p = &mut self.players[i];
             p.feet = feet;
             p.vy = vy;
+            // Jump pads: down again, and thrown up.
+            if let Some((vy, air)) = pad_step(&self.level, feet, vy, &mut p.air) {
+                p.vy = vy;
+                p.air = air;
+                self.events.push(SimEvent::Launched {
+                    player: p.id,
+                    pos: feet,
+                });
+            }
 
             // Healed on the team's own spawn pads.
             if p.hits > 0 && home == Some(p.team) {
@@ -1463,6 +1482,7 @@ impl Sim {
         let Some(p) = self.player_mut(id) else { return };
         p.feet = feet;
         p.vy = 0.0;
+        p.air = Vec2::ZERO;
         p.cmd.yaw = yaw;
         p.claim_block = 30;
         self.events.push(SimEvent::Respawned {
@@ -1505,6 +1525,7 @@ impl Sim {
         p.power = None;
         p.feet = s.pos;
         p.vy = 0.0;
+        p.air = Vec2::ZERO;
         p.cmd.yaw = s.yaw;
         p.claim_block = 30;
         self.events.push(SimEvent::Respawned {
@@ -1677,6 +1698,25 @@ impl Sim {
     }
 }
 
+/// How much of the stick's movement counts while flying from a jump pad (all of it on the
+/// ground).
+pub fn air_control(air: Vec2) -> f32 {
+    if air == Vec2::ZERO { 1.0 } else { 0.25 }
+}
+
+/// Jump pads, after a body's move (the sim's and the client's prediction alike): on landing
+/// the flight's horizontal velocity `air` is gone; standing on a pad, the vertical speed and
+/// horizontal velocity it throws the body with.
+pub fn pad_step(level: &Level, feet: Vec3, vy: f32, air: &mut Vec2) -> Option<(f32, Vec2)> {
+    if vy != 0.0 {
+        return None;
+    }
+    *air = Vec2::ZERO;
+    level
+        .pad_at(feet)
+        .map(|p| (p.launch.y, Vec2::new(p.launch.x, p.launch.z)))
+}
+
 /// Yaw (0 = facing -Z) of a horizontal direction.
 pub fn yaw_of(dir: Vec3) -> f32 {
     (-dir.x).atan2(-dir.z)
@@ -1793,6 +1833,41 @@ mod tests {
             .expect("a mirror on the ground");
         let n = m.normal;
         (m, n, Vec3::Y.cross(n))
+    }
+
+    #[test]
+    fn jump_pads_throw_players_onto_the_upper_floor() {
+        let seed = (1..40)
+            .find(|&s| {
+                !Level::generate(s, crate::level::ArenaSize::Small)
+                    .pads
+                    .is_empty()
+            })
+            .expect("an arena with jump pads");
+        let mut sim = Sim::new(seed, Rules::default());
+        let a = sim.add_player("a", Some(Team::Red), false).unwrap();
+        let pad = sim.level.pads[0];
+        sim.teleport(a, pad.pos, 0.0);
+        sim.players[0].claim_block = 0;
+        sim.drain_events();
+        sim.step();
+        assert!(
+            sim.drain_events()
+                .iter()
+                .any(|e| matches!(e, SimEvent::Launched { player, .. } if *player == a))
+        );
+        for _ in 0..180 {
+            sim.step();
+        }
+        let p = sim.player(a).unwrap();
+        assert!(
+            (p.feet - pad.land).length() < 0.6,
+            "landed at {}, not {}",
+            p.feet,
+            pad.land
+        );
+        assert_eq!(p.air, Vec2::ZERO);
+        assert_eq!(p.vy, 0.0);
     }
 
     #[test]

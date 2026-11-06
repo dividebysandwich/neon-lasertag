@@ -305,6 +305,8 @@ pub struct LocalCmd {
 pub struct Mover {
     pub feet: Vec3,
     pub vy: f32,
+    /// Flying from a jump pad: the horizontal velocity it gave (as `lt_sim::Player::air`).
+    pub air: Vec2,
     /// Stick movement (world XZ, m/s): eases towards what the stick asks for (a little inertia).
     pub vel: Vec2,
     pub valid: bool,
@@ -474,6 +476,7 @@ fn predict(
     {
         mover.feet = p.feet;
         mover.vy = 0.0;
+        mover.air = Vec2::ZERO;
         mover.vel = Vec2::ZERO;
         mover.valid = true;
         mover.seed = game.level.seed;
@@ -495,10 +498,18 @@ fn predict(
     if mover.vel.length() < 0.01 && want == Vec2::ZERO {
         mover.vel = Vec2::ZERO;
     }
-    let delta = mover.vel * dt + walk;
-    let (feet, vy) = game.world.move_body(mover.feet, delta, mover.vy, dt);
+    // (Flying from a jump pad: mostly the pad's throw, a little steering.)
+    let delta = mover.vel * dt * lt_sim::sim::air_control(mover.air) + mover.air * dt + walk;
+    let (feet, mut vy) = game.world.move_body(mover.feet, delta, mover.vy, dt);
+    let flying = mover.air != Vec2::ZERO;
+    let mut air = mover.air;
+    if let Some((up, throw)) = lt_sim::sim::pad_step(&game.level, feet, vy, &mut air) {
+        vy = up;
+        air = throw;
+    }
+    mover.air = air;
     // Walking into a wall stops the movement into it.
-    if dt > 0.0 {
+    if dt > 0.0 && !flying {
         let moved = Vec2::new(feet.x - mover.feet.x, feet.z - mover.feet.z) - walk;
         let along = moved / dt;
         if along.length() < mover.vel.length() * 0.5 {

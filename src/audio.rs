@@ -44,6 +44,7 @@ struct Sounds {
     steps: [Handle<AudioSource>; 3],
     mega_win: Handle<AudioSource>,
     mirror_ping: Handle<AudioSource>,
+    jump_pad: Handle<AudioSource>,
     tick: Handle<AudioSource>,
     power_up: Handle<AudioSource>,
     turret_fire: Handle<AudioSource>,
@@ -116,6 +117,7 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
         steps: [s("footstep_1"), s("footstep_2"), s("footstep_3")],
         mega_win: s("mega_win"),
         mirror_ping: s("mirror_ping"),
+        jump_pad: s("jump_pad"),
         tick: s("power_tick"),
         power_up: s("power_up"),
         turret_fire: s("turret_fire"),
@@ -238,6 +240,17 @@ fn play_events(
             }
             SimEvent::Uncloaked { player } if Some(player) == me => {
                 play(&mut commands, gain, &sounds.zap, None, 0.4, 0.8)
+            }
+            SimEvent::Launched { player, pos } => {
+                let mine = Some(player) == me;
+                play(
+                    &mut commands,
+                    gain,
+                    &sounds.jump_pad,
+                    (!mine).then_some(pos),
+                    if mine { 0.7 } else { 1.0 },
+                    1.0,
+                )
             }
             SimEvent::Reflected { pos, .. } => play(
                 &mut commands,

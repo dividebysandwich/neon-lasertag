@@ -29,7 +29,8 @@ opens the options screen, `arc` shows the throw arc, `target` hits a team target
 `give-KIND` gives you a pickup's contents (`give-all-KIND` everyone) and `drop-KIND` lays one in front of you, KIND
 `grenade`, `rapid`, `shield`, `shotgun`, `cloak`; `shields-up` switches everyone's shield on, `summon` (or `summon=M`) puts the
 nearest other player 4 m (M m) in front of you; Megatarget mode: `power` hits both secondary targets, `warp-door`, `warp-room`, `warp-turret` and `warp-pocket` move
-you there; `warp-mirror` puts you before the nearest mirror; `yaw=DEG` and `pitch=DEG` turn the flat screen's view),
+you there; `warp-mirror` puts you before the nearest mirror, `warp-pad` (or `warp-pad=M`) 1 m (M m) before
+the nearest jump pad; `yaw=DEG` and `pitch=DEG` turn the flat screen's view),
 `LT_VR_MENU=1` opens the VR menu, `LT_VR_FAKE_HANDS=1` fakes controllers, `LT_HOLSTER=x,y,z`
 moves the holster (from the eyes; default `0.23,-0.58,-0.07`). `LT_GUN_TILT=DEG` turns the
 blaster nose down in the hand by that much from the controller's aim (default 15), for a more
@@ -71,6 +72,11 @@ antlers don't count), the chest, the gloves and the blaster.
 frame with glinting streaks across it. A bolt (any bolt: blasters', grenades', turrets')
 bounces off a mirror once, carrying on as if from there, so you can bank a shot round a corner;
 a second mirror stops it. The glints flash in the bolt's colour and the mirror pings.
+
+**Jump pads.** Mint rings on the ground, with chevrons climbing the way they throw: step onto
+one and it throws you up onto the upper floor a few metres on, peaking a little over a metre
+above it (you can steer a little in the air). Every pad's flight is checked when the arena is
+made; the bots take them too.
 
 **Blaster.** Three shots a second at most, 50 shots in a full blaster. It refills while you
 stand on your own spawn pads or on one of the two white reload stations in the middle of the
@@ -160,7 +166,11 @@ corners). Each half has:
 - cover: full walls, walls with windows, half walls, pillars and blocks;
 - mirrors (`Level::mirrors`): one to three faces of full walls (more in bigger arenas),
   between the centre line and the targets' rows, each with open floor in front of it to shoot
-  from (drawn by `src/features.rs`).
+  from (drawn by `src/features.rs`);
+- jump pads (`Level::pads`): one or two (more in bigger arenas) on open ground with nothing
+  overhead, each throwing onto the upper floor one to three cells away; the flight is
+  simulated when the arena is made, with the doors and panels at both ends of their way, and
+  must be clear and land there (`level::pad_flight`). The bots' map has them as one-way links.
 
 Long open lanes are broken up. Every arena is checked before it is used: every base reaches the
 centre, the upper floor and the rear of the enemy targets, the upper level leads from one

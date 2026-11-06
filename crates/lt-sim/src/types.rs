@@ -249,6 +249,11 @@ pub enum SimEvent {
         player: PlayerId,
         pos: Vec3,
     },
+    /// A jump pad threw a player up.
+    Launched {
+        player: PlayerId,
+        pos: Vec3,
+    },
     TargetHit {
         target: u8,
         by: PlayerId,

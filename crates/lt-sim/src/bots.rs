@@ -353,6 +353,15 @@ impl BotGraph {
             }
         }
 
+        // Jump pads: one way, up (the flight is about as quick as walking its length).
+        for &(a, b, _) in &nav.jumps {
+            let d = pos[a as usize]
+                .with_y(0.0)
+                .distance(pos[b as usize].with_y(0.0))
+                + 1.0;
+            links[a as usize].push((b, d));
+        }
+
         let mut door_links: Vec<Vec<(u32, f32, usize)>> = vec![Vec::new(); n];
         for &(a, b, m) in &nav.doors {
             let d = pos[a as usize].distance(pos[b as usize]);
@@ -2463,6 +2472,7 @@ mod tests {
         reloads: u32,
         pickups: u32,
         grenades: u32,
+        launches: u32,
         moved: f32,
     }
 
@@ -2511,6 +2521,7 @@ mod tests {
                     SimEvent::Reloading { .. } => s.reloads += 1,
                     SimEvent::PickedUp { .. } => s.pickups += 1,
                     SimEvent::GrenadeThrown { .. } => s.grenades += 1,
+                    SimEvent::Launched { .. } => s.launches += 1,
                     _ => {}
                 }
             }
@@ -2519,7 +2530,7 @@ mod tests {
         s.scores = sim.scores;
         println!(
             "seed {seed}, {n} bots, {secs} s: scores {:?}, shots {} ({} at panels), hits {}, target hits {} \
-             ({} by attackers), reloads {}, pickups {}, grenades thrown {}, walked {:.0} m",
+             ({} by attackers), reloads {}, pickups {}, grenades thrown {}, jump pads {}, walked {:.0} m",
             s.scores,
             s.fired,
             s.panel_shots,
@@ -2529,6 +2540,7 @@ mod tests {
             s.reloads,
             s.pickups,
             s.grenades,
+            s.launches,
             s.moved
         );
         s
@@ -2607,6 +2619,7 @@ mod tests {
             total.reloads += s.reloads;
             total.pickups += s.pickups;
             total.grenades += s.grenades;
+            total.launches += s.launches;
         }
         assert!(
             total.offense_target_hits > 0,
@@ -2615,6 +2628,7 @@ mod tests {
         assert!(total.reloads > 0, "bots reload: {total:?}");
         assert!(total.pickups > 0, "bots pick up grenades: {total:?}");
         assert!(total.grenades > 0, "bots throw grenades: {total:?}");
+        assert!(total.launches > 0, "bots take jump pads: {total:?}");
     }
 
     #[test]
