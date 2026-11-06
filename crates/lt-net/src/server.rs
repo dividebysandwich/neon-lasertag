@@ -124,17 +124,7 @@ impl Server {
                 NetEvent::Connected(id) => {
                     self.remotes.insert(id, Remote::new());
                 }
-                NetEvent::Disconnected(id, why) => {
-                    if let Some(r) = self.remotes.remove(&id)
-                        && let Some(p) = r.player
-                    {
-                        self.log.push(format!("{} left ({why})", r.name));
-                        sim.remove_player(p);
-                        if let Some(team) = self.displaced.remove(&p) {
-                            bots.fill_team(sim, team, bots.skill());
-                        }
-                    }
-                }
+                NetEvent::Disconnected(id, why) => self.drop_remote(id, &why, sim, bots),
                 NetEvent::Message(id, _, bytes) => {
                     let Some(msg) = decode::<ToServer>(&bytes) else {
                         continue;
@@ -172,6 +162,19 @@ impl Server {
                         self.log.push(format!("{}: hit claim {other:?}", r.name));
                     }
                 }
+            }
+        }
+    }
+
+    /// A remote player gone: off the field, and the bot they displaced back.
+    fn drop_remote(&mut self, id: ConnId, why: &str, sim: &mut Sim, bots: &mut Bots) {
+        if let Some(r) = self.remotes.remove(&id)
+            && let Some(p) = r.player
+        {
+            self.log.push(format!("{} left ({why})", r.name));
+            sim.remove_player(p);
+            if let Some(team) = self.displaced.remove(&p) {
+                bots.fill_team(sim, team, bots.skill());
             }
         }
     }
@@ -256,7 +259,11 @@ impl Server {
                 r.claims.extend(hits.into_iter().take(64).map(|c| (c, 0)));
                 r.claims.truncate(256);
             }
-            ToServer::Bye => self.endpoint.close(id, "Bye"),
+            // (Closing this end tells nobody here: the player goes now.)
+            ToServer::Bye => {
+                self.drop_remote(id, "quit", sim, bots);
+                self.endpoint.close(id, "Bye");
+            }
         }
     }
 
@@ -322,9 +329,16 @@ impl Server {
         self.endpoint.flush(Instant::now());
     }
 
+    /// Tells everyone the game is over and closes their connections (there's no later flush
+    /// to resend anything, so the close goes out too).
     pub fn shutdown(&mut self, why: &str) {
         self.broadcast(Channel::Reliable, &ToClient::Shutdown(why.to_string()));
         self.endpoint.flush(Instant::now());
+        for id in self.remotes.keys().copied().collect::<Vec<_>>() {
+            self.endpoint.close(id, why);
+        }
+        self.endpoint.flush(Instant::now());
+        self.remotes.clear();
     }
 
     /// The server as the master server's list and LAN beacons show it: joined on `port`

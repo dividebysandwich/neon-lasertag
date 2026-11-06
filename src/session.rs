@@ -80,7 +80,7 @@ impl Plugin for SessionPlugin {
             )
             // Not in `Update`: a group's `run_if(resource_exists::<Game>)` is checked once, so
             // removing the game between two of its systems would leave the later one without it.
-            .add_systems(Last, leave);
+            .add_systems(Last, (close_on_exit, leave));
     }
 }
 
@@ -527,6 +527,16 @@ fn match_over(
     session.over_for = Some(t);
     if t >= NEXT_MATCH_DELAY && game.is_local() {
         next_match(&mut game, &local, &mut session);
+    }
+}
+
+/// Quitting however (the window closed too): the others are told, so this player leaves their
+/// field (or, hosting, they go back to their menus).
+fn close_on_exit(mut exits: MessageReader<AppExit>, game: Option<ResMut<Game>>) {
+    if exits.read().next().is_some()
+        && let Some(mut game) = game
+    {
+        game.close();
     }
 }
 

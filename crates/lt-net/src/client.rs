@@ -133,10 +133,14 @@ impl Client {
         out
     }
 
+    /// Leaves: says so, then closes the connection (both go out now: there may be no later
+    /// flush).
     pub fn close(&mut self) {
         self.endpoint
             .send(0, Channel::Reliable, &encode(&ToServer::Bye));
         self.endpoint.flush(Instant::now());
         self.endpoint.close(0, "Bye");
+        self.endpoint.flush(Instant::now());
+        self.connected = false;
     }
 }

@@ -458,6 +458,7 @@ fn step_game(
     mut game: ResMut<Game>,
     mut local: ResMut<LocalCmd>,
     mut events: MessageWriter<GameEvent>,
+    mut session: MessageWriter<crate::session::SessionCmd>,
 ) {
     let game = &mut *game;
     let mut cmd = local.cmd;
@@ -535,7 +536,14 @@ fn step_game(
                             .extend(evs.into_iter().map(|e| (tick, e)));
                     }
                     ClientEvent::Roster(r) => game.names = r,
-                    ClientEvent::Disconnected(why) => game.status = format!("Disconnected: {why}"),
+                    // The host left (or the connection was lost): back to the start menu.
+                    // (Told twice when the host leaves: its message and the connection's close.)
+                    ClientEvent::Disconnected(_) if game.status.starts_with("Disconnected") => {}
+                    ClientEvent::Disconnected(why) => {
+                        warn!("disconnected from the server: {why}");
+                        game.status = format!("Disconnected: {why}");
+                        session.write(crate::session::SessionCmd::Leave);
+                    }
                     // The next match (the server moved everyone into a new arena).
                     ClientEvent::Welcome { id, seed, rules }
                     | ClientEvent::NewLevel { seed, rules, id } => {
