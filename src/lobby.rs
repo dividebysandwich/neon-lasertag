@@ -1,7 +1,8 @@
-//! The VR start menu's scene (VR modes, out of a game): an empty arena, just its floor and its
-//! rainbow border walls, with the player in the middle, and colourful fireworks going up all
-//! around it. The menu itself is a VR panel (src/vrui.rs). The arena's parts are `ArenaPart`s,
-//! so starting a game takes them down with everything else; the fireworks go with them.
+//! The start menu's scene (out of a game; VR's panel, src/vrui.rs, and the flat screen's
+//! menu, src/menu.rs, show over it): an empty arena, just its floor and its rainbow border
+//! walls, with the player in the middle, and colourful fireworks going up all around it. The
+//! arena's parts are `ArenaPart`s, so starting a game takes them down with everything else; the
+//! fireworks go with them.
 
 use bevy::prelude::*;
 use lt_sim::level::{ArenaSize, Level};

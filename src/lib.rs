@@ -296,6 +296,7 @@ pub fn run() {
                 },
                 hud::HudPlugin,
                 menu::MenuPlugin,
+                lobby::LobbyPlugin,
                 pause::PausePlugin,
                 options::OptionsPlugin,
                 endscreen::EndScreenPlugin,

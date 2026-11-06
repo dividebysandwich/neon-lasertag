@@ -101,7 +101,8 @@ fn first(mut commands: Commands, args: Res<Args>) {
     }
 }
 
-const BG: Color = Color::srgba(0.02, 0.02, 0.05, 0.92);
+/// Translucent: the empty arena and its fireworks (src/lobby.rs) show behind the menu.
+const BG: Color = Color::srgba(0.02, 0.02, 0.05, 0.45);
 const BUTTON: Color = Color::srgb(0.08, 0.08, 0.14);
 const BUTTON_HOVER: Color = Color::srgb(0.16, 0.12, 0.3);
 const BORDER: Color = Color::srgb(0.5, 0.2, 0.9);

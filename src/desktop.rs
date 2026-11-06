@@ -486,16 +486,28 @@ fn on_events(
     }
 }
 
+/// The start menu's view: its turning speed (rad/s) and upward tilt (rad).
+const LOBBY_TURN: f32 = 0.05;
+const LOBBY_PITCH: f32 = 0.3;
+
 fn place_camera(
     game: Option<Res<Game>>,
     look: Res<Look>,
     sway: Res<Sway>,
     time: Res<Time<Fixed>>,
     mover: Res<Mover>,
+    real: Res<Time<Real>>,
     mut cam: Query<&mut Transform, With<MainCamera>>,
 ) {
-    let Some(game) = game else { return };
     let Ok(mut t) = cam.single_mut() else { return };
+    let Some(game) = game else {
+        // The start menu's scene (src/lobby.rs): from the middle of the empty arena, turning
+        // slowly, looking up at the fireworks.
+        let yaw = real.elapsed_secs() * LOBBY_TURN;
+        t.translation = Vec3::Y * EYE;
+        t.rotation = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(LOBBY_PITCH);
+        return;
+    };
     let a = alpha(&time);
     let Some(snap_feet) = my_feet(&game, a) else {
         return;
