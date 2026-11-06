@@ -721,7 +721,7 @@ struct Wrist {
     panel_digits: Vec<Digit>,
     mega_digits: Vec<Digit>,
     mega_pips: [Entity; 2],
-    /// Small copies of the powerups one has, in a row under the hit bars.
+    /// Small copies of the powerups one has, in a row along the top.
     powerups: Vec<(PickupKind, Entity)>,
 }
 
@@ -872,7 +872,7 @@ fn wrist(
             };
         }
     }
-    // The powerups, side by side under the bars (a running shield flickering in its last two
+    // The powerups, side by side along the top (a running shield flickering in its last two
     // seconds).
     let mut x = -0.03;
     for &(kind, e) in &w.powerups {
@@ -890,7 +890,7 @@ fn wrist(
             };
         }
         if has && let Ok(mut t) = transforms.get_mut(e) {
-            t.translation = Vec3::new(x, -0.03, 0.0);
+            t.translation = Vec3::new(x, 0.11, 0.0);
             t.rotation = Quat::from_rotation_y(time.elapsed_secs() * 1.5);
             x += 0.03;
         }
