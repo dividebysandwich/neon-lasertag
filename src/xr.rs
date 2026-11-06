@@ -251,7 +251,8 @@ pub type Bindings = Vec<std::borrow::Cow<'static, str>>;
 
 /// The Steam Frame's controllers in their own profile (`frame`: the runtime has it), as SteamVR
 /// maps Touch onto them: the left D-pad is X (down) and Y (the rest), the right face buttons A
-/// and B (with X and Y). Its menu buttons are the left view button and the right menu button.
+/// and B (with X and Y), and the bumpers fire like the triggers. Its menu buttons are the left
+/// view button and the right menu button.
 #[allow(clippy::type_complexity)]
 pub fn frame_profile(
     frame: bool,
@@ -273,7 +274,13 @@ pub fn frame_profile(
     vec![(
         FRAME_PROFILE,
         both("input/squeeze/value"),
-        both("input/trigger/value"),
+        // (The bumpers pull the trigger too, as with SteamVR's Touch emulation.)
+        vec![
+            l("input/trigger/value"),
+            r("input/trigger/value"),
+            l("input/bumper/click"),
+            r("input/bumper/click"),
+        ],
         vec![l("input/dpad_down/click"), r("input/a/click")],
         vec![
             l("input/dpad_up/click"),
