@@ -8,12 +8,16 @@ use lt_sim::{PlayerId, SimEvent, Team};
 
 use crate::desktop::{MainCamera, Overlays};
 use crate::game::{Game, GameEvent};
+use crate::neonui;
 use crate::session::Session;
 
 #[derive(Component)]
 struct ScoreText(Team);
 #[derive(Component)]
 struct ClockText;
+/// Under the clock: "2X POINTS" while points count double.
+#[derive(Component)]
+struct DoubleText;
 
 /// The big line announcing an arena event (BLACKOUT, OVERDRIVE, DOUBLE POINTS), and the
 /// seconds it has left to show.
@@ -21,10 +25,25 @@ struct ClockText;
 struct EventBanner(f32);
 #[derive(Component)]
 struct CenterText;
+/// The bottom left panel (framed in the local player's team colour).
 #[derive(Component)]
-struct StatusText;
+struct StatusPanel;
+/// A line of the bottom left panel.
+#[derive(Component, Clone, Copy, PartialEq)]
+enum StatusPart {
+    Team,
+    Score,
+    Ammo,
+    Grenade,
+}
+/// The ammo bar's filled part.
 #[derive(Component)]
-struct FeedText;
+struct AmmoFill;
+/// Line `0` of the feed (a pill), and its text.
+#[derive(Component)]
+struct FeedLine(usize);
+#[derive(Component)]
+struct FeedLineText(usize);
 #[derive(Component)]
 struct HitFlash;
 /// One of the three hits-left lights.
@@ -38,6 +57,9 @@ struct DifficultyText;
 /// Megatarget mode: the local player's progress (bottom middle).
 #[derive(Component)]
 struct MegaText;
+/// The frame around `MegaText` (hidden outside Megatarget mode).
+#[derive(Component)]
+struct MegaBox;
 /// The local player's powerups (bottom left, above the hit lights).
 #[derive(Component)]
 struct PowerText;
@@ -52,6 +74,8 @@ const MARKS: usize = 4;
 const PIECES: usize = 9;
 /// Seconds a hit arc shows.
 const MARK_LIFE: f32 = 1.1;
+/// Lines the feed shows at most.
+const FEED_LINES: usize = 6;
 
 /// Where a hit came from: the shooter (followed while it moves) or the place it was.
 #[derive(Clone, Copy)]
@@ -63,7 +87,8 @@ struct HitMark {
 
 #[derive(Resource, Default)]
 struct Feed {
-    lines: Vec<(String, f32)>,
+    /// Each line, its colour and the seconds it has left.
+    lines: Vec<(String, Color, f32)>,
     flash: f32,
     marks: Vec<HitMark>,
 }
@@ -80,6 +105,8 @@ impl Plugin for HudPlugin {
                 (
                     events,
                     update,
+                    status_panel,
+                    feed_lines,
                     hit_arcs,
                     mega_status,
                     powerup_status,
@@ -138,20 +165,74 @@ pub fn shooter_pos(game: &Game, by: PlayerId) -> Option<Vec3> {
     Some(p.feet + p.head.pos)
 }
 
-fn text(s: &str, size: f32, color: Color) -> impl Bundle {
+/// Text in the HUD: the menus' font, with a dark outline-ish shadow to read over the arena.
+fn text(s: &str, size: f32, color: Color, weight: u16) -> impl Bundle {
     (
-        Text::new(s),
-        TextFont {
-            font_size: FontSize::Px(size),
+        neonui::text_w(s, size, color, weight),
+        TextShadow {
+            offset: Vec2::new(0.0, 2.0),
+            color: Color::srgba(0.0, 0.0, 0.02, 0.85),
+        },
+    )
+}
+
+fn glow(color: Color, alpha: f32, blur: f32) -> BoxShadow {
+    BoxShadow::new(
+        color.with_alpha(alpha),
+        Val::Px(0.0),
+        Val::Px(0.0),
+        Val::Px(0.0),
+        Val::Px(blur),
+    )
+}
+
+/// A small framed box glowing in `color`, its children in a column, `pad` px inside.
+fn hud_panel(color: Color, pad: (f32, f32)) -> impl Bundle {
+    framed(
+        color,
+        Node {
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            padding: UiRect::axes(Val::Px(pad.0), Val::Px(pad.1)),
             ..default()
         },
-        TextColor(color),
+    )
+}
+
+/// `node` framed and glowing in `color`.
+fn framed(color: Color, node: Node) -> impl Bundle {
+    (
+        Node {
+            border: UiRect::all(Val::Px(2.0)),
+            border_radius: BorderRadius::all(Val::Px(8.0)),
+            ..node
+        },
+        BackgroundColor(neonui::PANEL.with_alpha(0.72)),
+        BorderColor::all(color.with_alpha(0.8)),
+        glow(color, 0.45, 16.0),
+    )
+}
+
+/// A glowing bar of the crosshair, `w` by `h` px at (`x`, `y`) in its 30 px box.
+fn reticle_bar(x: f32, y: f32, w: f32, h: f32) -> impl Bundle {
+    (
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(x),
+            top: Val::Px(y),
+            width: Val::Px(w),
+            height: Val::Px(h),
+            border_radius: BorderRadius::all(Val::Px(1.0)),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.95, 1.0, 1.0, 0.9)),
+        glow(neonui::CYAN, 0.8, 6.0),
     )
 }
 
 fn spawn(mut commands: Commands) {
-    let red = Color::srgb(1.0, 0.25, 0.25);
-    let blue = Color::srgb(0.35, 0.6, 1.0);
+    let red = team_color(Team::Red);
+    let blue = team_color(Team::Blue);
     // Red flash when hit.
     commands.spawn((
         HudRoot,
@@ -182,54 +263,64 @@ fn spawn(mut commands: Commands) {
             ));
         }
     }
-    // Top: RED score, clock, BLUE score; the bots' difficulty below.
     // An arena event's announcement, under the scores.
     commands
         .spawn((
             HudRoot,
             Node {
                 position_type: PositionType::Absolute,
-                top: Val::Px(110.0),
+                top: Val::Px(138.0),
                 width: Val::Percent(100.0),
                 justify_content: JustifyContent::Center,
                 ..default()
             },
         ))
         .with_children(|p| {
-            p.spawn((EventBanner::default(), text("", 56.0, Color::NONE)));
+            p.spawn((EventBanner::default(), text("", 60.0, Color::NONE, 900)));
         });
+    // Top: RED score, clock, BLUE score; the bots' difficulty below.
     commands
         .spawn((
             HudRoot,
             Node {
                 position_type: PositionType::Absolute,
-                top: Val::Px(12.0),
+                top: Val::Px(14.0),
                 width: Val::Percent(100.0),
-                justify_content: JustifyContent::Center,
-                column_gap: Val::Px(40.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(8.0),
                 ..default()
             },
         ))
         .with_children(|p| {
-            p.spawn((ScoreText(Team::Red), text("RED 0", 34.0, red)));
-            p.spawn((ClockText, text("10:00", 34.0, Color::WHITE)));
-            p.spawn((ScoreText(Team::Blue), text("BLUE 0", 34.0, blue)));
+            p.spawn(neonui::row(14.0)).with_children(|r| {
+                for (team, name, c) in [(Team::Red, "RED", red), (Team::Blue, "BLUE", blue)] {
+                    if team == Team::Blue {
+                        r.spawn(hud_panel(neonui::CYAN, (22.0, 6.0)))
+                            .with_children(|b| {
+                                b.spawn((ClockText, text("10:00", 34.0, neonui::TEXT, 800)));
+                                b.spawn((DoubleText, text("", 12.0, neonui::AMBER, 800)));
+                            });
+                    }
+                    r.spawn(framed(
+                        c,
+                        Node {
+                            min_width: Val::Px(120.0),
+                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::Center,
+                            padding: UiRect::axes(Val::Px(18.0), Val::Px(6.0)),
+                            ..default()
+                        },
+                    ))
+                    .with_children(|b| {
+                        b.spawn(text(name, 12.0, c, 700));
+                        b.spawn((ScoreText(team), text("0", 30.0, c, 900)));
+                    });
+                }
+            });
+            p.spawn((DifficultyText, text("", 13.0, neonui::DIM, 600)));
         });
-    commands
-        .spawn((
-            HudRoot,
-            Node {
-                position_type: PositionType::Absolute,
-                top: Val::Px(54.0),
-                width: Val::Percent(100.0),
-                justify_content: JustifyContent::Center,
-                ..default()
-            },
-        ))
-        .with_children(|p| {
-            p.spawn((DifficultyText, text("", 15.0, Color::srgb(0.6, 0.6, 0.7))));
-        });
-    // Crosshair.
+    // Crosshair: four glowing bars around a dot.
     commands
         .spawn((
             HudRoot,
@@ -243,14 +334,18 @@ fn spawn(mut commands: Commands) {
             },
         ))
         .with_children(|p| {
-            p.spawn((
-                Node {
-                    width: Val::Px(6.0),
-                    height: Val::Px(6.0),
-                    ..default()
-                },
-                BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.85)),
-            ));
+            p.spawn(Node {
+                width: Val::Px(30.0),
+                height: Val::Px(30.0),
+                ..default()
+            })
+            .with_children(|c| {
+                c.spawn(reticle_bar(0.0, 14.0, 9.0, 2.0));
+                c.spawn(reticle_bar(21.0, 14.0, 9.0, 2.0));
+                c.spawn(reticle_bar(14.0, 0.0, 2.0, 9.0));
+                c.spawn(reticle_bar(14.0, 21.0, 2.0, 9.0));
+                c.spawn(reticle_bar(13.5, 13.5, 3.0, 3.0));
+            });
         });
     // Middle: respawn countdown and messages.
     commands
@@ -267,7 +362,7 @@ fn spawn(mut commands: Commands) {
         .with_children(|p| {
             p.spawn((
                 CenterText,
-                text("", 44.0, Color::WHITE),
+                text("", 40.0, neonui::TEXT, 800),
                 TextLayout::justify(Justify::Center),
             ));
         });
@@ -284,79 +379,161 @@ fn spawn(mut commands: Commands) {
             },
         ))
         .with_children(|p| {
-            p.spawn((
-                MegaText,
-                text("", 24.0, Color::srgb(1.0, 0.55, 0.15)),
-                TextLayout::justify(Justify::Center),
-            ));
+            p.spawn((MegaBox, hud_panel(neonui::AMBER, (18.0, 7.0))))
+                .with_children(|b| {
+                    b.spawn((
+                        MegaText,
+                        text("", 18.0, neonui::AMBER, 700),
+                        TextLayout::justify(Justify::Center),
+                    ));
+                });
         });
-    // Bottom left: hits left and the grenade.
-    commands.spawn((
-        HudRoot,
-        StatusText,
-        text("", 28.0, Color::WHITE),
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(20.0),
-            bottom: Val::Px(16.0),
-            ..default()
-        },
-    ));
+    // Bottom left: the powerups above a panel with the score, hits left, ammo and grenade.
     commands
         .spawn((
             HudRoot,
             Node {
                 position_type: PositionType::Absolute,
                 left: Val::Px(20.0),
-                bottom: Val::Px(124.0),
-                column_gap: Val::Px(8.0),
+                bottom: Val::Px(18.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::FlexStart,
+                row_gap: Val::Px(8.0),
                 ..default()
             },
         ))
         .with_children(|p| {
-            for k in 1..=3 {
-                p.spawn((
-                    Pip(k),
+            p.spawn((PowerText, text("", 17.0, neonui::AMBER, 800)));
+            p.spawn((
+                StatusPanel,
+                framed(
+                    neonui::CYAN,
                     Node {
-                        width: Val::Px(34.0),
-                        height: Val::Px(14.0),
+                        width: Val::Px(270.0),
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Stretch,
+                        padding: UiRect::axes(Val::Px(16.0), Val::Px(12.0)),
+                        row_gap: Val::Px(9.0),
                         ..default()
                     },
-                    BackgroundColor(Color::WHITE),
-                ));
+                ),
+            ))
+            .with_children(|b| {
+                b.spawn(Node {
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Baseline,
+                    ..default()
+                })
+                .with_children(|r| {
+                    r.spawn((StatusPart::Team, text("", 18.0, neonui::TEXT, 900)));
+                    r.spawn((StatusPart::Score, text("", 16.0, neonui::TEXT, 700)));
+                });
+                b.spawn(neonui::row(8.0)).with_children(|r| {
+                    for k in 1..=3 {
+                        r.spawn((
+                            Pip(k),
+                            Node {
+                                flex_grow: 1.0,
+                                height: Val::Px(12.0),
+                                border_radius: BorderRadius::all(Val::Px(3.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::WHITE),
+                            BoxShadow::default(),
+                        ));
+                    }
+                });
+                b.spawn(Node {
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Baseline,
+                    ..default()
+                })
+                .with_children(|r| {
+                    r.spawn(text("AMMO", 12.0, neonui::DIM, 700));
+                    r.spawn((StatusPart::Ammo, text("", 15.0, neonui::TEXT, 700)));
+                });
+                b.spawn((
+                    Node {
+                        height: Val::Px(5.0),
+                        border_radius: BorderRadius::all(Val::Px(3.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.4, 0.42, 0.6, 0.3)),
+                ))
+                .with_children(|t| {
+                    t.spawn((
+                        AmmoFill,
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Percent(100.0),
+                            border_radius: BorderRadius::all(Val::Px(3.0)),
+                            ..default()
+                        },
+                        BackgroundColor(neonui::CYAN),
+                        glow(neonui::CYAN, 0.7, 6.0),
+                    ));
+                });
+                b.spawn((StatusPart::Grenade, text("", 13.0, neonui::DIM, 700)));
+            });
+        });
+    // Top right: the feed, a pill per line.
+    commands
+        .spawn((
+            HudRoot,
+            Node {
+                position_type: PositionType::Absolute,
+                right: Val::Px(20.0),
+                top: Val::Px(20.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::FlexEnd,
+                row_gap: Val::Px(5.0),
+                ..default()
+            },
+        ))
+        .with_children(|p| {
+            for i in 0..FEED_LINES {
+                p.spawn((
+                    FeedLine(i),
+                    Node {
+                        display: Display::None,
+                        padding: UiRect::axes(Val::Px(12.0), Val::Px(5.0)),
+                        border: UiRect::right(Val::Px(3.0)),
+                        border_radius: BorderRadius::all(Val::Px(4.0)),
+                        ..default()
+                    },
+                    BackgroundColor(neonui::PANEL.with_alpha(0.65)),
+                    BorderColor::all(neonui::CYAN),
+                ))
+                .with_children(|l| {
+                    l.spawn((FeedLineText(i), text("", 15.0, neonui::TEXT, 600)));
+                });
             }
         });
-    // Above the hit pips: the powerups.
-    commands.spawn((
-        HudRoot,
-        PowerText,
-        text("", 24.0, Color::srgb(1.0, 0.85, 0.3)),
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(20.0),
-            bottom: Val::Px(148.0),
-            ..default()
-        },
-    ));
-    // Right: the feed.
-    commands.spawn((
-        HudRoot,
-        FeedText,
-        text("", 18.0, Color::srgb(0.85, 0.85, 0.9)),
-        TextLayout::justify(Justify::Right),
-        Node {
-            position_type: PositionType::Absolute,
-            right: Val::Px(20.0),
-            top: Val::Px(70.0),
-            ..default()
-        },
-    ));
+}
+
+/// A team's colour in the HUD.
+fn team_color(team: Team) -> Color {
+    crate::endscreen::team_ui_color(Some(team))
+}
+
+/// The colour of `id`'s team (for the feed).
+fn color_of(game: &Game, id: PlayerId) -> Color {
+    game.snap
+        .players
+        .iter()
+        .find(|p| p.id == id)
+        .map_or(neonui::TEXT, |p| team_color(p.team))
 }
 
 fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMut<Feed>) {
     for GameEvent(e) in events.read() {
         match *e {
             SimEvent::TaggedOut { player, by, .. } => {
+                let c = if by == lt_sim::HAZARD || player == by {
+                    neonui::PINK
+                } else {
+                    color_of(&game, by)
+                };
                 let line = if by == lt_sim::HAZARD {
                     format!("{} got zapped", game.name_of(player))
                 } else if player == by {
@@ -364,7 +541,7 @@ fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMu
                 } else {
                     format!("{} tagged out {}", game.name_of(by), game.name_of(player))
                 };
-                feed.lines.push((line, 6.0));
+                feed.lines.push((line, c, 6.0));
             }
             SimEvent::Assist { player, .. } => {
                 feed.lines.push((
@@ -373,6 +550,7 @@ fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMu
                         game.name_of(player),
                         game.rules.assist_points
                     ),
+                    neonui::GREEN,
                     3.0,
                 ));
             }
@@ -383,6 +561,7 @@ fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMu
                         game.name_of(player),
                         game.rules.defend_points
                     ),
+                    neonui::GREEN,
                     3.0,
                 ));
             }
@@ -399,16 +578,23 @@ fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMu
                         game.name_of(by),
                         t.unwrap_or(Team::Red)
                     ),
+                    neonui::AMBER,
                     3.0,
                 ));
             }
             SimEvent::SecondaryHit { by, charged, .. } => {
                 let who = game.name_of(by);
-                feed.lines
-                    .push((format!("{who} hit a secondary target +100"), 3.0));
+                feed.lines.push((
+                    format!("{who} hit a secondary target +100"),
+                    neonui::AMBER,
+                    3.0,
+                ));
                 if charged {
-                    feed.lines
-                        .push((format!("{who} may enter the megatarget room!"), 5.0));
+                    feed.lines.push((
+                        format!("{who} may enter the megatarget room!"),
+                        neonui::GREEN,
+                        5.0,
+                    ));
                 }
             }
             SimEvent::MegaHit { by, .. } => {
@@ -418,6 +604,7 @@ fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMu
                         game.name_of(by),
                         game.rules.megatarget_points
                     ),
+                    neonui::MAGENTA,
                     8.0,
                 ));
             }
@@ -438,20 +625,20 @@ fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMu
                 });
             }
             SimEvent::MatchOver { scores } => {
-                let w = if scores[0] > scores[1] {
-                    "RED WINS"
+                let (w, c) = if scores[0] > scores[1] {
+                    ("RED WINS", team_color(Team::Red))
                 } else if scores[1] > scores[0] {
-                    "BLUE WINS"
+                    ("BLUE WINS", team_color(Team::Blue))
                 } else {
-                    "DRAW"
+                    ("DRAW", neonui::TEXT)
                 };
-                feed.lines.push((w.to_string(), 15.0));
+                feed.lines.push((w.to_string(), c, 15.0));
             }
             _ => {}
         }
     }
-    if feed.lines.len() > 6 {
-        let n = feed.lines.len() - 6;
+    if feed.lines.len() > FEED_LINES {
+        let n = feed.lines.len() - FEED_LINES;
         feed.lines.drain(..n);
     }
 }
@@ -461,29 +648,19 @@ fn update(
     game: Res<Game>,
     time: Res<Time>,
     mut feed: ResMut<Feed>,
-    mut scores: Query<
-        (&ScoreText, &mut Text),
-        (
-            Without<ClockText>,
-            Without<CenterText>,
-            Without<StatusText>,
-            Without<FeedText>,
-        ),
-    >,
-    mut clock: Query<
+    mut scores: Query<(&ScoreText, &mut Text), (Without<ClockText>, Without<CenterText>)>,
+    mut clock: Query<&mut Text, (With<ClockText>, Without<CenterText>)>,
+    mut double: Query<
         &mut Text,
         (
-            With<ClockText>,
+            With<DoubleText>,
+            Without<ScoreText>,
+            Without<ClockText>,
             Without<CenterText>,
-            Without<StatusText>,
-            Without<FeedText>,
         ),
     >,
-    mut center: Query<&mut Text, (With<CenterText>, Without<StatusText>, Without<FeedText>)>,
-    mut status: Query<&mut Text, (With<StatusText>, Without<FeedText>)>,
-    mut feed_text: Query<&mut Text, With<FeedText>>,
-    mut flash: Query<&mut BackgroundColor, (With<HitFlash>, Without<Pip>)>,
-    mut pips: Query<(&Pip, &mut BackgroundColor), Without<HitFlash>>,
+    mut center: Query<(&mut Text, &mut TextColor), With<CenterText>>,
+    mut flash: Query<&mut BackgroundColor, With<HitFlash>>,
     mut difficulty: Query<
         &mut Text,
         (
@@ -491,15 +668,14 @@ fn update(
             Without<ScoreText>,
             Without<ClockText>,
             Without<CenterText>,
-            Without<StatusText>,
-            Without<FeedText>,
+            Without<DoubleText>,
         ),
     >,
     session: Res<Session>,
 ) {
     if let Ok(mut t) = difficulty.single_mut() {
         let want = if game.is_local() {
-            format!("bots: {}", session.difficulty.name())
+            format!("BOTS: {}", session.difficulty.name().to_uppercase())
         } else {
             String::new()
         };
@@ -509,88 +685,179 @@ fn update(
     }
     let dt = time.delta_secs();
     for (s, mut t) in &mut scores {
-        let name = if s.0 == Team::Red { "RED" } else { "BLUE" };
-        t.0 = format!("{name} {}", game.snap.scores[s.0.index()]);
+        let want = game.snap.scores[s.0.index()].to_string();
+        if t.0 != want {
+            t.0 = want;
+        }
     }
     if let Ok(mut t) = clock.single_mut() {
         let s = game.snap.time_left.max(0.0) as u32;
-        t.0 = format!("{}:{:02}", s / 60, s % 60);
-        if game.snap.double {
-            t.0.push_str("  2x");
+        let want = format!("{}:{:02}", s / 60, s % 60);
+        if t.0 != want {
+            t.0 = want;
+        }
+    }
+    if let Ok(mut t) = double.single_mut() {
+        let want = if game.snap.double { "2X POINTS" } else { "" };
+        if t.0 != want {
+            t.0 = want.to_string();
         }
     }
     let me = game
         .me
         .and_then(|id| game.snap.players.iter().find(|p| p.id == id));
-    if let Ok(mut t) = center.single_mut() {
-        t.0 = match me {
-            _ if !game.status.is_empty() => game.status.clone(),
-            _ if game.snap.over => String::new(),
-            Some(p) if p.respawn.is_some() => {
-                format!("TAGGED OUT\nback in {:.0}", p.respawn.unwrap().ceil())
-            }
-            Some(p) if p.cooldown > 0.0 => format!("HIT! blaster down {:.1}", p.cooldown),
-            Some(p) if p.ammo == 0 => {
-                "OUT OF AMMO\nrefill at your base or a white station".to_string()
-            }
+    if let Ok((mut t, mut c)) = center.single_mut() {
+        let (want, color) = match me {
+            _ if !game.status.is_empty() => (game.status.clone(), neonui::TEXT),
+            _ if game.snap.over => (String::new(), neonui::TEXT),
+            Some(p) if p.respawn.is_some() => (
+                format!("TAGGED OUT\nback in {:.0}", p.respawn.unwrap().ceil()),
+                neonui::PINK,
+            ),
+            Some(p) if p.cooldown > 0.0 => (
+                format!("HIT! blaster down {:.1}", p.cooldown),
+                neonui::AMBER,
+            ),
+            Some(p) if p.ammo == 0 => (
+                "OUT OF AMMO\nrefill at your base or a white station".to_string(),
+                neonui::AMBER,
+            ),
             Some(p) if p.power.is_some() => {
                 let left = p.power.unwrap_or(0.0).ceil();
                 let inside = game.level.mega.as_ref().is_some_and(|m| m.in_room(p.feet));
-                if inside {
+                let s = if inside {
                     format!("SHOOT THE MEGATARGET ABOVE YOU!  {left:.0}")
                 } else {
                     format!("GET INTO THE MEGATARGET ROOM  {left:.0}")
-                }
+                };
+                (s, neonui::GREEN)
             }
-            _ => String::new(),
+            _ => (String::new(), neonui::TEXT),
         };
-    }
-    if let Ok(mut t) = status.single_mut()
-        && let Some(p) = me
-    {
-        let gren = if p.grenades > 0 {
-            "grenade ready (RMB/G)"
-        } else {
-            "no grenade"
-        };
-        let team = if p.team == Team::Red { "RED" } else { "BLUE" };
-        let reload = if p.reloading { "  refilling" } else { "" };
-        t.0 = format!(
-            "{team}  score {}\nammo {} / {}{reload}\n{gren}",
-            p.score, p.ammo, game.rules.ammo
-        );
-    }
-    if let Some(p) = me {
-        let left = 3u8.saturating_sub(p.hits);
-        let blink = p.cooldown <= 0.0 || (time.elapsed_secs() * 8.0).fract() < 0.5;
-        let c = if p.team == Team::Red {
-            Color::srgb(1.0, 0.2, 0.2)
-        } else {
-            Color::srgb(0.3, 0.55, 1.0)
-        };
-        for (pip, mut bg) in &mut pips {
-            bg.0 = if pip.0 <= left && blink {
-                c
-            } else {
-                Color::srgba(0.3, 0.3, 0.3, 0.5)
-            };
+        if t.0 != want {
+            t.0 = want;
         }
-    }
-    for l in feed.lines.iter_mut() {
-        l.1 -= dt;
-    }
-    feed.lines.retain(|l| l.1 > 0.0);
-    if let Ok(mut t) = feed_text.single_mut() {
-        t.0 = feed
-            .lines
-            .iter()
-            .map(|l| l.0.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
+        c.0 = color;
     }
     feed.flash = (feed.flash - dt).max(0.0);
     if let Ok(mut b) = flash.single_mut() {
         b.0 = Color::srgba(1.0, 0.0, 0.0, feed.flash * 0.3);
+    }
+}
+
+/// The bottom left panel: team and score, hits left (blinking while the blaster is down), ammo
+/// and the grenade.
+#[allow(clippy::type_complexity)]
+fn status_panel(
+    game: Res<Game>,
+    time: Res<Time>,
+    mut parts: Query<(&StatusPart, &mut Text, &mut TextColor)>,
+    mut panel: Query<
+        (&mut BorderColor, &mut BoxShadow),
+        (With<StatusPanel>, Without<Pip>, Without<AmmoFill>),
+    >,
+    mut pips: Query<(&Pip, &mut BackgroundColor, &mut BoxShadow), Without<AmmoFill>>,
+    mut fill: Query<(&mut Node, &mut BackgroundColor, &mut BoxShadow), With<AmmoFill>>,
+) {
+    let Some(p) = game
+        .me
+        .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
+    else {
+        return;
+    };
+    let c = team_color(p.team);
+    if let Ok((mut border, mut shadow)) = panel.single_mut() {
+        *border = BorderColor::all(c.with_alpha(0.8));
+        *shadow = glow(c, 0.45, 16.0);
+    }
+    let reload = if p.reloading { "REFILLING  " } else { "" };
+    for (part, mut t, mut color) in &mut parts {
+        let (want, col) = match part {
+            StatusPart::Team => (
+                if p.team == Team::Red { "RED" } else { "BLUE" }.to_string(),
+                c,
+            ),
+            StatusPart::Score => (format!("SCORE {}", p.score), neonui::TEXT),
+            StatusPart::Ammo => (
+                format!("{reload}{} / {}", p.ammo, game.rules.ammo),
+                if p.ammo == 0 {
+                    neonui::PINK
+                } else {
+                    neonui::TEXT
+                },
+            ),
+            StatusPart::Grenade => {
+                if p.grenades > 0 {
+                    ("GRENADE READY  (RMB / G)".to_string(), neonui::GREEN)
+                } else {
+                    ("NO GRENADE".to_string(), neonui::DIM)
+                }
+            }
+        };
+        if t.0 != want {
+            t.0 = want;
+        }
+        color.0 = col;
+    }
+    let left = 3u8.saturating_sub(p.hits);
+    let blink = p.cooldown <= 0.0 || (time.elapsed_secs() * 8.0).fract() < 0.5;
+    for (pip, mut bg, mut shadow) in &mut pips {
+        let lit = pip.0 <= left && blink;
+        bg.0 = if lit {
+            c
+        } else {
+            Color::srgba(0.4, 0.42, 0.6, 0.25)
+        };
+        *shadow = glow(c, if lit { 0.8 } else { 0.0 }, 10.0);
+    }
+    if let Ok((mut node, mut bg, mut shadow)) = fill.single_mut() {
+        let k = p.ammo as f32 / game.rules.ammo.max(1) as f32;
+        node.width = Val::Percent(100.0 * k.clamp(0.0, 1.0));
+        let c = if k <= 0.25 {
+            neonui::PINK
+        } else {
+            neonui::CYAN
+        };
+        bg.0 = c;
+        *shadow = glow(c, 0.7, 6.0);
+    }
+}
+
+/// The feed: a pill per line, framed in its colour, fading out at the end.
+fn feed_lines(
+    time: Res<Time>,
+    mut feed: ResMut<Feed>,
+    mut pills: Query<(&FeedLine, &mut Node, &mut BorderColor, &mut BackgroundColor)>,
+    mut texts: Query<(&FeedLineText, &mut Text, &mut TextColor)>,
+) {
+    let dt = time.delta_secs();
+    for l in feed.lines.iter_mut() {
+        l.2 -= dt;
+    }
+    feed.lines.retain(|l| l.2 > 0.0);
+    let fade = |life: f32| (life / 0.5).clamp(0.0, 1.0);
+    for (i, mut node, mut border, mut bg) in &mut pills {
+        let want = if feed.lines.get(i.0).is_some() {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        if node.display != want {
+            node.display = want;
+        }
+        if let Some((_, c, life)) = feed.lines.get(i.0) {
+            let a = fade(*life);
+            *border = BorderColor::all(c.with_alpha(a));
+            bg.0 = neonui::PANEL.with_alpha(0.65 * a);
+        }
+    }
+    for (i, mut t, mut color) in &mut texts {
+        if let Some((s, c, life)) = feed.lines.get(i.0) {
+            if t.0 != *s {
+                t.0 = s.clone();
+            }
+            color.0 = c.mix(&neonui::TEXT, 0.35).with_alpha(fade(*life));
+        }
     }
 }
 
@@ -737,7 +1004,12 @@ pub fn powerup_line(p: &lt_sim::sim::PlayerSnap, rules: &lt_sim::Rules) -> Strin
     parts.join("   ")
 }
 
-fn mega_status(game: Res<Game>, mut q: Query<(&mut Text, &mut TextColor), With<MegaText>>) {
+#[allow(clippy::type_complexity)]
+fn mega_status(
+    game: Res<Game>,
+    mut q: Query<(&mut Text, &mut TextColor), With<MegaText>>,
+    mut frame: Query<(&mut Node, &mut BorderColor, &mut BoxShadow), With<MegaBox>>,
+) {
     let Ok((mut t, mut colour)) = q.single_mut() else {
         return;
     };
@@ -748,24 +1020,36 @@ fn mega_status(game: Res<Game>, mut q: Query<(&mut Text, &mut TextColor), With<M
         Some(p) if game.level.mega.is_some() && p.respawn.is_none() => match p.power {
             Some(left) => (
                 format!("MEGATARGET ROOM OPEN  {:.0} s", left.ceil()),
-                Color::srgb(0.3, 1.0, 0.4),
+                neonui::GREEN,
             ),
             None => {
                 let mark = |i: u8| {
                     if p.mega_hits & (1 << i) != 0 {
                         "HIT"
                     } else {
-                        "---"
+                        "- - -"
                     }
                 };
                 (
-                    format!("secondary targets   left {}   right {}", mark(0), mark(1)),
-                    Color::srgb(1.0, 0.55, 0.15),
+                    format!("SECONDARY TARGETS   LEFT {}   RIGHT {}", mark(0), mark(1)),
+                    neonui::AMBER,
                 )
             }
         },
         _ => (String::new(), Color::WHITE),
     };
+    if let Ok((mut node, mut border, mut shadow)) = frame.single_mut() {
+        let display = if want.is_empty() {
+            Display::None
+        } else {
+            Display::Flex
+        };
+        if node.display != display {
+            node.display = display;
+        }
+        *border = BorderColor::all(c.with_alpha(0.8));
+        *shadow = glow(c, 0.45, 16.0);
+    }
     if t.0 != want {
         t.0 = want;
     }
