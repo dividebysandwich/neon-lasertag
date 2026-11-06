@@ -102,6 +102,8 @@ pub struct Player {
     /// Seconds left of the cloak (0: none), and of showing after firing or a hit.
     pub cloak: f32,
     pub decloak: f32,
+    /// Seconds left of the speed boost (0: none).
+    pub speed: f32,
 }
 
 impl Player {
@@ -128,6 +130,16 @@ impl Player {
         }
     }
 
+    /// How fast the stick moves this player (m/s).
+    pub fn move_speed(&self, rules: &Rules) -> f32 {
+        rules.move_speed
+            * if self.speed > 0.0 {
+                rules.speed_factor
+            } else {
+                1.0
+            }
+    }
+
     /// Whether walking over a pickup of this kind would take it.
     pub fn wants(&self, kind: PickupKind, rules: &Rules) -> bool {
         match kind {
@@ -136,6 +148,7 @@ impl Player {
             PickupKind::Shield => self.shields == 0,
             PickupKind::Shotgun => !self.shotgun || self.ammo < rules.ammo,
             PickupKind::Cloak => self.cloak <= 0.0,
+            PickupKind::Speed => self.speed <= 0.0,
         }
     }
 
@@ -151,6 +164,7 @@ impl Player {
                 self.reloading = None;
             }
             PickupKind::Cloak => self.cloak = rules.cloak_time,
+            PickupKind::Speed => self.speed = rules.speed_time,
         }
     }
 
@@ -162,6 +176,7 @@ impl Player {
         self.shotgun = false;
         self.cloak = 0.0;
         self.decloak = 0.0;
+        self.speed = 0.0;
     }
 
     pub fn eye(&self) -> Vec3 {
@@ -324,6 +339,8 @@ pub struct PlayerSnap {
     /// `Player::cloak`, `decloak`.
     pub cloak: f32,
     pub decloak: f32,
+    /// `Player::speed`.
+    pub speed: f32,
 }
 
 impl PlayerSnap {
@@ -335,6 +352,7 @@ impl PlayerSnap {
             PickupKind::Shield => self.shields > 0 || self.shield > 0.0,
             PickupKind::Shotgun => self.shotgun,
             PickupKind::Cloak => self.cloak > 0.0,
+            PickupKind::Speed => self.speed > 0.0,
         }
     }
 
@@ -500,6 +518,7 @@ impl Sim {
             shotgun: false,
             cloak: 0.0,
             decloak: 0.0,
+            speed: 0.0,
         };
         let spawn = self.pick_spawn(team);
         p.feet = spawn.pos;
@@ -830,12 +849,12 @@ impl Sim {
                     Some(c) if c.is_finite() && p.claim_block == 0 => {
                         // A predicted position: as far as the speed limit allows (with slack for
                         // ticks arriving unevenly).
-                        let max = (rules.move_speed + rules.walk_speed_max) * TICK * 2.5;
+                        let max = (p.move_speed(&rules) + rules.walk_speed_max) * TICK * 2.5;
                         Vec2::new(c.x - p.feet.x, c.z - p.feet.z).clamp_length_max(max)
                     }
                     _ => {
                         let stick = p.cmd.stick.clamp_length_max(1.0)
-                            * rules.move_speed
+                            * p.move_speed(&rules)
                             * TICK
                             * air_control(p.air);
                         let walk = p.cmd.walk.clamp_length_max(rules.walk_speed_max * TICK);
@@ -896,6 +915,15 @@ impl Sim {
                 if p.shield <= 0.0 {
                     p.shield = 0.0;
                     self.events.push(SimEvent::ShieldDown { player: p.id });
+                }
+            }
+
+            // The speed boost running out.
+            if p.speed > 0.0 {
+                p.speed -= TICK;
+                if p.speed <= 0.0 {
+                    p.speed = 0.0;
+                    self.events.push(SimEvent::SpeedDown { player: p.id });
                 }
             }
 
@@ -1694,6 +1722,7 @@ impl Sim {
                     shotgun: p.shotgun,
                     cloak: p.cloak,
                     decloak: p.decloak,
+                    speed: p.speed,
                 })
                 .collect(),
             bolts: self
@@ -1949,6 +1978,56 @@ mod tests {
         sim.players[0].shield = 5.0;
         sim.step();
         assert_eq!(sim.player(a).unwrap().hits, 1);
+    }
+
+    #[test]
+    fn a_speed_boost_speeds_up_until_it_runs_out() {
+        let (mut sim, a, b) = duel();
+        let walk = |sim: &mut Sim| {
+            sim.set_cmd(
+                a,
+                PlayerCmd {
+                    stick: Vec2::new(0.0, -1.0),
+                    ..Default::default()
+                },
+            );
+            let from = sim.player(a).unwrap().feet;
+            for _ in 0..10 {
+                sim.step();
+            }
+            let d = sim.player(a).unwrap().feet - from;
+            sim.players[0].feet = from;
+            sim.set_cmd(a, PlayerCmd::default());
+            d.length()
+        };
+        let plain = walk(&mut sim);
+        sim.give(a, PickupKind::Speed);
+        assert!(!sim.player(a).unwrap().wants(PickupKind::Speed, &sim.rules));
+        let fast = walk(&mut sim);
+        assert!(
+            (fast / plain - 1.5).abs() < 0.05,
+            "{fast} m against {plain} m"
+        );
+        for _ in 0..(15.0 / TICK) as usize {
+            sim.step();
+        }
+        assert_eq!(sim.player(a).unwrap().speed, 0.0);
+        assert!((walk(&mut sim) / plain - 1.0).abs() < 0.05);
+        // Gone when tagged out.
+        sim.give(a, PickupKind::Speed);
+        let bolt = Bolt {
+            id: 1,
+            owner: b,
+            owner_team: Team::Blue,
+            team: Some(Team::Blue),
+            pos: Vec3::ZERO,
+            vel: Vec3::ZERO,
+            life: 1.0,
+            extra: BoltExtra::default(),
+        };
+        sim.players[0].hits = 2;
+        sim.hit_player(0, &bolt, Vec3::ZERO);
+        assert_eq!(sim.player(a).unwrap().speed, 0.0);
     }
 
     #[test]

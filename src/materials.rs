@@ -39,6 +39,7 @@ pub fn pickup_color(kind: PickupKind) -> Vec3 {
         PickupKind::Shield => Vec3::new(0.25, 0.9, 1.0),
         PickupKind::Shotgun => Vec3::new(1.0, 0.4, 0.04),
         PickupKind::Cloak => Vec3::new(0.6, 0.15, 1.0),
+        PickupKind::Speed => Vec3::new(0.6, 1.0, 0.05),
     }
 }
 

@@ -877,11 +877,13 @@ fn wrist(
     let mut x = -0.03;
     for &(kind, e) in &w.powerups {
         let has = p.respawn.is_none() && p.has(kind);
-        let on = has
-            && (kind != PickupKind::Shield
-                || p.shield <= 0.0
-                || p.shield > 2.0
-                || (time.elapsed_secs() * 10.0).fract() < 0.6);
+        // (A running shield or speed boost flickers in its last two seconds.)
+        let ending = match kind {
+            PickupKind::Shield => p.shield > 0.0 && p.shield <= 2.0,
+            PickupKind::Speed => p.speed <= 2.0,
+            _ => false,
+        };
+        let on = has && (!ending || (time.elapsed_secs() * 10.0).fract() < 0.6);
         if let Ok(mut v) = vis.get_mut(e) {
             *v = if on {
                 Visibility::Inherited

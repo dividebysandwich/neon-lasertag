@@ -7,6 +7,8 @@ Meshes (game frame, Y up, metres):
 - `shield`: a heater shield facing -Z, ~0.34 m wide, ~0.42 m tall, origin at the centre.
 - `cloak`: a cape hanging from a collar, folds towards the hem, facing -Z (its outside), ~0.6 m
   wide at the hem and ~0.7 m tall, origin at the centre.
+- `speed`: a chevron pointing +X (running) with three speed lines trailing it, ~0.4 m wide,
+  ~0.32 m tall, origin near the centre.
 - `shotgun`: the pump shotgun a player holds, in the blaster's frame (barrel along -Z, up +Y,
   origin at the middle of the grip hold), with `hit_1`/`hit_2`/`hit_3` lights on top of the
   receiver (hit_1 nearest the player) and a `muzzle` disc; the empty `shotgun_muzzle` marks the
@@ -167,6 +169,19 @@ def build_cloak():
     return g
 
 
+def build_speed():
+    g = L.Geo()
+    tip, hh, drop, thick, depth = 0.17, 0.16, 0.12, 0.07, 0.03
+    for s in (-1, 1):
+        arm = [(tip, 0.0), (tip - drop, s * hh), (tip - drop - thick, s * hh), (tip - thick, 0.0)]
+        if L.signed_area(arm) < 0:
+            arm.reverse()
+        slab(g, arm, -depth, depth, "body", front_mat="accent", back_mat="accent")
+    for y, x0 in ((0.08, -0.2), (0.0, -0.25), (-0.08, -0.2)):
+        box(g, (x0, y - 0.016, -0.022), (-0.05, y + 0.016, 0.022), mat="accent")
+    return g
+
+
 def build_shotgun():
     g = L.Geo()
 
@@ -237,7 +252,7 @@ def main():
         L.material(m, base=(1, 1, 1), emit=(1, 1, 1), strength=3.0)
     L.material("muzzle", base=(1, 1, 1), emit=(1, 1, 1), strength=5.0)
     for name, build in (("rapid", build_rapid), ("shield", build_shield), ("cloak", build_cloak),
-                        ("shotgun", build_shotgun)):
+                        ("shotgun", build_shotgun), ("speed", build_speed)):
         g = build()
         L.make_object(name, g)
         print("powerup %s %d tris" % (name, g.tris()))

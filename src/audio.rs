@@ -238,6 +238,9 @@ fn play_events(
             SimEvent::ShieldDown { player } if Some(player) == me => {
                 play(&mut commands, gain, &sounds.zap, None, 0.4, 0.6)
             }
+            SimEvent::SpeedDown { player } if Some(player) == me => {
+                play(&mut commands, gain, &sounds.zap, None, 0.4, 0.7)
+            }
             SimEvent::Uncloaked { player } if Some(player) == me => {
                 play(&mut commands, gain, &sounds.zap, None, 0.4, 0.8)
             }

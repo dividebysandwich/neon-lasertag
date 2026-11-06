@@ -51,6 +51,9 @@ pub struct Rules {
     /// Seconds a cloak lasts, and how long one shows after firing or a hit.
     pub cloak_time: f32,
     pub cloak_flash: f32,
+    /// Seconds a speed boost lasts, and how many times as fast it makes one.
+    pub speed_time: f32,
+    pub speed_factor: f32,
     pub grenade_fuse: f32,
     pub grenade_active: f32,
     pub grenade_hop: f32,
@@ -112,6 +115,8 @@ impl Default for Rules {
             shotgun_range: 14.0,
             cloak_time: 100.0,
             cloak_flash: 0.5,
+            speed_time: 15.0,
+            speed_factor: 1.5,
             grenade_fuse: 3.0,
             grenade_active: 4.0,
             grenade_hop: 1.0,

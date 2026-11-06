@@ -60,22 +60,27 @@ pub enum PickupKind {
     /// Unseen from afar and see-through up close for `Rules::cloak_time` or until tagged out
     /// (showing for a moment after firing or a hit).
     Cloak,
+    /// `Rules::speed_factor` times as fast on one's feet for `Rules::speed_time` or until
+    /// tagged out.
+    Speed,
 }
 
 impl PickupKind {
-    pub const ALL: [PickupKind; 5] = [
+    pub const ALL: [PickupKind; 6] = [
         PickupKind::Grenade,
         PickupKind::Rapid,
         PickupKind::Shield,
         PickupKind::Shotgun,
         PickupKind::Cloak,
+        PickupKind::Speed,
     ];
     /// The powerups (everything but the grenade).
-    pub const POWERUPS: [PickupKind; 4] = [
+    pub const POWERUPS: [PickupKind; 5] = [
         PickupKind::Rapid,
         PickupKind::Shield,
         PickupKind::Shotgun,
         PickupKind::Cloak,
+        PickupKind::Speed,
     ];
 
     pub fn name(self) -> &'static str {
@@ -85,6 +90,7 @@ impl PickupKind {
             PickupKind::Shield => "shield",
             PickupKind::Shotgun => "shotgun",
             PickupKind::Cloak => "cloak",
+            PickupKind::Speed => "speed boost",
         }
     }
 
@@ -96,6 +102,7 @@ impl PickupKind {
             PickupKind::Shield => "shield",
             PickupKind::Shotgun => "shotgun",
             PickupKind::Cloak => "cloak",
+            PickupKind::Speed => "speed",
         }
     }
 
@@ -209,6 +216,10 @@ pub enum SimEvent {
     },
     /// A player's cloak ran out.
     Uncloaked {
+        player: PlayerId,
+    },
+    /// A player's speed boost ran out.
+    SpeedDown {
         player: PlayerId,
     },
     /// A bolt hit a shielded player (and did nothing).

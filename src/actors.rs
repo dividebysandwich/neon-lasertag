@@ -100,6 +100,7 @@ impl Plugin for ActorsPlugin {
                 (
                     sync_players,
                     sync_bolts,
+                    speed_trails,
                     sync_grenades,
                     sync_pickups,
                     effects,
@@ -541,6 +542,42 @@ fn sync_players(
         // (Not one's own: from inside, it would tint everything one looks at; the HUD and the
         // VR hand's powerup icons tell.)
         set_vis(&mut vis, v.beam, alive && !me && p.shield > 0.0 && flicker);
+    }
+}
+
+/// Speed-boosted players leave a short trail of fading motes behind them (not while cloaked).
+fn speed_trails(
+    mut commands: Commands,
+    game: Res<Game>,
+    meshes: Res<ActorMeshes>,
+    palette: Res<Palette>,
+    time: Res<Time>,
+    mut acc: Local<f32>,
+) {
+    *acc += time.delta_secs();
+    if *acc < 0.04 {
+        return;
+    }
+    *acc = 0.0;
+    let mat = palette.pickup_for(PickupKind::Speed).0;
+    for p in &game.snap.players {
+        if p.speed <= 0.0 || p.respawn.is_some() || p.cloaked() || Some(p.id) == game.me {
+            continue;
+        }
+        for h in [0.35, 0.9, 1.4] {
+            commands.spawn((
+                Spark {
+                    vel: Vec3::ZERO,
+                    life: 0.35,
+                    max: 0.35,
+                    size: 0.045,
+                    gravity: false,
+                },
+                Mesh3d(meshes.spark.clone()),
+                MeshMaterial3d(mat.clone()),
+                Transform::from_translation(p.feet + Vec3::Y * h).with_scale(Vec3::splat(0.045)),
+            ));
+        }
     }
 }
 
