@@ -1,7 +1,8 @@
 //! The music, chosen by what's on: `menu*.ogg` in the menus, `game*.ogg` during a match,
 //! `won*.ogg` or `lost*.ogg` once at the end of one (assets/music; a draw counts as lost). Each
 //! time a track is due, one of the mood's files is picked at random (not the one just played, if
-//! there are others); the menu's and the match's music go on with another when one ends. Quietly
+//! there are others); the menu's music goes on with another when one ends, while a match's track
+//! loops until the match is over. Quietly
 //! enough for the sound effects. Its spectrum, `MusicSpectrum`, drives the scenery's displays and
 //! lights and the border walls' pulse.
 //!
@@ -111,6 +112,11 @@ impl Mood {
     fn goes_on(self) -> bool {
         matches!(self, Mood::Menu | Mood::Game)
     }
+
+    /// Whether its track loops until the mood changes (a match keeps its track).
+    fn loops(self) -> bool {
+        self == Mood::Game
+    }
 }
 
 /// The music files, by mood (asset paths, sorted), and their spectra.
@@ -129,9 +135,9 @@ impl Tracks {
     }
 }
 
-/// The track playing (an index into `Tracks::files`).
+/// The track playing (an index into `Tracks::files`), and whether it loops.
 #[derive(Component)]
-struct Music(usize);
+struct Music(usize, bool);
 
 /// The mood the music is in, whether its track for it has started, and the last track played.
 #[derive(Resource, Default)]
@@ -256,10 +262,15 @@ fn choose(
     playing.last = Some(i);
     info!("music: {}", tracks.files[i].1);
     let level = settings.map_or(1.0, |s| s.music_volume);
+    let playback = if mood.loops() {
+        PlaybackSettings::LOOP
+    } else {
+        PlaybackSettings::DESPAWN
+    };
     commands.spawn((
-        Music(i),
+        Music(i, mood.loops()),
         AudioPlayer::new(assets.load(tracks.files[i].1.clone())),
-        PlaybackSettings::DESPAWN.with_volume(Volume::Linear(VOLUME * level)),
+        playback.with_volume(Volume::Linear(VOLUME * level)),
         Name::new("music"),
     ));
 }
@@ -294,7 +305,12 @@ fn follow(
     } else {
         data.frames() as f32 / data.fps
     };
-    let t = sink.position().as_secs_f32().min(duration);
+    let pos = sink.position().as_secs_f32();
+    let t = if music.1 {
+        pos % duration
+    } else {
+        pos.min(duration)
+    };
     let dt = time.delta_secs();
     for (b, level) in spectrum.bands.iter_mut().enumerate() {
         let target = data.sample(t, b);
