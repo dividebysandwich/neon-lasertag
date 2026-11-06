@@ -215,6 +215,8 @@ const DOOR_OPEN_MIN: u32 = 40;
 /// Ticks a bot needs to get through a laser gate (it waits if the gate is on or switches on
 /// sooner).
 const GATE_CLEAR_TICKS: u32 = 24;
+/// How far bots see in a blackout (m).
+const BLACKOUT_SIGHT: f32 = 12.0;
 /// With the charge gun, enemies at least this far off (m) get a beam, closer ones bolts.
 const BEAM_MIN_RANGE: f32 = 8.0;
 /// What going through a laser gate costs a route (metres), for the wait.
@@ -1372,6 +1374,12 @@ impl Bot {
         self.visible.clear();
         let eye = p.eye();
         let fwd = Vec2::new(self.aim.x, self.aim.z).normalize_or_zero();
+        // (Less far in a blackout.)
+        let sight = if matches!(sim.event, Some((ArenaEvent::Blackout, _))) {
+            BLACKOUT_SIGHT
+        } else {
+            SIGHT
+        };
         for o in &sim.players {
             if o.team == p.team || !o.alive() {
                 continue;
@@ -1381,7 +1389,7 @@ impl Bot {
             let d = to.length();
             let in_view = d < SENSE || fwd.dot(Vec2::new(to.x, to.z).normalize_or_zero()) > FOV_COS;
             let mut known = false;
-            if d < SIGHT && in_view && o.seen_from(d) {
+            if d < sight && in_view && o.seen_from(d) {
                 // The chest if it shows, otherwise the head (over a half wall).
                 let point = if clear(&sim.world, eye, chest) {
                     Some(chest)

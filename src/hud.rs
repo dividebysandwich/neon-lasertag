@@ -14,6 +14,11 @@ use crate::session::Session;
 struct ScoreText(Team);
 #[derive(Component)]
 struct ClockText;
+
+/// The big line announcing an arena event (BLACKOUT, OVERDRIVE, DOUBLE POINTS), and the
+/// seconds it has left to show.
+#[derive(Component, Default)]
+struct EventBanner(f32);
 #[derive(Component)]
 struct CenterText;
 #[derive(Component)]
@@ -72,7 +77,14 @@ impl Plugin for HudPlugin {
             .add_systems(Update, reset.run_if(resource_added::<Game>))
             .add_systems(
                 Update,
-                (events, update, hit_arcs, mega_status, powerup_status)
+                (
+                    events,
+                    update,
+                    hit_arcs,
+                    mega_status,
+                    powerup_status,
+                    event_banner,
+                )
                     .chain()
                     .run_if(resource_exists::<Game>),
             )
@@ -171,6 +183,21 @@ fn spawn(mut commands: Commands) {
         }
     }
     // Top: RED score, clock, BLUE score; the bots' difficulty below.
+    // An arena event's announcement, under the scores.
+    commands
+        .spawn((
+            HudRoot,
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(110.0),
+                width: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+        ))
+        .with_children(|p| {
+            p.spawn((EventBanner::default(), text("", 56.0, Color::NONE)));
+        });
     commands
         .spawn((
             HudRoot,
@@ -488,6 +515,9 @@ fn update(
     if let Ok(mut t) = clock.single_mut() {
         let s = game.snap.time_left.max(0.0) as u32;
         t.0 = format!("{}:{:02}", s / 60, s % 60);
+        if game.snap.double {
+            t.0.push_str("  2x");
+        }
     }
     let me = game
         .me
@@ -631,6 +661,44 @@ fn powerup_status(game: Res<Game>, mut q: Query<&mut Text, With<PowerText>>) {
         .me
         .and_then(|id| game.snap.players.iter().find(|p| p.id == id));
     t.0 = me.map(|p| powerup_line(p, &game.rules)).unwrap_or_default();
+}
+
+/// The banner for an arena event (its name and colour), if `e` starts one.
+pub fn event_banner_for(e: &SimEvent) -> Option<(&'static str, Color)> {
+    match *e {
+        SimEvent::EventStart {
+            kind: lt_sim::ArenaEvent::Blackout,
+        } => Some(("BLACKOUT", Color::srgb(0.75, 0.78, 0.95))),
+        SimEvent::EventStart {
+            kind: lt_sim::ArenaEvent::Overdrive,
+        } => Some(("OVERDRIVE", Color::srgb(1.0, 0.82, 0.25))),
+        SimEvent::DoublePoints => Some(("DOUBLE POINTS", Color::srgb(1.0, 0.82, 0.25))),
+        _ => None,
+    }
+}
+
+/// Seconds an arena event's banner shows.
+pub const BANNER_TIME: f32 = 3.0;
+
+fn event_banner(
+    mut events: MessageReader<GameEvent>,
+    time: Res<Time>,
+    mut q: Query<(&mut EventBanner, &mut Text, &mut TextColor)>,
+) {
+    let Ok((mut b, mut text, mut color)) = q.single_mut() else {
+        return;
+    };
+    for GameEvent(e) in events.read() {
+        if let Some((name, c)) = event_banner_for(e) {
+            b.0 = BANNER_TIME;
+            text.0 = name.to_string();
+            color.0 = c;
+        }
+    }
+    b.0 = (b.0 - time.delta_secs()).max(0.0);
+    // Fading out in the last half second, a little pulse meanwhile.
+    let a = (b.0 / 0.5).min(1.0) * (0.85 + 0.15 * (time.elapsed_secs() * 8.0).sin());
+    color.0.set_alpha(a);
 }
 
 /// What the HUD says about a player's powerups ("" with none).

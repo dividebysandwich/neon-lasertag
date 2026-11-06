@@ -84,6 +84,16 @@ pub struct Rules {
     pub grenade_max_speed: f32,
     /// Match length (seconds).
     pub match_time: f32,
+    /// Arena events (`ArenaEvent`): whether there are any, when the first comes (seconds into
+    /// the match, random in the range) and the time from one to the next, none starting in
+    /// the last `event_quiet` seconds; a blackout's length; and the last seconds of a match
+    /// in which every point counts double (0: never).
+    pub events: bool,
+    pub event_first: (f32, f32),
+    pub event_every: (f32, f32),
+    pub event_quiet: f32,
+    pub blackout_time: f32,
+    pub double_last: f32,
     /// The arena's size (with the seed and the mode, all a client needs to build the same
     /// arena).
     pub arena: ArenaSize,
@@ -158,6 +168,12 @@ impl Default for Rules {
             grenade_restitution: 0.45,
             grenade_max_speed: 48.0,
             match_time: 600.0,
+            events: true,
+            event_first: (120.0, 180.0),
+            event_every: (120.0, 180.0),
+            event_quiet: 75.0,
+            blackout_time: 20.0,
+            double_last: 60.0,
             arena: ArenaSize::Small,
             mode: GameMode::Classic,
             secondary_points: 100,

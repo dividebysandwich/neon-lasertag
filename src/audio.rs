@@ -51,6 +51,9 @@ struct Sounds {
     barrier_up: Handle<AudioSource>,
     barrier_hit: Handle<AudioSource>,
     barrier_down: Handle<AudioSource>,
+    event_blackout: Handle<AudioSource>,
+    event_overdrive: Handle<AudioSource>,
+    event_double: Handle<AudioSource>,
     tick: Handle<AudioSource>,
     power_up: Handle<AudioSource>,
     turret_fire: Handle<AudioSource>,
@@ -130,6 +133,9 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
         barrier_up: s("barrier_up"),
         barrier_hit: s("barrier_hit"),
         barrier_down: s("barrier_down"),
+        event_blackout: s("event_blackout"),
+        event_overdrive: s("event_overdrive"),
+        event_double: s("event_double"),
         tick: s("power_tick"),
         power_up: s("power_up"),
         turret_fire: s("turret_fire"),
@@ -321,6 +327,20 @@ fn play_events(
                     if mine { 0.8 } else { 1.0 },
                     1.0,
                 )
+            }
+            // Arena events, for everyone (and the lights coming back after a blackout).
+            SimEvent::EventStart { kind } => {
+                let sound = match kind {
+                    lt_sim::ArenaEvent::Blackout => &sounds.event_blackout,
+                    lt_sim::ArenaEvent::Overdrive => &sounds.event_overdrive,
+                };
+                play(&mut commands, gain, sound, None, 1.0, 1.0)
+            }
+            SimEvent::EventEnd {
+                kind: lt_sim::ArenaEvent::Blackout,
+            } => play(&mut commands, gain, &sounds.power_up, None, 0.7, 0.8),
+            SimEvent::DoublePoints => {
+                play(&mut commands, gain, &sounds.event_double, None, 1.0, 1.0)
             }
             SimEvent::BarrierUp { pos, .. } => {
                 play(&mut commands, gain, &sounds.barrier_up, Some(pos), 1.0, 1.0)

@@ -56,7 +56,12 @@ impl Plugin for VrUiPlugin {
             )
             .add_systems(
                 Update,
-                (panels, pointer, hit_flash.run_if(resource_exists::<Game>))
+                (
+                    panels,
+                    pointer,
+                    hit_flash.run_if(resource_exists::<Game>),
+                    event_banner.run_if(resource_exists::<Game>),
+                )
                     .chain()
                     .after(PoseSet)
                     .before(crate::game::DrawSet)
@@ -968,6 +973,81 @@ fn sector(angle: f32, span: f32, r0: f32, r1: f32, z: f32) -> MeshData {
         }
     }
     m
+}
+
+/// An arena event's announcement (as the flat screen's: `hud::event_banner_for`) floating in
+/// front of the eyes for a few seconds: the banner's root and its seconds left.
+#[allow(clippy::too_many_arguments)]
+fn event_banner(
+    mut commands: Commands,
+    mut events: MessageReader<GameEvent>,
+    vr: Res<VrState>,
+    input: Res<XrInput>,
+    mats: Res<UiMats>,
+    time: Res<Time>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut transforms: Query<&mut Transform>,
+    mut banner: Local<Option<(Entity, f32)>>,
+) {
+    for GameEvent(e) in events.read() {
+        let Some((name, _)) = crate::hud::event_banner_for(e) else {
+            continue;
+        };
+        if let Some((old, _)) = banner.take()
+            && let Ok(mut c) = commands.get_entity(old)
+        {
+            c.despawn();
+        }
+        let root = commands
+            .spawn((
+                Name::new("event banner"),
+                Transform::IDENTITY,
+                Visibility::default(),
+            ))
+            .id();
+        let mat = if name == "BLACKOUT" {
+            &mats.white
+        } else {
+            &mats.gold
+        };
+        segtext::spawn(
+            &mut commands,
+            &mut meshes,
+            root,
+            name,
+            0.09,
+            Vec3::ZERO,
+            Align::Center,
+            mat,
+            Some(&mats.glow[2]),
+        );
+        *banner = Some((root, crate::hud::BANNER_TIME));
+    }
+    let Some((root, left)) = banner.as_mut() else {
+        return;
+    };
+    *left -= time.delta_secs();
+    if *left <= 0.0 {
+        if let Ok(mut c) = commands.get_entity(*root) {
+            c.despawn();
+        }
+        *banner = None;
+        return;
+    }
+    // In front of the eyes, a little above, level, turned to them; swelling in.
+    let head = vr.rig
+        * input
+            .head
+            .unwrap_or(Transform::from_xyz(0.0, lt_sim::sim::EYE, 0.0));
+    let fwd = head.rotation * Vec3::NEG_Z;
+    let fwd = Vec3::new(fwd.x, 0.0, fwd.z).normalize_or(Vec3::NEG_Z);
+    if let Ok(mut t) = transforms.get_mut(*root) {
+        t.translation = head.translation + fwd * 1.6 + Vec3::Y * 0.25;
+        // (Its text faces +Z: turned about the vertical towards the eyes.)
+        t.rotation = Quat::from_rotation_y((-fwd.x).atan2(-fwd.z));
+        let age = crate::hud::BANNER_TIME - *left;
+        t.scale = Vec3::splat((age / 0.15).min(1.0) * (*left / 0.3).min(1.0));
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

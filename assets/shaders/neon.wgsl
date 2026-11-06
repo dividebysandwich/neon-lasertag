@@ -188,7 +188,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 #ifdef VERTEX_COLORS
     tint = in.color;
 #endif
-    let col = neon_color(in.world_position.xyz, uv, tint);
+    // (The arena's own lights dim in a blackout: extra.z marks them, extra.w is how bright.)
+    let col = neon_color(in.world_position.xyz, uv, tint) * mix(1.0, neon.extra.w, neon.extra.z);
     if (neon.params.y > 0.5 && neon.extra.x > 3.5) {
         let to_eye = normalize(view.world_position - in.world_position.xyz);
         let a = cloak(in.world_position.xyz, in.world_normal, to_eye, neon.params.z);

@@ -206,7 +206,8 @@ vec3 tone(vec3 c) {
 }
 
 void main() {
-    vec3 col = neon_colour(v_world);
+    // (The arena's own lights dim in a blackout: extra.z marks them, extra.w is how bright.)
+    vec3 col = neon_colour(v_world) * mix(1.0, u_extra.w, u_extra.z);
 #ifdef GLOW
     if (u_extra.x > 3.5) {
         float a = cloak(v_world, v_normal, normalize(v_eye - v_world), u_time);

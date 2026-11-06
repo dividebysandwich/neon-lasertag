@@ -127,6 +127,25 @@ impl PickupKind {
     }
 }
 
+/// Something that happens to the whole arena for a while during a match.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ArenaEvent {
+    /// The arena's lights go dark for `Rules::blackout_time` (the bolts, players, pickups and
+    /// targets still glow; the bots see less far).
+    Blackout,
+    /// Every pickup missing from the arena comes back at once.
+    Overdrive,
+}
+
+impl ArenaEvent {
+    pub fn name(self) -> &'static str {
+        match self {
+            ArenaEvent::Blackout => "BLACKOUT",
+            ArenaEvent::Overdrive => "OVERDRIVE",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Hand {
     Left,
@@ -355,6 +374,15 @@ pub enum SimEvent {
     MatchOver {
         scores: [u32; 2],
     },
+    /// An arena event began, and ended.
+    EventStart {
+        kind: ArenaEvent,
+    },
+    EventEnd {
+        kind: ArenaEvent,
+    },
+    /// Double points from now on (the last `Rules::double_last` seconds).
+    DoublePoints,
     /// Megatarget mode: a secondary target hit that counts (`side` 0 at -x, 1 at +x);
     /// `charged`: it was the shooter's second, the megatarget's room is open to them now.
     SecondaryHit {

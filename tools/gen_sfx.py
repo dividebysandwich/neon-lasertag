@@ -50,6 +50,11 @@
 - barrier_up: a barrier going up: a deep electric swell rising into a glassy shimmer.
 - barrier_hit: a bolt stopped by a barrier: a dull electric thud with a short crackle.
 - barrier_down: a barrier going down: a falling fizzle.
+- event_blackout: a blackout: a heavy relay clunk, the mains hum dying away and a deep
+  sub-bass drop.
+- event_overdrive: an overdrive: a fast rising arpeggio over a swelling noise sweep, ending in
+  a bright chord.
+- event_double: double points: a short brassy two-chord fanfare.
 - shield_hum: a forcefield's hum (a seamless two-second loop): a mains-like drone with
   slowly beating partials and faint crackle.
 
@@ -674,6 +679,35 @@ def barrier_down():
     return fizz + hiss
 
 
+def event_blackout():
+    T = 1.6
+    x = seconds(T)
+    clunk = thump(T, 60, 0.15) * 1.3 + click(T, 200, 3000, 0.012) * 0.8
+    f = 120 * np.exp(-x / 0.5) + 25
+    hum = (np.sin(2 * np.pi * phase(f)) + 0.4 * np.sin(2 * np.pi * phase(f * 2))) * env(T, 0.005, 0.9)
+    drop = np.sin(2 * np.pi * phase(55 * np.exp(-x / 0.6) + 20)) * env(T, 0.02, 1.1) * 0.8
+    return echoes(clunk + hum * 0.5 + drop, [0.15], [0.25], 2000)
+
+
+def event_overdrive():
+    T = 1.3
+    notes = [523.25, 659.25, 783.99, 1046.5, 1318.5, 1568.0]
+    arp = sum(at(T, 0.07 * i, square(np.full(int((T - 0.07 * i) * RATE), hz), 0.3)
+                 * env(T - 0.07 * i, 0.002, 0.12)) for i, hz in enumerate(notes)) * 0.25
+    sweep = sweep_noise(T, 500, 9000) * env(T, 0.3, 0.3, hold=0.2) * 0.2
+    chord = sum(at(T, 0.45, np.sin(2 * np.pi * phase(np.full(int((T - 0.45) * RATE), hz)))
+                   * env(T - 0.45, 0.01, 0.6)) for hz in [1046.5, 1318.5, 1568.0, 2093.0]) * 0.25
+    return echoes(lowpass(arp, 7000) + sweep + chord, [0.09], [0.25], 7000)
+
+
+def event_double():
+    T = 1.2
+    def chord(t0, hzs, dur):
+        return sum(at(T, t0, brass(hz, T - t0, 0.02, dur, 0.05, 6.0)) for hz in hzs)
+    fan = chord(0.0, [392.0, 493.88, 587.33], 0.2) + chord(0.22, [523.25, 659.25, 783.99], 0.7)
+    return echoes(lowpass(fan * 0.3, 6000), [0.1, 0.22], [0.3, 0.15], 6000)
+
+
 SOUNDS = {
     # name: (generator, RMS dBFS, seed)
     "footstep_1": (lambda: footstep(1), -27.0, 11),
@@ -713,6 +747,9 @@ SOUNDS = {
     "barrier_up": (barrier_up, -19.0, 301),
     "barrier_hit": (barrier_hit, -20.0, 311),
     "barrier_down": (barrier_down, -22.0, 321),
+    "event_blackout": (event_blackout, -15.0, 331),
+    "event_overdrive": (event_overdrive, -16.0, 341),
+    "event_double": (event_double, -16.0, 351),
 }
 
 # Sounds played as loops.

@@ -254,7 +254,7 @@ pub fn spawn(
     }
     for (k, (colour, m)) in shafts.into_iter().enumerate() {
         let mat = glows.add(GlowMaterial {
-            neon: NeonUniform::fixed(colour, SHAFT).volume(),
+            neon: NeonUniform::fixed(colour, SHAFT).volume().dimmable(),
         });
         let b = Breathe {
             glow: mat.clone(),
@@ -280,7 +280,7 @@ pub fn spawn(
             0.55,
         );
         let mat = glows.add(GlowMaterial {
-            neon: NeonUniform::fixed(colour, HAZE).haze(),
+            neon: NeonUniform::fixed(colour, HAZE).haze().dimmable(),
         });
         let b = Breathe {
             glow: mat.clone(),
@@ -315,7 +315,7 @@ pub fn spawn(
             mote(&mut m, p, 0.012 + rand() * 0.014);
         }
         let mat = accents.add(AccentMaterial {
-            neon: NeonUniform::fixed(colour, 2.2),
+            neon: NeonUniform::fixed(colour, 2.2).dimmable(),
         });
         commands.spawn((
             ArenaPart,

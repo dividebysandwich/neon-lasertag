@@ -14,7 +14,8 @@
 //! (`power`), and going to Red's doorway into the megatarget's room (`warp-door`), into the
 //! room (`warp-room`), in front of the first turret (`warp-turret`) or into the first pocket
 //! (`warp-pocket`); in front of the nearest mirror (`warp-mirror`) jump pad (`warp-pad`) or laser gate (`warp-gate`); turning the flat screen's view (`yaw=90`, `pitch=-20`, in degrees); holding the trigger
-//! down for S seconds (`fire=S`); putting up a carried barrier (`barrier`).
+//! down for S seconds (`fire=S`); putting up a carried barrier (`barrier`); arena events (`blackout`, `overdrive`) and the last
+//! minute's double points (`double`).
 
 use bevy::prelude::*;
 use lt_sim::bots::Difficulty;
@@ -399,6 +400,24 @@ fn dev_script(
                 p.shield = t;
             }
         }),
+        // Local games: start an arena event now (`blackout`, `overdrive`), or go to the last
+        // minute's double points (`double`).
+        "blackout" | "overdrive" | "double" => {
+            let action = action.clone();
+            commands.queue(move |w: &mut World| {
+                let Some(mut game) = w.get_resource_mut::<Game>() else {
+                    return;
+                };
+                let Source::Local { sim, .. } = &mut game.source else {
+                    return;
+                };
+                match action.as_str() {
+                    "blackout" => sim.start_event(lt_sim::ArenaEvent::Blackout),
+                    "overdrive" => sim.start_event(lt_sim::ArenaEvent::Overdrive),
+                    _ => sim.time_left = sim.time_left.min(sim.rules.double_last + 0.5),
+                }
+            });
+        }
         // Put up a carried barrier (`barrier`).
         "barrier" => commands.queue(|w: &mut World| {
             if let Some(mut local) = w.get_resource_mut::<LocalCmd>() {

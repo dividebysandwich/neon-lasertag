@@ -147,7 +147,7 @@ fn make_materials(
     });
     let mut accent = |c: Vec3, i: f32| {
         accents.add(AccentMaterial {
-            neon: NeonUniform::fixed(c, i),
+            neon: NeonUniform::fixed(c, i).dimmable(),
         })
     };
     let warm = accent(WARM, 0.5);
@@ -156,14 +156,14 @@ fn make_materials(
     let stack = STACK_COLORS.map(|c| accent(c, 4.0));
     let mut glow = |c: Vec3, i: f32| {
         glows.add(GlowMaterial {
-            neon: NeonUniform::fixed(c, i),
+            neon: NeonUniform::fixed(c, i).dimmable(),
         })
     };
     let neon_glow = NEON.map(|c| glow(c, 1.3));
     let stack_glow = STACK_COLORS.map(|c| glow(c, 2.2));
     let mut volume = |c: Vec3, i: f32| {
         glows.add(GlowMaterial {
-            neon: NeonUniform::fixed(c, i).volume(),
+            neon: NeonUniform::fixed(c, i).volume().dimmable(),
         })
     };
     let corner_cones = [volume(RED, CORNER_CONE[0]), volume(BLUE, CORNER_CONE[1])];

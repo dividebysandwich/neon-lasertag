@@ -378,6 +378,9 @@ pub struct Snapshot {
     pub turrets: Vec<TurretSnap>,
     /// Barriers standing.
     pub barriers: Vec<Barrier>,
+    /// The arena event going on (seconds left), and whether points count double.
+    pub event: Option<(ArenaEvent, f32)>,
+    pub double: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -493,6 +496,11 @@ pub struct Sim {
     pub turrets: Vec<TurretState>,
     /// Barriers standing.
     pub barriers: Vec<Barrier>,
+    /// The arena event going on, with its seconds left; when the next one comes (seconds into
+    /// the match); and whether points count double now.
+    pub event: Option<(ArenaEvent, f32)>,
+    pub next_event: f32,
+    pub double: bool,
     /// Every player's hit-relevant state at the end of each of the last `HISTORY` ticks.
     history: std::collections::VecDeque<(u64, Vec<Ghost>)>,
     events: Vec<SimEvent>,
@@ -534,7 +542,7 @@ impl Sim {
                 })
             });
         let slots = grenades.chain(powerups).collect();
-        Sim {
+        let mut sim = Sim {
             time_left: rules.match_time,
             rules,
             world,
@@ -558,13 +566,19 @@ impl Sim {
                     .collect()
             }),
             barriers: Vec::new(),
+            event: None,
+            next_event: 0.0,
+            double: false,
             history: std::collections::VecDeque::with_capacity(HISTORY + 1),
             events: Vec::new(),
             rng: ChaCha8Rng::seed_from_u64(level.seed ^ 0x5EED),
             next_id: 1,
             max_dist,
             level,
-        }
+        };
+        let (lo, hi) = sim.rules.event_first;
+        sim.next_event = sim.rng.random_range(lo..=hi.max(lo));
+        sim
     }
 
     pub fn player(&self, id: PlayerId) -> Option<&Player> {
@@ -700,6 +714,7 @@ impl Sim {
             });
             return;
         }
+        self.step_events();
         self.step_movers();
         self.step_players();
         self.step_gates();
@@ -1638,8 +1653,63 @@ impl Sim {
         }
     }
 
-    /// Points for a team, and for one of its players.
+    /// Arena events coming and going, and double points at the end.
+    fn step_events(&mut self) {
+        if let Some((kind, left)) = self.event.as_mut() {
+            *left -= TICK;
+            if *left <= 0.0 {
+                let kind = *kind;
+                self.event = None;
+                self.events.push(SimEvent::EventEnd { kind });
+            }
+        }
+        let rules = &self.rules;
+        let elapsed = rules.match_time - self.time_left;
+        if rules.events
+            && self.event.is_none()
+            && elapsed >= self.next_event
+            && self.time_left > rules.event_quiet
+        {
+            let kind = if self.rng.random_bool(0.5) {
+                ArenaEvent::Blackout
+            } else {
+                ArenaEvent::Overdrive
+            };
+            self.start_event(kind);
+            let (lo, hi) = self.rules.event_every;
+            self.next_event = elapsed + self.rng.random_range(lo..=hi.max(lo));
+        }
+        if !self.double && self.rules.double_last > 0.0 && self.time_left <= self.rules.double_last
+        {
+            self.double = true;
+            self.events.push(SimEvent::DoublePoints);
+        }
+    }
+
+    /// Starts an arena event now (testing too).
+    pub fn start_event(&mut self, kind: ArenaEvent) {
+        if let Some((old, _)) = self.event.take() {
+            self.events.push(SimEvent::EventEnd { kind: old });
+        }
+        let length = match kind {
+            ArenaEvent::Blackout => self.rules.blackout_time,
+            // (Over at once; the time is the announcement's.)
+            ArenaEvent::Overdrive => {
+                for slot in &mut self.slots {
+                    if slot.pickup.is_none() && slot.wait < f32::MAX {
+                        slot.wait = 0.0;
+                    }
+                }
+                4.0
+            }
+        };
+        self.event = Some((kind, length));
+        self.events.push(SimEvent::EventStart { kind });
+    }
+
+    /// Points for a team, and for one of its players (twice as many at the end).
     fn award(&mut self, team: Team, player: Option<PlayerId>, points: u32) {
+        let points = if self.double { points * 2 } else { points };
         self.scores[team.index()] += points;
         if let Some(p) = player.and_then(|id| self.player_mut(id)) {
             p.score += points;
@@ -2109,6 +2179,8 @@ impl Sim {
                 })
                 .collect(),
             barriers: self.barriers.clone(),
+            event: self.event,
+            double: self.double,
         }
     }
 }
@@ -2617,6 +2689,73 @@ mod tests {
         );
         // (No assist for a: their hit was on b's previous life.)
         assert_eq!(sim.player(a).unwrap().assists, 1);
+    }
+
+    #[test]
+    fn arena_events_come_on_schedule_and_points_double_at_the_end() {
+        let run = |seed| {
+            let mut sim = Sim::new(seed, Rules::default());
+            let mut starts = Vec::new();
+            let mut doubles = Vec::new();
+            while !sim.over {
+                sim.step();
+                for e in sim.drain_events() {
+                    match e {
+                        SimEvent::EventStart { kind } => starts.push((kind, sim.time_left)),
+                        SimEvent::DoublePoints => doubles.push(sim.time_left),
+                        _ => {}
+                    }
+                }
+            }
+            (starts, doubles)
+        };
+        let (starts, doubles) = run(5);
+        assert_eq!(
+            run(5),
+            (starts.clone(), doubles.clone()),
+            "the same for a seed"
+        );
+        let rules = Rules::default();
+        assert!(!starts.is_empty() && starts.len() <= 4, "{starts:?}");
+        for &(_, left) in &starts {
+            let elapsed = rules.match_time - left;
+            assert!(elapsed >= rules.event_first.0 - 0.1, "{starts:?}");
+            assert!(left > rules.event_quiet, "{starts:?}");
+        }
+        assert_eq!(doubles.len(), 1);
+        assert!((doubles[0] - rules.double_last).abs() < 0.05);
+    }
+
+    #[test]
+    fn overdrive_fills_every_pickup_and_double_points_double() {
+        let (mut sim, a, b) = duel();
+        sim.step();
+        let slots = sim.slots.len();
+        assert!(sim.pickups().count() < slots);
+        sim.start_event(ArenaEvent::Overdrive);
+        sim.step();
+        assert_eq!(sim.pickups().count(), slots);
+        assert!(matches!(sim.event, Some((ArenaEvent::Overdrive, _))));
+        // The last minute: a tag-out is worth twice as much.
+        sim.time_left = sim.rules.double_last - 1.0;
+        sim.step();
+        assert!(sim.double);
+        let bolt = Bolt {
+            id: 1,
+            owner: a,
+            owner_team: Team::Red,
+            team: Some(Team::Red),
+            pos: Vec3::ZERO,
+            vel: Vec3::ZERO,
+            life: 1.0,
+            extra: BoltExtra::default(),
+        };
+        let bi = pi_of(&sim, b);
+        sim.players[bi].feet = Vec3::ZERO;
+        sim.players[bi].hits = 2;
+        sim.hit_player(bi, &bolt, Vec3::ZERO);
+        assert_eq!(sim.player(a).unwrap().score, 2 * sim.rules.tag_points);
+        assert_eq!(sim.scores[0], 2 * sim.rules.tag_points);
     }
 
     #[test]

@@ -62,7 +62,8 @@ pub struct NeonUniform {
     pub pulse_pos: [Vec4; PULSES],
     pub pulse_color: [Vec4; PULSES],
     /// x: halo shape (0 strip, 1 volume: fades where seen edge on, 2 haze, 3 forcefield, 4
-    /// cloak), y: flow speed (m/s, mode 2).
+    /// cloak), y: flow speed (m/s, mode 2), z: 1 for the arena's own lights (dimmed in a
+    /// blackout), w: how bright those are now (`NeonGlobals::dim`).
     pub extra: Vec4,
 }
 
@@ -101,6 +102,13 @@ impl NeonUniform {
         self
     }
 
+    /// One of the arena's own lights: dimmed in a blackout (`NeonGlobals::dim`).
+    pub fn dimmable(mut self) -> Self {
+        self.extra.z = 1.0;
+        self.extra.w = 1.0;
+        self
+    }
+
     /// As a halo: a cloaked player's shimmer, brightest at the silhouette.
     pub fn cloak(mut self) -> Self {
         self.extra.x = 4.0;
@@ -134,6 +142,7 @@ impl NeonUniform {
         self.params.w = g.half_length;
         self.red = RED.extend(1.0);
         self.blue = BLUE.extend(1.0);
+        self.extra.w = g.dim;
         for (i, p) in g.pulses.iter().enumerate() {
             self.pulse_pos[i] = p.0.extend(p.1);
             self.pulse_color[i] = p.2.extend(1.0);
@@ -212,6 +221,8 @@ pub struct NeonGlobals {
     next: usize,
     /// Half the arena's length (m): the waves run from its ends.
     pub half_length: f32,
+    /// How bright the arena's own lights are (1; less in a blackout).
+    pub dim: f32,
 }
 
 impl Default for NeonGlobals {
@@ -221,6 +232,7 @@ impl Default for NeonGlobals {
             pulses: [(Vec3::ZERO, -1.0, Vec3::ZERO); PULSES],
             next: 0,
             half_length: lt_sim::level::ArenaSize::Small.dims().half_length(),
+            dim: 1.0,
         }
     }
 }
@@ -329,16 +341,16 @@ fn make_palette(
         suit,
         fur,
         arena_accent: accents.add(AccentMaterial {
-            neon: NeonUniform::team_zoned(3.0),
+            neon: NeonUniform::team_zoned(3.0).dimmable(),
         }),
         arena_glow: glows.add(GlowMaterial {
-            neon: NeonUniform::team_zoned(2.0),
+            neon: NeonUniform::team_zoned(2.0).dimmable(),
         }),
         border_accent: accents.add(AccentMaterial {
-            neon: fixed(RED, BORDER_ACCENT),
+            neon: fixed(RED, BORDER_ACCENT).dimmable(),
         }),
         border_glow: glows.add(GlowMaterial {
-            neon: fixed(RED, BORDER_GLOW),
+            neon: fixed(RED, BORDER_GLOW).dimmable(),
         }),
         accent: colors.map(|c| {
             accents.add(AccentMaterial {
@@ -381,6 +393,9 @@ fn make_palette(
     });
 }
 
+/// How bright the arena's own lights are in a blackout.
+const BLACKOUT_DIM: f32 = 0.015;
+
 /// The border walls' resting intensities (accents, halos), and the seconds they take to go
 /// once round the rainbow.
 const BORDER_ACCENT: f32 = 2.6;
@@ -415,6 +430,17 @@ fn animate(
     mut glows: ResMut<Assets<GlowMaterial>>,
 ) {
     globals.time = time.elapsed_secs_wrapped();
+    // A blackout dims the arena's own lights (eased, a little quicker going dark).
+    let dark = game
+        .as_ref()
+        .is_some_and(|g| matches!(g.snap.event, Some((lt_sim::ArenaEvent::Blackout, _))));
+    let (want, tau) = if dark {
+        (BLACKOUT_DIM, 0.35)
+    } else {
+        (1.0, 0.8)
+    };
+    let k = 1.0 - (-time.delta_secs() / tau).exp();
+    globals.dim += (want - globals.dim) * k;
     if let Some(game) = game {
         globals.half_length = game.level.dims().half_length();
     }
