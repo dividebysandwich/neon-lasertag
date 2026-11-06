@@ -68,6 +68,15 @@ fn button(p: &mut ChildSpawnerCommands, opt: Opt, width: f32, text: &str, shows:
         NeonButton::new(neonui::VIOLET),
         Some(width),
     ))
+    // Compact: the screen has many rows.
+    .insert(Node {
+        width: Val::Px(width),
+        padding: UiRect::axes(Val::Px(12.0), Val::Px(4.0)),
+        border: UiRect::all(Val::Px(2.0)),
+        border_radius: BorderRadius::all(Val::Px(5.0)),
+        justify_content: JustifyContent::Center,
+        ..default()
+    })
     .with_children(|b| {
         let mut t = b.spawn(neonui::text_w(text, 17.0, neonui::TEXT, 600));
         if let Some(s) = shows {
@@ -87,13 +96,23 @@ fn show(
             commands
                 .spawn((
                     OptionsRoot,
-                    neonui::backdrop(neonui::BACKDROP_DEEP, 30),
+                    neonui::backdrop(Color::srgba(0.01, 0.0, 0.03, 0.97), 30),
                     // Clicks stop here, not at the menu underneath.
                     bevy::ui::FocusPolicy::Block,
                 ))
                 .with_children(|p| {
                     neonui::title(p, "OPTIONS", 44.0, neonui::PINK);
-                    p.spawn(neonui::panel(neonui::VIOLET, None)).with_children(|p| {
+                    p.spawn(neonui::panel(neonui::VIOLET, None))
+                        .insert(Node {
+                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::Center,
+                            padding: UiRect::axes(Val::Px(32.0), Val::Px(16.0)),
+                            row_gap: Val::Px(5.0),
+                            border: UiRect::all(Val::Px(2.0)),
+                            border_radius: BorderRadius::all(Val::Px(10.0)),
+                            ..default()
+                        })
+                        .with_children(|p| {
                     p.spawn(Node { height: Val::Px(8.0), ..default() });
                     let row = || Node { column_gap: Val::Px(10.0), align_items: AlignItems::Center, ..default() };
                     let name = |r: &mut ChildSpawnerCommands, s: &str| {
