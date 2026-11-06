@@ -23,7 +23,7 @@ use crate::game::{Game, InputSet, LocalCmd, Mover, Source};
 use crate::scenery::Scenery;
 
 /// Seconds from the end of a local match to the next one.
-pub const NEXT_MATCH_DELAY: f32 = 15.0;
+pub const NEXT_MATCH_DELAY: f32 = 30.0;
 
 #[derive(Resource, Default)]
 pub struct Session {

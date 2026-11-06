@@ -58,7 +58,7 @@ tagged out.
 
 Matches last 10 minutes. Then the results show (each player's
 score, tags, times tagged out, accuracy and target hits); a local game goes on to the next
-match on a new arena after 15 s (or at once with Next match), a server opens its next arena
+match on a new arena after 30 s (or at once with Next match), a server opens its next arena
 itself.
 
 Players are hit on their floating parts: the head (one sphere for every animal; ears and
