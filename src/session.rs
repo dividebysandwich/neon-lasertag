@@ -239,6 +239,49 @@ fn dev_script(
                 }
             });
         }
+        // Local games: the nearest other player stands 4 m in front of the local player, facing
+        // them (`summon`, or `summon=M` for M metres).
+        a if a == "summon" || a.starts_with("summon=") => {
+            let dist: f32 = a
+                .strip_prefix("summon=")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(4.0);
+            commands.queue(move |w: &mut World| {
+                let Some(mut game) = w.get_resource_mut::<Game>() else {
+                    return;
+                };
+                let Some(me) = game.me else { return };
+                let Source::Local { sim, .. } = &mut game.source else {
+                    return;
+                };
+                let Some((feet, yaw)) = sim.player(me).map(|p| (p.feet, p.cmd.yaw)) else {
+                    return;
+                };
+                let other = sim
+                    .players
+                    .iter()
+                    .filter(|p| p.id != me && p.alive())
+                    .min_by(|a, b| a.feet.distance(feet).total_cmp(&b.feet.distance(feet)))
+                    .map(|p| p.id);
+                if let Some(id) = other {
+                    let at = feet + Quat::from_rotation_y(yaw) * Vec3::NEG_Z * dist;
+                    sim.teleport(id, at, yaw + std::f32::consts::PI);
+                }
+            });
+        }
+        // Local games: everyone's shield on at once.
+        "shields-up" => commands.queue(|w: &mut World| {
+            let Some(mut game) = w.get_resource_mut::<Game>() else {
+                return;
+            };
+            let Source::Local { sim, .. } = &mut game.source else {
+                return;
+            };
+            let t = sim.rules.shield_time;
+            for p in sim.players.iter_mut().filter(|p| p.alive()) {
+                p.shield = t;
+            }
+        }),
         // The flat screen's view: turn to `yaw=DEG` (0: facing -z, 90: -x) or `pitch=DEG`.
         a if a.starts_with("yaw=") || a.starts_with("pitch=") => {
             let (key, v) = a.split_once('=').unwrap_or_default();

@@ -86,8 +86,11 @@ pub struct Player {
     /// both are, the seconds left to get into the megatarget's room.
     pub mega_hits: u8,
     pub power: Option<f32>,
-    /// Powerups: rapid fire (until tagged out).
+    /// Powerups: rapid fire (until tagged out), shields carried, and the seconds left of the
+    /// shield in use (0: none).
     pub rapid: bool,
+    pub shields: u8,
+    pub shield: f32,
 }
 
 impl Player {
@@ -109,6 +112,7 @@ impl Player {
         match kind {
             PickupKind::Grenade => self.grenades < rules.grenade_max,
             PickupKind::Rapid => !self.rapid,
+            PickupKind::Shield => self.shields == 0,
         }
     }
 
@@ -117,12 +121,15 @@ impl Player {
         match kind {
             PickupKind::Grenade => self.grenades += 1,
             PickupKind::Rapid => self.rapid = true,
+            PickupKind::Shield => self.shields += 1,
         }
     }
 
     /// Tagged out: the powerups are gone.
     fn lose_powerups(&mut self) {
         self.rapid = false;
+        self.shields = 0;
+        self.shield = 0.0;
     }
 
     pub fn eye(&self) -> Vec3 {
@@ -269,8 +276,10 @@ pub struct PlayerSnap {
     /// Megatarget mode (`Player::mega_hits`, `Player::power`).
     pub mega_hits: u8,
     pub power: Option<f32>,
-    /// Powerups (`Player::rapid`).
+    /// Powerups (`Player::rapid`, `shields`, `shield`).
     pub rapid: bool,
+    pub shields: u8,
+    pub shield: f32,
 }
 
 impl PlayerSnap {
@@ -279,6 +288,7 @@ impl PlayerSnap {
         match kind {
             PickupKind::Grenade => self.grenades > 0,
             PickupKind::Rapid => self.rapid,
+            PickupKind::Shield => self.shields > 0 || self.shield > 0.0,
         }
     }
 }
@@ -433,6 +443,8 @@ impl Sim {
             mega_hits: 0,
             power: None,
             rapid: false,
+            shields: 0,
+            shield: 0.0,
         };
         let spawn = self.pick_spawn(team);
         p.feet = spawn.pos;
@@ -802,6 +814,19 @@ impl Sim {
                 p.reloading = None;
             }
 
+            // The shield: switched on, running out.
+            if p.cmd.shield && p.shields > 0 && p.shield <= 0.0 {
+                p.shields -= 1;
+                p.shield = rules.shield_time;
+                self.events.push(SimEvent::ShieldUp { player: p.id });
+            } else if p.shield > 0.0 {
+                p.shield -= TICK;
+                if p.shield <= 0.0 {
+                    p.shield = 0.0;
+                    self.events.push(SimEvent::ShieldDown { player: p.id });
+                }
+            }
+
             // Firing (one bolt per trigger pull).
             let pull = p.cmd.fire && !p.prev_fire;
             p.prev_fire = p.cmd.fire;
@@ -1034,6 +1059,13 @@ impl Sim {
     fn hit_player(&mut self, pi: usize, b: &Bolt, at: Vec3) {
         let (hit_cooldown, hits_to_tag) = (self.rules.hit_cooldown, self.rules.hits_to_tag);
         let p = &mut self.players[pi];
+        if p.shield > 0.0 {
+            self.events.push(SimEvent::Blocked {
+                player: p.id,
+                pos: at,
+            });
+            return;
+        }
         if p.cooldown > 0.0 {
             // Still recovering from the last hit: the bolt just fizzles.
             self.events.push(SimEvent::BoltImpact {
@@ -1233,7 +1265,7 @@ impl Sim {
             let target = self
                 .players
                 .iter()
-                .filter(|p| p.alive() && p.cooldown <= 0.0)
+                .filter(|p| p.alive() && p.cooldown <= 0.0 && p.shield <= 0.0)
                 .map(|p| p.chest())
                 .filter(|c| {
                     let d = *c - muzzle;
@@ -1490,6 +1522,8 @@ impl Sim {
                     mega_hits: p.mega_hits,
                     power: p.power,
                     rapid: p.rapid,
+                    shields: p.shields,
+                    shield: p.shield,
                 })
                 .collect(),
             bolts: self
@@ -2272,6 +2306,46 @@ mod tests {
         sim.hit_player(0, &bolt, Vec3::ZERO);
         assert!(!sim.player(a).unwrap().alive());
         assert!(!sim.player(a).unwrap().rapid);
+    }
+
+    #[test]
+    fn a_shield_stops_hits_for_its_time() {
+        let (mut sim, a, b) = duel();
+        sim.give(b, PickupKind::Shield);
+        assert_eq!(sim.player(b).unwrap().shields, 1);
+        sim.set_cmd(
+            b,
+            PlayerCmd {
+                shield: true,
+                ..Default::default()
+            },
+        );
+        sim.step();
+        sim.set_cmd(b, PlayerCmd::default());
+        let pb = sim.player(b).unwrap();
+        assert!(pb.shields == 0 && pb.shield > 9.9);
+        assert!(
+            sim.drain_events()
+                .iter()
+                .any(|e| matches!(e, SimEvent::ShieldUp { player } if *player == b))
+        );
+        shoot(&mut sim, a, b);
+        assert_eq!(sim.player(b).unwrap().hits, 0, "shielded");
+        assert!(
+            sim.drain_events()
+                .iter()
+                .any(|e| matches!(e, SimEvent::Blocked { player, .. } if *player == b))
+        );
+        for _ in 0..(10.0 / TICK) as usize {
+            sim.step();
+        }
+        assert!(
+            sim.drain_events()
+                .iter()
+                .any(|e| matches!(e, SimEvent::ShieldDown { player } if *player == b))
+        );
+        shoot(&mut sim, a, b);
+        assert_eq!(sim.player(b).unwrap().hits, 1, "the shield ran out");
     }
 
     fn mega_sim(turrets: bool) -> Sim {

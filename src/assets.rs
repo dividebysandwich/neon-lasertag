@@ -226,6 +226,7 @@ fn powerup_mesh(kind: lt_sim::PickupKind) -> &'static str {
     match kind {
         lt_sim::PickupKind::Grenade => "grenade",
         lt_sim::PickupKind::Rapid => "rapid",
+        lt_sim::PickupKind::Shield => "shield",
     }
 }
 

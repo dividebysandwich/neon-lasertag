@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use lt_sim::sim::{EYE, PlayerSnap, TICK};
-use lt_sim::{Hand, PickupKind, PlayerId, Pose, SimEvent, Team};
+use lt_sim::{PickupKind, PlayerId, Pose, SimEvent, Team};
 
 use crate::assets::{Model, Models};
 use crate::game::{DrawSet, Game, GameEvent, LocalCmd, Mover, alpha};
@@ -18,6 +18,9 @@ pub struct ActorMeshes {
     ring: Handle<Mesh>,
     /// The pulsing shell around a flying grenade.
     halo: Handle<Mesh>,
+    /// A shielded player's beam of light from above, and its material.
+    beam: Handle<Mesh>,
+    beam_mat: Handle<GlowMaterial>,
 }
 
 #[derive(Component)]
@@ -36,8 +39,8 @@ struct AvatarParts {
     gun: Entity,
     gun_hits: Vec<(Entity, u8)>,
     grenade: Entity,
-    /// VR: small copies of the powerups the local player has, over the back of the free hand.
-    icons: Vec<(PickupKind, Entity)>,
+    /// The shield's beam of light (a child of `root`), with its light on the player.
+    beam: Entity,
     team: Team,
 }
 
@@ -99,8 +102,24 @@ impl Plugin for ActorsPlugin {
     }
 }
 
-fn make_meshes(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
+fn make_meshes(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut glows: ResMut<Assets<GlowMaterial>>,
+) {
+    // Two nested cones of light from above the head down to the floor, and a pool of light
+    // where they land.
+    let mut beam = crate::assets::MeshData::default();
+    let top = Vec3::Y * BEAM_HEIGHT;
+    crate::scenery::cone(&mut beam, top, Vec3::NEG_Y, BEAM_HEIGHT, 0.3, 0.62, 24);
+    crate::scenery::cone(&mut beam, top, Vec3::NEG_Y, BEAM_HEIGHT, 0.12, 0.3, 16);
+    let c = crate::materials::pickup_color(PickupKind::Shield);
+    let beam_mat = glows.add(GlowMaterial {
+        neon: crate::materials::NeonUniform::fixed(c, 1.4).volume(),
+    });
     commands.insert_resource(ActorMeshes {
+        beam: meshes.add(beam.to_mesh()),
+        beam_mat,
         bolt: meshes.add(Capsule3d::new(0.022, 0.75)),
         spark: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         ring: meshes.add(Torus::new(0.95, 1.0)),
@@ -158,6 +177,7 @@ fn spawn_avatar(
     p: &PlayerSnap,
     models: &Models,
     palette: &Palette,
+    meshes: &ActorMeshes,
 ) -> AvatarParts {
     let team = Some(p.team);
     let root = commands
@@ -196,24 +216,29 @@ fn spawn_avatar(
         .spawn((Transform::IDENTITY, Visibility::Hidden))
         .id();
     spawn_model(commands, grenade, &models.grenade, palette, None);
-    let icons = PickupKind::POWERUPS
-        .iter()
-        .filter_map(|&k| {
-            let model = models.powerups.get(&k)?;
-            let e = commands
-                .spawn((Transform::IDENTITY, Visibility::Hidden))
-                .id();
-            let inner = commands
-                .spawn((
-                    Transform::from_scale(Vec3::splat(ICON_SCALE)),
-                    Visibility::default(),
-                    ChildOf(e),
-                ))
-                .id();
-            spawn_powerup(commands, inner, model, palette, k);
-            Some((k, e))
-        })
-        .collect();
+    let beam = commands
+        .spawn((
+            Mesh3d(meshes.beam.clone()),
+            MeshMaterial3d(meshes.beam_mat.clone()),
+            Transform::IDENTITY,
+            Visibility::Hidden,
+            ChildOf(root),
+        ))
+        .id();
+    let c = crate::materials::pickup_color(PickupKind::Shield);
+    commands.spawn((
+        PointLight {
+            color: Color::linear_rgb(c.x, c.y, c.z),
+            intensity: BEAM_LIGHT,
+            range: 2.6,
+            radius: 0.1,
+            shadow_maps_enabled: false,
+            ..default()
+        },
+        Transform::from_xyz(0.0, 2.2, 0.0),
+        Visibility::Inherited,
+        ChildOf(beam),
+    ));
     AvatarParts {
         root,
         body,
@@ -223,13 +248,14 @@ fn spawn_avatar(
         gun,
         gun_hits,
         grenade,
-        icons,
+        beam,
         team: p.team,
     }
 }
 
-/// The VR powerup icons' size (of the pickups').
-const ICON_SCALE: f32 = 0.14;
+/// The shield's beam: from this high above the feet, and its light (lumens).
+const BEAM_HEIGHT: f32 = 3.2;
+const BEAM_LIGHT: f32 = 40_000.0;
 
 /// A bolt's light (lumens).
 const BOLT_LIGHT: f32 = 60_000.0;
@@ -256,6 +282,7 @@ fn sync_players(
     mut vis: Query<&mut Visibility>,
     mover: Res<Mover>,
     xr: Option<Res<crate::vr::XrInput>>,
+    meshes: Res<ActorMeshes>,
 ) {
     let vr = xr.is_some();
     let a = alpha(&time);
@@ -267,9 +294,6 @@ fn sync_players(
             commands.entity(v.root).despawn();
             commands.entity(v.gun).despawn();
             commands.entity(v.grenade).despawn();
-            for (_, e) in v.icons {
-                commands.entity(e).despawn();
-            }
         }
     }
     let gone: Vec<PlayerId> = views
@@ -289,9 +313,6 @@ fn sync_players(
             commands.entity(v.root).despawn();
             commands.entity(v.gun).despawn();
             commands.entity(v.grenade).despawn();
-            for (_, e) in v.icons {
-                commands.entity(e).despawn();
-            }
         }
     }
     let blink = (real.elapsed_secs() * 8.0).fract() < 0.5;
@@ -299,7 +320,7 @@ fn sync_players(
         let v = views
             .players
             .entry(p.id)
-            .or_insert_with(|| spawn_avatar(&mut commands, p, &models, &palette));
+            .or_insert_with(|| spawn_avatar(&mut commands, p, &models, &palette, &meshes));
         let prev = game.prev.players.iter().find(|q| q.id == p.id);
         let feet = prev.map_or(p.feet, |q| q.feet.lerp(p.feet, a));
         let yaw = prev.map_or(p.yaw, |q| lerp_angle(q.yaw, p.yaw, a));
@@ -382,24 +403,11 @@ fn sync_players(
             place(&mut t, &hands[h.index()]);
             t.translation += hands[h.index()].rot * Vec3::new(0.0, 0.02, -0.04);
         }
-        // VR: the powerups one has, in a row over the back of the hand without the blaster.
-        let free = match gun_hand {
-            Some(Hand::Left) => Hand::Right,
-            _ => Hand::Left,
-        };
-        let pose = hands[free.index()];
-        let mut k = 0.0;
-        for &(kind, e) in &v.icons {
-            let on = me && vr && alive && p.has(kind);
-            set_vis(&mut vis, e, on);
-            if on && let Ok(mut t) = transforms.get_mut(e) {
-                let spin = real.elapsed_secs() * 1.5 + k;
-                t.translation =
-                    base + pose.pos + pose.rot * Vec3::new((k - 0.5) * 0.06, 0.075, 0.03);
-                t.rotation = pose.rot * Quat::from_rotation_y(spin);
-                k += 1.0;
-            }
-        }
+        // The shield's beam, flickering in its last two seconds.
+        let flicker = p.shield > 2.0 || (real.elapsed_secs() * 10.0).fract() < 0.6;
+        // (Not one's own: from inside, it would tint everything one looks at; the HUD and the
+        // VR hand's powerup icons tell.)
+        set_vis(&mut vis, v.beam, alive && !me && p.shield > 0.0 && flicker);
     }
 }
 
@@ -807,6 +815,18 @@ fn effects(
                     6,
                     3.0,
                     0.025,
+                    seed,
+                );
+            }
+            SimEvent::Blocked { pos, .. } => {
+                burst(
+                    &mut commands,
+                    &meshes,
+                    palette.pickup_for(PickupKind::Shield).0,
+                    pos,
+                    10,
+                    3.5,
+                    0.03,
                     seed,
                 );
             }

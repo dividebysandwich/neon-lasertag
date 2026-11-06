@@ -33,7 +33,8 @@
 //! carry on. A pickup in sight that it would take (a grenade while carrying none, a powerup it
 //! hasn't got) → fetch it. Visible enemies in range
 //! are always shot at (strafing while doing so); a hit makes the bot look for the shooter.
-//! Carrying a grenade, it lobs it at two or more enemies close together that it knows about
+//! A carried shield goes on as soon as it has an enemy to shoot at; shielded enemies aren't
+//! shot at. Carrying a grenade, it lobs it at two or more enemies close together that it knows about
 //! (seen recently, heard nearby or heard shooting), picking a low or high arc whose simulated
 //! flight first lands next to the group, and never near team mates or itself.
 //!
@@ -1905,7 +1906,10 @@ impl Bot {
     /// hit right now (recovering from a hit) only if there's nobody else. With the aim point and
     /// whether a shot would count.
     fn pick_target(&self, sim: &Sim) -> Option<(PlayerId, f32, Vec3, bool)> {
-        let hittable = |id: PlayerId| sim.player(id).is_some_and(|o| o.cooldown < 0.5);
+        let hittable = |id: PlayerId| {
+            sim.player(id)
+                .is_some_and(|o| o.cooldown < 0.5 && o.shield <= 0.0)
+        };
         let mut cands: Vec<(PlayerId, f32, Vec3)> = self.visible.clone();
         cands.sort_by(|a, b| {
             let key = |c: &(PlayerId, f32, Vec3)| (!hittable(c.0), Some(c.0) != self.enemy, c.1);
@@ -2277,10 +2281,13 @@ impl Controller for Bot {
         }
 
         let throw = self.try_grenade(sim, p, now);
+        // A carried shield goes on in a fight.
+        let shield = p.shields > 0 && p.shield <= 0.0 && target.is_some();
         self.pose(PlayerCmd {
             stick: move_dir.clamp_length_max(1.0),
             fire,
             throw,
+            shield,
             ..Default::default()
         })
     }

@@ -27,7 +27,8 @@ holster on the left hip; or `LT_LEFT_HANDED=1`), `--autopilot` (a bot plays you,
 Testing: `LT_DEV="6:menu,8:leave,10:play-hard,14:hit,20:next"` scripts menu actions and hits (`options`
 opens the options screen, `arc` shows the throw arc, `target` hits a team target;
 `give-KIND` gives you a pickup's contents and `drop-KIND` lays one in front of you, KIND
-`grenade`, `rapid`; Megatarget mode: `power` hits both secondary targets, `warp-door`, `warp-room`, `warp-turret` and `warp-pocket` move
+`grenade`, `rapid`, `shield`; `shields-up` switches everyone's shield on, `summon` (or `summon=M`) puts the
+nearest other player 4 m (M m) in front of you; Megatarget mode: `power` hits both secondary targets, `warp-door`, `warp-room`, `warp-turret` and `warp-pocket` move
 you there, `yaw=DEG` and `pitch=DEG` turn the flat screen's view),
 `LT_VR_MENU=1` opens the VR menu, `LT_VR_FAKE_HANDS=1` fakes controllers, `LT_HOLSTER=x,y,z`
 moves the holster (from the eyes; default `0.23,-0.58,-0.07`). `LT_GUN_TILT=DEG` turns the
@@ -82,6 +83,9 @@ grows and pulses faster while it hovers and fires.
 (a taken one comes back somewhere else in that half after 25 s to 45 s); walk over one to take
 it. You lose them all when you're tagged out.
 - **Rapid fire** (yellow, two chevrons): the blaster fires twice as fast.
+- **Shield** (cyan): carried until you switch it on (Q; VR: the trigger of the hand without the
+  blaster), then no bolt hurts you for 10 s. A shielded player stands in a beam of cyan light
+  from above (flickering in its last two seconds); bots and turrets don't waste shots on them.
 
 | | VR | Flat screen |
 |---|---|---|
@@ -91,12 +95,13 @@ it. You lose them all when you're tagged out.
 | blaster | grip it at the holster on your right hip (one hand at a time); let go to holster it | always in hand |
 | fire | trigger | left mouse button |
 | grenade | hold B (or Y), throw, let go | hold G or the right mouse button (shows the throw's arc and where it goes off), let go |
+| shield (powerup) | trigger of the hand without the blaster | Q |
 | menu | menu button (left Touch controller), or hold B / Y for a second without a grenade; point and pull the trigger | Esc |
 
 Stick and key movement has a little inertia (about a tenth of a second to get up to speed or
 to stop); walking in your room doesn't. On the flat screen the view bobs slightly as you walk,
 and the blaster sways with your steps and lags a little behind when you turn. In VR the wrist of your free hand shows the hits you have left, whether you carry a grenade,
-the shots left and the respawn countdown. On the back wall of each base hang a score board (Red's score left, Blue's right) and, above it, a board with the time left.
+the powerups you have, the shots left and the respawn countdown. On the back wall of each base hang a score board (Red's score left, Blue's right) and, above it, a board with the time left.
 Hits glow red at the edge of the view on the side they came from (on the flat screen: a red
 arc around the crosshair), and the controllers vibrate: shots, empty clicks, hits (stronger on
 that side), being tagged out, grenades, drawing and holstering. The menu (Esc) leaves the match

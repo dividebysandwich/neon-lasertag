@@ -52,17 +52,20 @@ pub enum PickupKind {
     Grenade,
     /// Twice the blaster's rate of fire, until tagged out.
     Rapid,
+    /// Carried until used (`PlayerCmd::shield`): no hits taken for `Rules::shield_time`.
+    Shield,
 }
 
 impl PickupKind {
-    pub const ALL: [PickupKind; 2] = [PickupKind::Grenade, PickupKind::Rapid];
+    pub const ALL: [PickupKind; 3] = [PickupKind::Grenade, PickupKind::Rapid, PickupKind::Shield];
     /// The powerups (everything but the grenade).
-    pub const POWERUPS: [PickupKind; 1] = [PickupKind::Rapid];
+    pub const POWERUPS: [PickupKind; 2] = [PickupKind::Rapid, PickupKind::Shield];
 
     pub fn name(self) -> &'static str {
         match self {
             PickupKind::Grenade => "grenade",
             PickupKind::Rapid => "rapid fire",
+            PickupKind::Shield => "shield",
         }
     }
 
@@ -71,6 +74,7 @@ impl PickupKind {
         match self {
             PickupKind::Grenade => "grenade",
             PickupKind::Rapid => "rapid",
+            PickupKind::Shield => "shield",
         }
     }
 
@@ -143,6 +147,8 @@ pub struct PlayerCmd {
     pub grenade_hand: Option<Hand>,
     /// Throw this tick: start position (relative to the feet) and velocity.
     pub throw: Option<(Vec3, Vec3)>,
+    /// Switch on the carried shield (powerup).
+    pub shield: bool,
     /// The sim tick the client was showing (the snapshot tick it rendered, after its
     /// interpolation delay) when it made this command; 0 = unknown or local (no lag
     /// compensation). The server flies a bolt fired with it through the other players as they
@@ -172,6 +178,18 @@ pub enum SimEvent {
     },
     Reloaded {
         player: PlayerId,
+    },
+    /// A player switched its shield on, and it ran out.
+    ShieldUp {
+        player: PlayerId,
+    },
+    ShieldDown {
+        player: PlayerId,
+    },
+    /// A bolt hit a shielded player (and did nothing).
+    Blocked {
+        player: PlayerId,
+        pos: Vec3,
     },
     /// A hit player stepped onto its team's spawn pads and is unhurt again.
     Healed {

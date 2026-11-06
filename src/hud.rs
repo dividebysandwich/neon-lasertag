@@ -619,6 +619,11 @@ pub fn powerup_line(p: &lt_sim::sim::PlayerSnap) -> String {
     if p.rapid {
         parts.push("RAPID FIRE".to_string());
     }
+    if p.shield > 0.0 {
+        parts.push(format!("SHIELD {:.0}", p.shield.ceil()));
+    } else if p.shields > 0 {
+        parts.push("SHIELD READY (Q)".to_string());
+    }
     parts.join("   ")
 }
 

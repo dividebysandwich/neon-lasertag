@@ -39,6 +39,8 @@ pub struct Rules {
     /// taken one's pair takes to come back (random in the range).
     pub powerup_pairs: u8,
     pub powerup_respawn: (f32, f32),
+    /// Seconds a shield lasts.
+    pub shield_time: f32,
     pub grenade_fuse: f32,
     pub grenade_active: f32,
     pub grenade_hop: f32,
@@ -93,6 +95,7 @@ impl Default for Rules {
             pickup_respawn: (8.0, 16.0),
             powerup_pairs: 1,
             powerup_respawn: (25.0, 45.0),
+            shield_time: 10.0,
             grenade_fuse: 3.0,
             grenade_active: 4.0,
             grenade_hop: 1.0,

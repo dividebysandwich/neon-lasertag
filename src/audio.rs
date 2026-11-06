@@ -213,6 +213,24 @@ fn play_events(
             SimEvent::Reloaded { player } if Some(player) == me => {
                 play(&mut commands, gain, &sounds.reload_done, None, 0.7, 1.0)
             }
+            SimEvent::ShieldUp { player } => {
+                let at = (Some(player) != me)
+                    .then(|| {
+                        game.snap
+                            .players
+                            .iter()
+                            .find(|p| p.id == player)
+                            .map(|p| p.feet + Vec3::Y * 1.2)
+                    })
+                    .flatten();
+                play(&mut commands, gain, &sounds.power_up, at, 0.7, 1.5);
+            }
+            SimEvent::ShieldDown { player } if Some(player) == me => {
+                play(&mut commands, gain, &sounds.zap, None, 0.4, 0.6)
+            }
+            SimEvent::Blocked { pos, .. } => {
+                play(&mut commands, gain, &sounds.zap, Some(pos), 0.6, 1.6)
+            }
             SimEvent::Healed { player } if Some(player) == me => {
                 play(&mut commands, gain, &sounds.reload_done, None, 0.8, 1.5)
             }

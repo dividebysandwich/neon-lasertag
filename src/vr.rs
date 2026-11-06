@@ -8,6 +8,8 @@
 //!   draw it (one hand at a time: the first to grab keeps it), let go and it goes back. The
 //!   trigger fires.
 //! - Hold B (or Y) to take a grenade into that hand; let go to throw it with the hand's speed.
+//! - The other hand's trigger (the left one, unless it holds the blaster) switches on a carried
+//!   shield.
 //! - The menu button (left Touch controller), or holding B / Y for a second without a grenade,
 //!   opens the VR menu (src/vrui.rs).
 //!
@@ -18,7 +20,7 @@ use std::collections::VecDeque;
 
 use bevy::prelude::*;
 use lt_sim::sim::{look_rot, yaw_of};
-use lt_sim::{Hand, Pose, SimEvent, Team};
+use lt_sim::{Hand, PickupKind, Pose, SimEvent, Team};
 
 use crate::assets::Models;
 use crate::game::{Game, GameEvent, InputSet, LocalCmd, Mover, PredictSet};
@@ -205,8 +207,11 @@ impl Plugin for VrPlugin {
             )
             .add_systems(
                 Update,
-                spawn_wrist
-                    .run_if(resource_exists::<Palette>.and_then(not(resource_exists::<Wrist>))),
+                spawn_wrist.run_if(
+                    resource_exists::<Palette>
+                        .and_then(resource_exists::<Models>)
+                        .and_then(not(resource_exists::<Wrist>)),
+                ),
             )
             .add_systems(
                 Update,
@@ -401,6 +406,15 @@ fn read_controls(
     if vr.firing && !was && alive && !blocked {
         local.fire_latch = true;
     }
+
+    // The shield: the trigger of the hand without the blaster (the left one, unless it holds
+    // the blaster).
+    let free = if vr.gun == Some(Hand::Left) {
+        Hand::Right
+    } else {
+        Hand::Left
+    };
+    local.cmd.shield = alive && !blocked && input.hands[free.index()].trigger > 0.75;
 
     // The menu: its button, or B / Y held without taking a grenade.
     for i in 0..2 {
@@ -674,7 +688,7 @@ fn holster(
 }
 
 /// The display on the wrist of the free hand: hits left, a grenade carried, shots left (the
-/// respawn countdown while tagged out); Megatarget mode: above them a dot per secondary target
+/// respawn countdown while tagged out), the powerups one has; Megatarget mode: above them a dot per secondary target
 /// hit, or the seconds left to get into the megatarget's room.
 #[derive(Resource)]
 struct Wrist {
@@ -687,9 +701,19 @@ struct Wrist {
     panel_digits: Vec<Digit>,
     mega_digits: Vec<Digit>,
     mega_pips: [Entity; 2],
+    /// Small copies of the powerups one has, in a row under the hit bars.
+    powerups: Vec<(PickupKind, Entity)>,
 }
 
-fn spawn_wrist(mut commands: Commands, palette: Res<Palette>, mut meshes: ResMut<Assets<Mesh>>) {
+/// The wrist's powerup icons' size (of the pickups').
+const ICON_SCALE: f32 = 0.08;
+
+fn spawn_wrist(
+    mut commands: Commands,
+    palette: Res<Palette>,
+    models: Res<Models>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
     let root = commands
         .spawn((Transform::IDENTITY, Visibility::default()))
         .id();
@@ -743,6 +767,21 @@ fn spawn_wrist(mut commands: Commands, palette: Res<Palette>, mut meshes: ResMut
             ))
             .id()
     });
+    let powerups = PickupKind::POWERUPS
+        .iter()
+        .filter_map(|&k| {
+            let model = models.powerups.get(&k)?;
+            let e = commands
+                .spawn((
+                    Transform::from_scale(Vec3::splat(ICON_SCALE)),
+                    Visibility::Hidden,
+                    ChildOf(root),
+                ))
+                .id();
+            crate::actors::spawn_powerup(&mut commands, e, model, &palette, k);
+            Some((k, e))
+        })
+        .collect();
     let panel = commands
         .spawn((Transform::IDENTITY, Visibility::Hidden))
         .id();
@@ -764,6 +803,7 @@ fn spawn_wrist(mut commands: Commands, palette: Res<Palette>, mut meshes: ResMut
         panel_digits,
         mega_digits,
         mega_pips,
+        powerups,
     });
 }
 
@@ -810,6 +850,29 @@ fn wrist(
             } else {
                 Visibility::Hidden
             };
+        }
+    }
+    // The powerups, side by side under the bars (a running shield flickering in its last two
+    // seconds).
+    let mut x = -0.03;
+    for &(kind, e) in &w.powerups {
+        let has = p.respawn.is_none() && p.has(kind);
+        let on = has
+            && (kind != PickupKind::Shield
+                || p.shield <= 0.0
+                || p.shield > 2.0
+                || (time.elapsed_secs() * 10.0).fract() < 0.6);
+        if let Ok(mut v) = vis.get_mut(e) {
+            *v = if on {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            };
+        }
+        if has && let Ok(mut t) = transforms.get_mut(e) {
+            t.translation = Vec3::new(x, -0.03, 0.0);
+            t.rotation = Quat::from_rotation_y(time.elapsed_secs() * 1.5);
+            x += 0.03;
         }
     }
     if let Ok(mut v) = vis.get_mut(w.grenade) {

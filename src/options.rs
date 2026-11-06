@@ -78,7 +78,7 @@ fn button(p: &mut ChildSpawnerCommands, opt: Opt, width: f32, text: &str, shows:
         opt,
         Node {
             width: Val::Px(width),
-            padding: UiRect::axes(Val::Px(12.0), Val::Px(7.0)),
+            padding: UiRect::axes(Val::Px(12.0), Val::Px(4.0)),
             border: UiRect::all(Val::Px(2.0)),
             justify_content: JustifyContent::Center,
             ..default()
@@ -112,7 +112,7 @@ fn show(
                         flex_direction: FlexDirection::Column,
                         align_items: AlignItems::Center,
                         justify_content: JustifyContent::Center,
-                        row_gap: Val::Px(8.0),
+                        row_gap: Val::Px(6.0),
                         ..default()
                     },
                     BackgroundColor(Color::srgb(0.01, 0.01, 0.03)),

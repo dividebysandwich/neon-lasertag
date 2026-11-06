@@ -19,10 +19,11 @@ pub enum Action {
     Crouch,
     Fire,
     Grenade,
+    Shield,
 }
 
 impl Action {
-    pub const ALL: [Action; 8] = [
+    pub const ALL: [Action; 9] = [
         Action::Forward,
         Action::Back,
         Action::Left,
@@ -31,6 +32,7 @@ impl Action {
         Action::Crouch,
         Action::Fire,
         Action::Grenade,
+        Action::Shield,
     ];
 
     pub fn name(self) -> &'static str {
@@ -43,6 +45,7 @@ impl Action {
             Action::Crouch => "Crouch",
             Action::Fire => "Fire",
             Action::Grenade => "Grenade (hold, let go)",
+            Action::Shield => "Shield (switch on)",
         }
     }
 
@@ -56,6 +59,7 @@ impl Action {
             Action::Crouch => "crouch",
             Action::Fire => "fire",
             Action::Grenade => "grenade",
+            Action::Shield => "shield",
         }
     }
 
@@ -70,6 +74,7 @@ impl Action {
             Action::Crouch => [Some(Key(KeyCode::ControlLeft)), Some(Key(KeyCode::KeyC))],
             Action::Fire => [Some(Mouse(MouseButton::Left)), None],
             Action::Grenade => [Some(Key(KeyCode::KeyG)), Some(Mouse(MouseButton::Right))],
+            Action::Shield => [Some(Key(KeyCode::KeyQ)), None],
         }
     }
 }
