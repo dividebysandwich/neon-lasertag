@@ -15,29 +15,16 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Tests and clippy on every desktop platform. Builds drop the default `dev` feature
-  # (bevy/dynamic_linking). Clippy reports warnings without failing the build.
-  test:
-    name: test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # glvr: OpenXR, plus our own OpenGL headset renderer (`--gl-vr`, Linux only).
-          - os: ubuntu-24.04
-            features: --features neon-lasertag/glvr
-          # bevy_mod_openxr links the OpenXR loader statically on Windows.
-          - os: windows-latest
-            features: --features neon-lasertag/xr
-          # No OpenXR on macOS (no runtime; bevy_mod_openxr doesn't build there).
-          - os: macos-latest
-            features: ""
+  # Clippy once, on Linux with the most code (glvr, which includes xr). It only reports warnings,
+  # so a single platform is enough; it has its own job because its check build (metadata only)
+  # shares nothing with the release builds below.
+  clippy:
+    name: clippy
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Linux dependencies
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -49,19 +36,20 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: test
+          key: clippy
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Clippy
-        shell: bash
-        run: cargo clippy --workspace --all-targets --no-default-features ${{ matrix.features }}
+        run: cargo clippy --workspace --all-targets --no-default-features --features neon-lasertag/glvr
 
-      - name: Test
-        shell: bash
-        run: cargo test --workspace --no-default-features ${{ matrix.features }}
-
-  # The game per platform: an archive with the game and its assets folder (tools/package.sh),
-  # and on Linux an AppImage (tools/appimage.sh). The aarch64 Linux build is the Steam Frame's:
-  # its AppImage starts in VR (`--gl-vr`).
+  # The game per platform, built and tested in one go: the tests run in the release profile, so
+  # they reuse the release build's dependencies instead of compiling Bevy a second time (the dev
+  # profile builds dependencies at opt-level 3 too, with debuginfo). Builds drop the default
+  # `dev` feature (bevy/dynamic_linking).
+  # Packages: an archive with the game and its assets folder (tools/package.sh), and on Linux an
+  # AppImage (tools/appimage.sh). The aarch64 Linux build is the Steam Frame's: its AppImage
+  # starts in VR (`--gl-vr`). The packages are uploaded before the tests run, so a failing test
+  # still leaves a build to try (the job, and a release, fail all the same).
   build:
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -69,18 +57,26 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # glvr: OpenXR, plus our own OpenGL headset renderer (`--gl-vr`, Linux only).
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             features: glvr
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             features: glvr
+          # bevy_mod_openxr links the OpenXR loader statically on Windows.
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             features: xr
+          # No OpenXR on macOS (no runtime; bevy_mod_openxr doesn't build there).
           - os: macos-latest
             target: aarch64-apple-darwin
             features: ""
+    env:
+      # The same flags for the build and the tests, so they share every compiled crate.
+      CARGO_FLAGS: >-
+        --release --target ${{ matrix.target }} --workspace --no-default-features
+        ${{ matrix.features && format('--features neon-lasertag/{0}', matrix.features) || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -103,15 +99,16 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # Saved from main only: pull requests restore main's cache but don't add their own, which
+      # would push main's out of the repository's 10 GB.
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build
         shell: bash
-        run: |
-          cargo build --release --target ${{ matrix.target }} -p neon-lasertag --no-default-features \
-            ${{ matrix.features && format('--features neon-lasertag/{0}', matrix.features) || '' }}
+        run: cargo build $CARGO_FLAGS
 
       - name: Package
         id: package
@@ -140,6 +137,10 @@ jobs:
             dist/*.AppImage.zsync
           if-no-files-found: error
 
+      - name: Test
+        shell: bash
+        run: cargo test $CARGO_FLAGS
+
   # The dedicated server and the server list's master server, for Linux hosts.
   servers:
     name: servers
@@ -150,6 +151,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: servers
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build
         run: cargo build --release -p lt-server -p lt-master
       - name: Package
@@ -167,7 +169,7 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [test, build, servers]
+    needs: [clippy, build, servers]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

@@ -188,9 +188,12 @@ tools/models/build_all.sh                   # rebuild and check the models
 
 CI (`.github/workflows/build.yml`) runs on every push and pull request:
 
-- **test**: `cargo clippy` (warnings reported, not fatal) and `cargo test --workspace` on Linux
-  (`glvr`), Windows (`xr`) and macOS (no OpenXR there), all without the `dev` feature.
-- **build**: release packages, without `dev` (bevy/dynamic_linking is for development only):
+- **clippy**: `cargo clippy --workspace` on Linux (`glvr`); warnings reported, not fatal.
+- **build**: per platform, a release build of the workspace, its packages, then
+  `cargo test --release --workspace` with the same flags (so the tests reuse the build's
+  compiled crates). Linux uses `glvr`, Windows `xr`, macOS neither (no OpenXR there); none uses
+  `dev` (bevy/dynamic_linking is for development only). The rust caches are saved from `main`
+  only. The packages:
   - Linux x86_64 and aarch64: `lasertag-VERSION-TARGET.tar.gz` (the game, `assets/`, and the
     OpenXR loader `libopenxr_loader.so` beside the game, which its RUNPATH `$ORIGIN` finds) and
     `lasertag-VERSION-ARCH.AppImage`. The aarch64 one is built on GitHub's arm64 runner.
