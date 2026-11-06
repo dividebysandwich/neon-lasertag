@@ -756,6 +756,13 @@ impl Level {
         panic!("no valid {} arena for seed {seed}", size.name());
     }
 
+    /// An empty arena of `size`: the floor and the border walls only (the VR menu's scene).
+    pub fn empty(seed: u64, size: ArenaSize) -> Level {
+        let g = Grid::new(size.dims());
+        let nav = build_nav(&g);
+        build_level(seed, g, nav, Vec::new())
+    }
+
     /// The arena's grid size.
     pub fn dims(&self) -> Dims {
         self.grid.dims
@@ -2540,6 +2547,24 @@ mod tests {
                         && p.pos.z.abs() <= d.half_length() + 1.0)
             );
         }
+    }
+
+    #[test]
+    fn an_empty_arena_has_a_floor_and_a_border() {
+        let level = Level::empty(3, ArenaSize::Small);
+        let d = level.dims();
+        let floor = level
+            .pieces
+            .iter()
+            .filter(|p| p.kind == PieceKind::FloorTile)
+            .count();
+        assert_eq!(floor, d.cells());
+        assert!(level.pieces.iter().any(|p| p.kind == PieceKind::BorderWall));
+        assert!(
+            level.targets.is_empty()
+                && level.spawns.iter().all(|s| s.is_empty())
+                && level.movers.is_empty()
+        );
     }
 
     #[test]

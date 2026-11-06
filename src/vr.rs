@@ -193,6 +193,12 @@ impl Plugin for VrPlugin {
             )
             .add_systems(
                 Update,
+                out_of_game
+                    .in_set(PoseSet)
+                    .run_if(not(resource_exists::<Game>)),
+            )
+            .add_systems(
+                Update,
                 (haptics.run_if(resource_exists::<Game>), play_rumble)
                     .chain()
                     .after(PoseSet),
@@ -211,6 +217,42 @@ impl Plugin for VrPlugin {
                 ),
             )
             .add_plugins(crate::vrui::VrUiPlugin);
+    }
+}
+
+/// Out of a game (the VR menu's scene, src/lobby.rs): the tracking space at the centre of the
+/// arena, facing along -Z, and the holster and the wrist display hidden.
+fn out_of_game(
+    mut vr: ResMut<VrState>,
+    rig: Option<Res<XrRig>>,
+    holster: Option<Res<Holster>>,
+    wrist: Option<Res<Wrist>>,
+    mut transforms: Query<&mut Transform>,
+    mut vis: Query<&mut Visibility>,
+) {
+    vr.yaw = 0.0;
+    vr.rig = Transform::IDENTITY;
+    vr.gun = None;
+    vr.holster_world = None;
+    if let Some(r) = rig
+        && let Ok(mut t) = transforms.get_mut(r.0)
+        && *t != Transform::IDENTITY
+    {
+        *t = Transform::IDENTITY;
+    }
+    let mut hidden = Vec::new();
+    if let Some(h) = holster {
+        hidden.extend([h.root, h.ring]);
+    }
+    if let Some(w) = wrist {
+        hidden.extend([w.root, w.panel]);
+    }
+    for e in hidden {
+        if let Ok(mut v) = vis.get_mut(e)
+            && *v != Visibility::Hidden
+        {
+            *v = Visibility::Hidden;
+        }
     }
 }
 
@@ -715,6 +757,11 @@ fn wrist(
         .me
         .and_then(|me| game.snap.players.iter().find(|p| p.id == me));
     let Some(p) = me else { return };
+    if let Ok(mut v) = vis.get_mut(w.root)
+        && *v == Visibility::Hidden
+    {
+        *v = Visibility::Inherited;
+    }
     let feet = if mover.valid { mover.feet } else { p.feet };
     // On the hand without the blaster (the left one by default).
     let hand = if vr.gun == Some(Hand::Left) {

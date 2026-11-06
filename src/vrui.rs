@@ -1,8 +1,10 @@
 //! VR panels and the hit flash, built from neon meshes so both VR renderers draw them (the GL
 //! headset renderer has no UI or text).
 //!
+//! - The start menu, out of a game (in the empty arena under fireworks, src/lobby.rs): play
+//!   against bots or host a game, with the bots' number and skill and the arenas' size, or quit.
 //! - The menu (the menu button, or B / Y held; see src/vr.rs): Resume, New match (local
-//!   games: the next match on a new arena) and Quit, floating in front of the player.
+//!   games: the next match on a new arena), Main menu and Quit, floating in front of the player.
 //! - The end of a match: the winner, the scores and each team's players with their score,
 //!   tags, times tagged out, accuracy and target hits (one's own row lit), with the time to
 //!   the next match and a Next match button (local games).
@@ -14,6 +16,8 @@
 //! `LT_VR_MENU=1` opens the menu at the start (testing).
 
 use bevy::prelude::*;
+use lt_sim::bots::Difficulty;
+use lt_sim::level::SizeChoice;
 use lt_sim::{PlayerId, SimEvent, Team};
 
 use crate::assets::MeshData;
@@ -36,6 +40,14 @@ pub struct VrUiPlugin;
 impl Plugin for VrUiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<VrUi>()
+            .add_plugins(crate::lobby::LobbyPlugin)
+            .add_systems(Startup, |mut commands: Commands, args: Res<crate::Args>| {
+                commands.insert_resource(LobbyChoices {
+                    bots: args.bots,
+                    difficulty: args.difficulty,
+                    arena: args.arena,
+                });
+            })
             .add_systems(
                 Update,
                 make_mats
@@ -43,17 +55,19 @@ impl Plugin for VrUiPlugin {
             )
             .add_systems(
                 Update,
-                (panels, pointer, hit_flash)
+                (panels, pointer, hit_flash.run_if(resource_exists::<Game>))
                     .chain()
                     .after(PoseSet)
                     .before(crate::game::DrawSet)
-                    .run_if(resource_exists::<Game>.and_then(resource_exists::<UiMats>)),
+                    .run_if(resource_exists::<UiMats>.and_then(resource_exists::<LobbyChoices>)),
             );
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
+    /// The start menu, out of a game.
+    Lobby,
     Menu,
     End,
 }
@@ -62,7 +76,25 @@ enum Kind {
 enum Act {
     Resume,
     NewMatch,
+    /// Leave the game for the start menu.
+    Leave,
     Quit,
+    /// The start menu's: play against bots or host, fewer or more bots, the bots' skill, the
+    /// arenas' size.
+    Play {
+        host: bool,
+    },
+    Bots(i32),
+    Skill(Difficulty),
+    Arena(SizeChoice),
+}
+
+/// The start menu's choices (kept for the next time it shows).
+#[derive(Resource, Clone, Copy, PartialEq, Eq)]
+pub struct LobbyChoices {
+    pub bots: usize,
+    pub difficulty: Difficulty,
+    pub arena: SizeChoice,
 }
 
 struct Button {
@@ -82,6 +114,10 @@ struct Panel {
     /// The end panel's countdown: its text and the seconds shown.
     countdown: Option<(Entity, i32)>,
     countdown_at: Vec3,
+    /// The start menu: the choices it shows, and whether it was placed before the head was
+    /// tracked (it is placed again then).
+    shows: Option<LobbyChoices>,
+    headless: bool,
 }
 
 #[derive(Resource, Default)]
@@ -290,7 +326,7 @@ fn short(name: &str, n: usize) -> String {
 }
 
 fn build_menu(b: &mut Builder, local: bool) -> Vec<Button> {
-    let size = Vec2::new(0.8, if local { 0.72 } else { 0.56 });
+    let size = Vec2::new(0.8, if local { 0.88 } else { 0.72 });
     b.backing(size);
     let (white, glow) = (b.mats.white.clone(), b.mats.glow[2].clone());
     let top = size.y / 2.0;
@@ -306,6 +342,7 @@ fn build_menu(b: &mut Builder, local: bool) -> Vec<Button> {
     if local {
         acts.push(("NEW MATCH", Act::NewMatch));
     }
+    acts.push(("MAIN MENU", Act::Leave));
     acts.push(("QUIT", Act::Quit));
     acts.iter()
         .enumerate()
@@ -318,6 +355,109 @@ fn build_menu(b: &mut Builder, local: bool) -> Vec<Button> {
             )
         })
         .collect()
+}
+
+/// The start menu: the title, Play vs bots and Host game, the bots' number and skill, the
+/// arenas' size (the chosen ones lit) and Quit.
+fn build_lobby(b: &mut Builder, choices: &LobbyChoices) -> Vec<Button> {
+    let size = Vec2::new(1.1, 0.98);
+    b.backing(size);
+    let top = size.y / 2.0;
+    let (red, red_glow) = (b.mats.team[0].clone(), b.mats.glow[0].clone());
+    let (blue, dim, lit) = (
+        b.mats.team[1].clone(),
+        b.mats.dim.clone(),
+        b.mats.mine[2].clone(),
+    );
+    b.text(
+        "NEON LASERTAG",
+        0.075,
+        Vec2::new(0.0, top - 0.08),
+        Align::Center,
+        &red,
+        Some(&red_glow),
+    );
+    b.text(
+        "RED VS BLUE",
+        0.028,
+        Vec2::new(0.0, top - 0.15),
+        Align::Center,
+        &blue,
+        None,
+    );
+    let mut buttons = vec![
+        b.button(
+            "PLAY VS BOTS",
+            Act::Play { host: false },
+            Vec2::new(-0.26, top - 0.27),
+            Vec2::new(0.48, 0.1),
+        ),
+        b.button(
+            "HOST GAME",
+            Act::Play { host: true },
+            Vec2::new(0.26, top - 0.27),
+            Vec2::new(0.48, 0.1),
+        ),
+    ];
+    let label = |b: &mut Builder, s: &str, y: f32| {
+        b.text(s, 0.026, Vec2::new(0.0, y), Align::Center, &dim, None);
+    };
+    label(b, "BOTS", top - 0.37);
+    let y = top - 0.44;
+    buttons.push(b.button(
+        "-",
+        Act::Bots(-1),
+        Vec2::new(-0.2, y),
+        Vec2::new(0.12, 0.09),
+    ));
+    let white = b.mats.white.clone();
+    b.text(
+        &choices.bots.to_string(),
+        0.045,
+        Vec2::new(0.0, y),
+        Align::Center,
+        &white,
+        None,
+    );
+    buttons.push(b.button("+", Act::Bots(1), Vec2::new(0.2, y), Vec2::new(0.12, 0.09)));
+    // A row of choices, the chosen one lit.
+    let mut row = |b: &mut Builder, items: Vec<(String, Act, bool)>, y: f32, w: f32| {
+        let pitch = w + 0.02;
+        let x0 = -(items.len() as f32 - 1.0) * pitch / 2.0;
+        for (k, (name, act, on)) in items.into_iter().enumerate() {
+            let c = Vec2::new(x0 + k as f32 * pitch, y);
+            let sz = Vec2::new(w, 0.09);
+            if on {
+                b.fill(c, sz, &lit, true);
+            }
+            buttons.push(b.button(&name, act, c, sz));
+        }
+    };
+    label(b, "SKILL", top - 0.53);
+    let skills = Difficulty::ALL
+        .iter()
+        .map(|&d| {
+            (
+                d.name().to_uppercase(),
+                Act::Skill(d),
+                d == choices.difficulty,
+            )
+        })
+        .collect();
+    row(b, skills, top - 0.6, 0.3);
+    label(b, "ARENA", top - 0.69);
+    let arenas = SizeChoice::ALL
+        .iter()
+        .map(|&a| (a.name().to_uppercase(), Act::Arena(a), a == choices.arena))
+        .collect();
+    row(b, arenas, top - 0.76, 0.24);
+    buttons.push(b.button(
+        "QUIT",
+        Act::Quit,
+        Vec2::new(0.0, top - 0.88),
+        Vec2::new(0.4, 0.09),
+    ));
+    buttons
 }
 
 /// Column right edges (score, tags, out, accuracy, targets) on the end panel.
@@ -471,7 +611,10 @@ fn panels(
     mut ui: ResMut<VrUi>,
     mut vr: ResMut<VrState>,
     input: Res<XrInput>,
-    game: Res<Game>,
+    game: Option<Res<Game>>,
+    starting: Option<Res<crate::menu::Start>>,
+    connecting: Option<Res<crate::Connecting>>,
+    choices: Res<LobbyChoices>,
     session: Res<Session>,
     mats: Res<UiMats>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -485,14 +628,22 @@ fn panels(
         vr.menu_requests = 0;
         ui.menu = !ui.menu;
     }
-    let want = if ui.menu {
-        Some(Kind::Menu)
-    } else if game.snap.over {
-        Some(Kind::End)
-    } else {
-        None
+    let lobby = game.is_none() && starting.is_none() && connecting.is_none();
+    let want = match game.as_deref() {
+        _ if lobby => Some(Kind::Lobby),
+        None => None,
+        Some(_) if ui.menu => Some(Kind::Menu),
+        Some(g) if g.snap.over => Some(Kind::End),
+        Some(_) => None,
     };
-    if ui.panel.as_ref().map(|p| p.kind) != want {
+    if lobby {
+        ui.menu = false;
+    }
+    // The start menu is built anew when its choices change, or once the head is tracked.
+    let stale = ui.panel.as_ref().is_some_and(|p| {
+        p.kind == Kind::Lobby && (p.shows != Some(*choices) || p.headless && input.head.is_some())
+    });
+    if ui.panel.as_ref().map(|p| p.kind) != want || stale {
         if let Some(p) = ui.panel.take() {
             commands.entity(p.root).despawn();
         }
@@ -517,9 +668,11 @@ fn panels(
                 mats: &mats,
                 root,
             };
-            let (buttons, countdown_at) = match kind {
-                Kind::Menu => (build_menu(&mut b, game.is_local()), Vec3::ZERO),
-                Kind::End => build_end(&mut b, &game),
+            let (buttons, countdown_at) = match (kind, game.as_deref()) {
+                (Kind::Lobby, _) => (build_lobby(&mut b, &choices), Vec3::ZERO),
+                (Kind::Menu, Some(g)) => (build_menu(&mut b, g.is_local()), Vec3::ZERO),
+                (Kind::End, Some(g)) => build_end(&mut b, g),
+                _ => (Vec::new(), Vec3::ZERO),
             };
             ui.panel = Some(Panel {
                 kind,
@@ -528,6 +681,8 @@ fn panels(
                 buttons,
                 countdown: None,
                 countdown_at,
+                shows: (kind == Kind::Lobby).then_some(*choices),
+                headless: input.head.is_none(),
             });
         }
     }
@@ -537,7 +692,9 @@ fn panels(
         *t = vr.rig * p.pose;
     }
     // The end panel's countdown.
-    if p.kind == Kind::End {
+    if p.kind == Kind::End
+        && let Some(game) = game
+    {
         let secs = if game.is_local() {
             session.next_in().map_or(-1, |s| s.ceil() as i32)
         } else {
@@ -582,6 +739,7 @@ fn pointer(
     mats: Res<UiMats>,
     mut rumble: ResMut<Rumble>,
     mut cmds: MessageWriter<SessionCmd>,
+    mut choices: ResMut<LobbyChoices>,
     mut transforms: Query<&mut Transform>,
     mut vis: Query<&mut Visibility>,
     mut laser_mats: Query<&mut MeshMaterial3d<AccentMaterial>>,
@@ -704,9 +862,24 @@ fn pointer(
             ui.menu = false;
             cmds.write(SessionCmd::NextMatch);
         }
+        Act::Leave => {
+            ui.menu = false;
+            cmds.write(SessionCmd::Leave);
+        }
         Act::Quit => {
             cmds.write(SessionCmd::Quit);
         }
+        Act::Play { host } => {
+            commands.insert_resource(crate::menu::Start::Local {
+                host,
+                bots: choices.bots,
+                difficulty: choices.difficulty,
+                arena: choices.arena,
+            });
+        }
+        Act::Bots(d) => choices.bots = (choices.bots as i32 + d).clamp(0, 15) as usize,
+        Act::Skill(d) => choices.difficulty = d,
+        Act::Arena(a) => choices.arena = a,
     }
 }
 

@@ -27,6 +27,7 @@ pub mod game;
 #[cfg(all(feature = "glvr", target_os = "linux"))]
 pub mod glvr;
 pub mod hud;
+pub mod lobby;
 pub mod materials;
 pub mod menu;
 pub mod music;
@@ -84,7 +85,7 @@ pub struct Args {
     /// File and the times (s) to take it at (`--after 5,10,15`: file_0.png, file_1.png, ...).
     pub screenshot: Option<(String, Vec<f32>)>,
     pub quit_after: Option<f32>,
-    /// Show the start menu (flat screen, nothing chosen on the command line).
+    /// Show the start menu (nothing chosen on the command line).
     pub menu: bool,
 }
 
@@ -156,15 +157,7 @@ impl Args {
             i += 1;
         }
         a.screenshot = shot.map(|s| (s, after));
-        let chosen = [
-            "--seed",
-            "--bots",
-            "--host",
-            "--connect",
-            "--autopilot",
-            "--vr",
-            "--gl-vr",
-        ];
+        let chosen = ["--seed", "--bots", "--host", "--connect", "--autopilot"];
         a.menu = !argv.iter().any(|v| chosen.contains(&v.as_str()));
         a
     }
@@ -375,8 +368,9 @@ fn setup(
         },
         Transform::from_xyz(4.0, 10.0, 6.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
-    // Without the menu, the command line says what to play.
-    if !(args.menu && args.mode == Mode::Desktop) {
+    // Without the menu (the flat screen's, or VR's in the empty arena: src/lobby.rs), the
+    // command line says what to play.
+    if !args.menu {
         commands.insert_resource(match &args.connect {
             Some(addr) => menu::Start::Join(addr.clone()),
             None => menu::Start::Local {

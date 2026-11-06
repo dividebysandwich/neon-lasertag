@@ -76,7 +76,9 @@ Hits glow red at the edge of the view on the side they came from (on the flat sc
 arc around the crosshair), and the controllers vibrate: shots, empty clicks, hits (stronger on
 that side), being tagged out, grenades, drawing and holstering. The menu (Esc) leaves the match
 running underneath: Resume, Options, Leave to main menu, Quit; VR's offers Resume, New match
-(local games) and Quit. Options (also in the start menu) sets the sound effects' and the music's volume, rebinds the
+(local games), Main menu and Quit. VR's start menu floats in an empty arena under colourful
+fireworks (`src/lobby.rs`): Play vs bots or Host game, with the bots' number and skill and the
+arenas' size, or Quit. Options (also in the start menu) sets the sound effects' and the music's volume, rebinds the
 flat screen's keys and mouse buttons (two per action), sets the mouse sensitivity and inverts
 the mouse; they are kept
 in `settings.ron` in the config directory (`~/.config/lasertag`, `%APPDATA%\lasertag`; VR uses
@@ -90,7 +92,7 @@ the saved volumes too).
 | `crates/lt-net` | UDP transport (reliable and unreliable channels; ported from stealth-mission-89), protocol (CBOR + LZ4), server and client sessions, master server reporting. |
 | `crates/lt-server` | Dedicated server: `lt-server --port 27420 --bots 8 --difficulty normal --name NAME [--arena small|medium|large|random] [--seed N] [--private] [--master URL]`. |
 | `crates/lt-master`, `lt-master-proto` | Master server list (REST/JSON): `lt-master --bind 0.0.0.0:27500`, with deploy files in `crates/lt-master/deploy`. |
-| `src/` | The Bevy client: `game.rs` (local sim or connection, stepped in `FixedUpdate`, client movement prediction), `arena.rs` (kit pieces merged into chunk meshes), `materials.rs` + `assets/shaders/neon.wgsl` (neon accents and glow halos), `actors.rs` (players, bolts, grenades, sparks), `desktop.rs`, `vr.rs` (shared VR input, holster, haptics), `vrui.rs` (VR menu, end panel, hit flash; text from `segtext.rs`), `xr.rs` (bevy_mod_openxr), `glvr/` (foveated GL renderer), `audio.rs`, `hud.rs`, `sevenseg.rs`, `menu.rs`, `pause.rs` (in-game menu), `endscreen.rs` (results), `session.rs` (next match, leaving a game). |
+| `src/` | The Bevy client: `game.rs` (local sim or connection, stepped in `FixedUpdate`, client movement prediction), `arena.rs` (kit pieces merged into chunk meshes), `materials.rs` + `assets/shaders/neon.wgsl` (neon accents and glow halos), `actors.rs` (players, bolts, grenades, sparks), `desktop.rs`, `vr.rs` (shared VR input, holster, haptics), `vrui.rs` (VR menus, end panel, hit flash; text from `segtext.rs`), `lobby.rs` (VR start menu scene, fireworks), `xr.rs` (bevy_mod_openxr), `glvr/` (foveated GL renderer), `audio.rs`, `hud.rs`, `sevenseg.rs`, `menu.rs`, `pause.rs` (in-game menu), `endscreen.rs` (results), `session.rs` (next match, leaving a game). |
 | `tools/models` | Blender build scripts for the kit, blaster, grenade, avatars and reload station (`build_all.sh`, conventions in its README). |
 | `tools/gen_sfx.py` | Sound synthesis (numpy + ffmpeg): `python3 tools/gen_sfx.py`. |
 | `tools/gen_spectrum.py` | The music's precomputed spectrum: `python3 tools/gen_spectrum.py`. |
