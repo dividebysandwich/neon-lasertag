@@ -204,6 +204,9 @@ pub struct BotGraph {
     comp_open: Vec<u32>,
     /// Megatarget mode: per secondary target, the nodes it can be hit from.
     pub mega_spots: [Vec<usize>; 2],
+    /// Per node, the team whose spawn pad it is on (the other team's routes keep off: it tags
+    /// them out).
+    pub spawn: Vec<Option<Team>>,
 }
 
 /// Walking speed assumed for door timing (metres a second).
@@ -424,6 +427,7 @@ impl BotGraph {
             comp,
             comp_open,
             mega_spots: [Vec::new(), Vec::new()],
+            spawn: (0..n).map(|i| level.spawn_at(nav.pos[i])).collect(),
         };
         g.tactics = Team::ALL.map(|team| g.tactics_for(level, world, team));
         if let Some(m) = &level.mega {
@@ -555,23 +559,25 @@ impl BotGraph {
         if !self.connected(a, b) {
             return None;
         }
-        self.astar(a, b, None).map(|(p, _)| p)
+        self.astar(a, b, None, None).map(|(p, _)| p)
     }
 
     /// Shortest path from `a` to `b` setting out at `tick`: doors are taken if they will be
-    /// open on arrival (long enough to get through), or open soon, costing the wait. With the
-    /// doors on the way (mover indices).
+    /// open on arrival (long enough to get through), or open soon, costing the wait. Not over
+    /// the spawn pads of `avoid` (the walker's enemy). With the doors on the way (mover
+    /// indices).
     pub fn path_at(
         &self,
         a: usize,
         b: usize,
         level: &Level,
         tick: u64,
+        avoid: Option<Team>,
     ) -> Option<(Vec<usize>, Vec<usize>)> {
         if !(self.valid[a] && self.valid[b] && self.comp_open[a] == self.comp_open[b]) {
             return None;
         }
-        self.astar(a, b, Some((level, tick)))
+        self.astar(a, b, Some((level, tick)), avoid)
     }
 
     fn astar(
@@ -579,6 +585,7 @@ impl BotGraph {
         a: usize,
         b: usize,
         doors: Option<(&Level, u64)>,
+        avoid: Option<Team>,
     ) -> Option<(Vec<usize>, Vec<usize>)> {
         let n = self.pos.len();
         let h = |i: usize| self.pos[i].distance(self.pos[b]);
@@ -630,6 +637,9 @@ impl BotGraph {
                 .collect();
             for (m, l) in self.links[i].iter().copied().chain(through_doors) {
                 let m = m as usize;
+                if avoid.is_some() && self.spawn[m] == avoid && m != b {
+                    continue;
+                }
                 let ng = g[i] + l;
                 if ng < g[m] {
                     g[m] = ng;
@@ -1858,6 +1868,7 @@ impl Bot {
         goal: usize,
         end: Vec3,
         arrive: f32,
+        team: Option<Team>,
     ) -> Steer {
         let world = &sim.world;
         let to_end = Vec2::new(end.x - feet.x, end.z - feet.z);
@@ -1872,7 +1883,8 @@ impl Bot {
             let Some(start) = g.nearest(world, feet) else {
                 return Steer::Unreachable;
             };
-            let Some((path, doors)) = g.path_at(start, goal, &sim.level, sim.tick) else {
+            let avoid = team.map(Team::other);
+            let Some((path, doors)) = g.path_at(start, goal, &sim.level, sim.tick, avoid) else {
                 return Steer::Unreachable;
             };
             self.route_gates = sim
@@ -2242,7 +2254,8 @@ impl Controller for Bot {
                 } else {
                     0.45
                 };
-                match self.steer(sim, &g, feet, node, end, arrive) {
+                let team = sim.player(me).map(|p| p.team);
+                match self.steer(sim, &g, feet, node, end, arrive, team) {
                     Steer::Move(d) => move_dir = d,
                     Steer::Arrived => anchor = Some(end),
                     Steer::Unreachable => self.give_up(),
@@ -2914,13 +2927,13 @@ mod tests {
             };
             // Open (and staying open): straight through.
             let t = tick_where(1.0).unwrap();
-            let (path, doors) = g.path_at(a as usize, b as usize, &level, t).unwrap();
+            let (path, doors) = g.path_at(a as usize, b as usize, &level, t, None).unwrap();
             assert_eq!((path.len(), doors), (2, vec![door]), "seed {seed}");
             // Shut for a long while: the long way round (perhaps through another door, open then).
             let t = (0..m.period() as u64)
                 .find(|&t| m.passable_window(t).0 > DOOR_WAIT_MAX + 10)
                 .unwrap();
-            let (path, doors) = g.path_at(a as usize, b as usize, &level, t).unwrap();
+            let (path, doors) = g.path_at(a as usize, b as usize, &level, t, None).unwrap();
             assert!(
                 path.len() > 2 && !doors.contains(&door),
                 "seed {seed}: {} nodes, doors {doors:?} (shut {door})",

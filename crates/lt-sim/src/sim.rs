@@ -1047,6 +1047,14 @@ impl Sim {
             };
             let reload_here = self.level.reloads_at(feet);
             let home = self.level.spawn_at(feet);
+            // The enemy's spawn pads tag a player out at once.
+            if home.is_some_and(|t| t != self.players[i].team) {
+                let p = &mut self.players[i];
+                p.feet = feet;
+                p.vy = vy;
+                self.zap(i);
+                continue;
+            }
             let p = &mut self.players[i];
             p.feet = feet;
             p.vy = vy;
@@ -3217,11 +3225,11 @@ mod tests {
         sim.players[0].feet = Vec3::new(0.0, 0.0, 6.0);
         sim.players[0].hits = 2;
         sim.players[1].hits = 1;
-        // Blue on red's pads: still hurt.
+        // Blue on red's pads: not healed (tagged out).
         sim.players[1].feet = sim.level.spawns[Team::Red.index()][0].pos;
         sim.step();
         assert_eq!(sim.player(a).unwrap().hits, 2);
-        assert_eq!(sim.player(b).unwrap().hits, 1);
+        assert!(!sim.player(b).unwrap().alive());
         sim.players[0].feet = sim.level.spawns[Team::Red.index()][1].pos;
         sim.step();
         assert_eq!(sim.player(a).unwrap().hits, 0);
@@ -3575,6 +3583,57 @@ mod tests {
             crate::shot::shot_seed(3, 18),
         );
         assert_ne!(a, c);
+    }
+
+    #[test]
+    fn the_enemy_spawn_tags_out_at_once() {
+        let mut sim = Sim::new(3, Rules::default());
+        let a = sim.add_player("a", Some(Team::Red), false).unwrap();
+        sim.step();
+        // On one's own pads: fine.
+        let own = sim.level.spawns[Team::Red.index()][0];
+        sim.teleport(a, own.pos, own.yaw);
+        sim.players[0].shield = 5.0;
+        sim.step();
+        assert!(sim.player(a).unwrap().alive());
+        // On the enemy's: tagged out, shield or not.
+        let theirs = sim.level.spawns[Team::Blue.index()][0];
+        sim.teleport(a, theirs.pos, theirs.yaw);
+        sim.drain_events();
+        sim.step();
+        assert!(!sim.player(a).unwrap().alive());
+        assert!(
+            sim.drain_events().iter().any(
+                |e| matches!(e, SimEvent::TaggedOut { player, by: HAZARD, .. } if *player == a)
+            )
+        );
+    }
+
+    #[test]
+    fn bots_keep_off_the_enemy_spawn() {
+        let mut zapped = 0;
+        for seed in 1..=4 {
+            let mut sim = Sim::new(seed, Rules::default());
+            let mut bots = crate::bots::Bots::default();
+            bots.fill(&mut sim, 8, 0.6);
+            for _ in 0..(120.0 / TICK) as usize {
+                bots.think(&mut sim);
+                sim.step();
+                for e in sim.drain_events() {
+                    if let SimEvent::TaggedOut {
+                        player, by: HAZARD, ..
+                    } = e
+                        && let Some(p) = sim.player(player)
+                        && sim.level.spawn_at(p.feet) == Some(p.team.other())
+                    {
+                        println!("seed {seed} tick {}: {} at {}", sim.tick, p.name, p.feet);
+                        zapped += 1;
+                    }
+                }
+            }
+        }
+        println!("zapped on enemy spawns: {zapped}");
+        assert_eq!(zapped, 0, "bots walked onto the enemy's spawn pads");
     }
 
     #[test]
