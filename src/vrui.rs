@@ -1,8 +1,9 @@
 //! VR panels and the hit flash, built from neon meshes so both VR renderers draw them (the GL
 //! headset renderer has no UI or text).
 //!
-//! - The start menu, out of a game (in the empty arena under fireworks, src/lobby.rs): play
-//!   against bots or host a game, with the bots' number and skill and the arenas' size, or quit.
+//! - The start menu, out of a game (in the empty arena under fireworks, src/lobby.rs): the
+//!   levels of src/menu.rs (botmatch, internet and LAN server lists, hosting), with their
+//!   choices lit; no typing in VR.
 //! - The menu (the menu button, or B / Y held; see src/vr.rs): Resume, New match (local
 //!   games: the next match on a new arena), Main menu and Quit, floating in front of the player.
 //! - The end of a match: the winner, the scores and each team's players with their score,
@@ -24,6 +25,7 @@ use crate::assets::MeshData;
 use crate::endscreen::{Row, standings, winner};
 use crate::game::{Game, GameEvent};
 use crate::materials::{AccentMaterial, GlowMaterial, NeonUniform, Palette, team_color};
+use crate::menu::{InternetList, MenuAct, MenuModel, Outcome, Screen};
 use crate::segtext::{self, Align};
 use crate::session::{Session, SessionCmd};
 use crate::vr::{PoseSet, Rumble, VrState, XrInput};
@@ -41,14 +43,6 @@ impl Plugin for VrUiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<VrUi>()
             .add_plugins(crate::lobby::LobbyPlugin)
-            .add_systems(Startup, |mut commands: Commands, args: Res<crate::Args>| {
-                commands.insert_resource(LobbyChoices {
-                    bots: args.bots,
-                    difficulty: args.difficulty,
-                    arena: args.arena,
-                    mode: args.game_mode,
-                });
-            })
             .add_systems(
                 Update,
                 make_mats
@@ -65,7 +59,7 @@ impl Plugin for VrUiPlugin {
                     .chain()
                     .after(PoseSet)
                     .before(crate::game::DrawSet)
-                    .run_if(resource_exists::<UiMats>.and_then(resource_exists::<LobbyChoices>)),
+                    .run_if(resource_exists::<UiMats>.and_then(resource_exists::<MenuModel>)),
             );
     }
 }
@@ -78,31 +72,23 @@ enum Kind {
     End,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 enum Act {
     Resume,
     NewMatch,
     /// Leave the game for the start menu.
     Leave,
     Quit,
-    /// The start menu's: play against bots or host, fewer or more bots, the bots' skill, the
-    /// arenas' size.
-    Play {
-        host: bool,
-    },
-    Bots(i32),
-    Skill(Difficulty),
-    Arena(SizeChoice),
-    Mode(GameMode),
+    /// The start menu's (src/menu.rs).
+    Menu(MenuAct),
 }
 
-/// The start menu's choices (kept for the next time it shows).
-#[derive(Resource, Clone, Copy, PartialEq, Eq)]
-pub struct LobbyChoices {
-    pub bots: usize,
-    pub difficulty: Difficulty,
-    pub arena: SizeChoice,
-    pub mode: GameMode,
+/// What the start menu panel shows: its level, the choices and the lists' revision (it is
+/// built anew when they change).
+type LobbyKey = (Screen, usize, Difficulty, SizeChoice, GameMode, u32);
+
+fn lobby_key(m: &MenuModel) -> LobbyKey {
+    (m.screen, m.bots, m.difficulty, m.arena, m.mode, m.rev)
 }
 
 struct Button {
@@ -124,7 +110,7 @@ struct Panel {
     countdown_at: Vec3,
     /// The start menu: the choices it shows, and whether it was placed before the head was
     /// tracked (it is placed again then).
-    shows: Option<LobbyChoices>,
+    shows: Option<LobbyKey>,
     headless: bool,
 }
 
@@ -360,7 +346,7 @@ fn build_menu(b: &mut Builder, local: bool) -> Vec<Button> {
         .map(|(k, (label, act))| {
             b.button(
                 label,
-                *act,
+                act.clone(),
                 Vec2::new(0.0, top - 0.25 - k as f32 * 0.16),
                 Vec2::new(0.56, 0.12),
             )
@@ -368,18 +354,163 @@ fn build_menu(b: &mut Builder, local: bool) -> Vec<Button> {
         .collect()
 }
 
-/// The start menu: the title, Play vs bots and Host game, the bots' number and skill, the
-/// arenas' size (the chosen ones lit) and Quit.
-fn build_lobby(b: &mut Builder, choices: &LobbyChoices) -> Vec<Button> {
+/// A row of buttons `w` wide, centred at `y` (the chosen ones lit).
+fn button_row(
+    b: &mut Builder,
+    buttons: &mut Vec<Button>,
+    items: Vec<(String, Act, bool)>,
+    y: f32,
+    w: f32,
+    h: f32,
+) {
+    let lit = b.mats.mine[2].clone();
+    let pitch = w + 0.02;
+    let x0 = -(items.len() as f32 - 1.0) * pitch / 2.0;
+    for (k, (name, act, on)) in items.into_iter().enumerate() {
+        let c = Vec2::new(x0 + k as f32 * pitch, y);
+        let sz = Vec2::new(w, h);
+        if on {
+            b.fill(c, sz, &lit, true);
+        }
+        buttons.push(b.button(&name, act, c, sz));
+    }
+}
+
+fn menu(a: MenuAct) -> Act {
+    Act::Menu(a)
+}
+
+/// The bots' number and skill, the arena's size, the mode, from `y` down; returns the y below.
+fn lobby_choices(b: &mut Builder, buttons: &mut Vec<Button>, m: &MenuModel, mut y: f32) -> f32 {
+    let dim = b.mats.dim.clone();
+    let white = b.mats.white.clone();
+    let label = |b: &mut Builder, s: &str, y: f32| {
+        b.text(s, 0.026, Vec2::new(0.0, y), Align::Center, &dim, None);
+    };
+    label(b, "BOTS", y);
+    y -= 0.07;
+    buttons.push(b.button(
+        "-",
+        menu(MenuAct::MoreBots(-1)),
+        Vec2::new(-0.2, y),
+        Vec2::new(0.12, 0.09),
+    ));
+    b.text(
+        &m.bots.to_string(),
+        0.045,
+        Vec2::new(0.0, y),
+        Align::Center,
+        &white,
+        None,
+    );
+    buttons.push(b.button(
+        "+",
+        menu(MenuAct::MoreBots(1)),
+        Vec2::new(0.2, y),
+        Vec2::new(0.12, 0.09),
+    ));
+    y -= 0.09;
+    let item = |name: &str, a: MenuAct| (name.to_uppercase(), a.clone(), m.selected(&a));
+    label(b, "SKILL", y);
+    let skills = Difficulty::ALL
+        .iter()
+        .map(|&d| item(d.name(), MenuAct::Difficulty(d)))
+        .collect::<Vec<_>>();
+    let skills = skills
+        .into_iter()
+        .map(|(n, a, on)| (n, menu(a), on))
+        .collect();
+    button_row(b, buttons, skills, y - 0.07, 0.3, 0.09);
+    y -= 0.16;
+    label(b, "ARENA", y);
+    let arenas = SizeChoice::ALL
+        .iter()
+        .map(|&a| item(a.name(), MenuAct::Arena(a)))
+        .map(|(n, a, on)| (n, menu(a), on))
+        .collect();
+    button_row(b, buttons, arenas, y - 0.07, 0.24, 0.09);
+    y -= 0.16;
+    label(b, "MODE", y);
+    let modes = GameMode::ALL
+        .iter()
+        .map(|&g| item(g.name(), MenuAct::Mode(g)))
+        .map(|(n, a, on)| (n, menu(a), on))
+        .collect();
+    button_row(b, buttons, modes, y - 0.07, 0.42, 0.09);
+    y - 0.16
+}
+
+/// A server list's rows (at most `ROWS`), from `y` down.
+fn lobby_list(b: &mut Builder, buttons: &mut Vec<Button>, m: &MenuModel, y: f32, width: f32) {
+    const ROWS: usize = 6;
+    let dim = b.mats.dim.clone();
+    let say = |b: &mut Builder, s: &str| {
+        b.text(
+            s,
+            0.026,
+            Vec2::new(0.0, y - 0.05),
+            Align::Center,
+            &dim,
+            None,
+        );
+    };
+    let mut rows: Vec<(String, String)> = Vec::new();
+    let row = |r: &lt_net::ServerReport| {
+        let mode = if r.mode.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", r.mode.to_uppercase())
+        };
+        format!(
+            "{}  {}+{}{mode}",
+            short(&r.name, 20),
+            r.players.len(),
+            r.bots
+        )
+    };
+    if m.screen == Screen::Lan {
+        if m.lan_error.is_some() {
+            say(b, "CAN'T LISTEN ON THE NETWORK");
+        } else if m.lan_servers.is_empty() {
+            say(b, "SEARCHING THE NETWORK...");
+        }
+        for s in m.lan_servers.iter().filter(|s| s.joinable()).take(ROWS) {
+            rows.push((row(&s.report), s.addr.clone()));
+        }
+    } else {
+        match &m.internet {
+            InternetList::Idle | InternetList::Asking => say(b, "ASKING THE MASTER SERVER..."),
+            InternetList::Failed(_) => say(b, "SERVER LIST UNAVAILABLE"),
+            InternetList::Listed(l) if l.is_empty() => say(b, "NO SERVERS: HOST ONE!"),
+            InternetList::Listed(l) => {
+                for s in l
+                    .iter()
+                    .filter(|s| s.report.protocol == lt_net::protocol::PROTOCOL)
+                    .take(ROWS)
+                {
+                    rows.push((row(&s.report), s.addr.clone()));
+                }
+            }
+        }
+    }
+    for (k, (text, addr)) in rows.into_iter().enumerate() {
+        buttons.push(b.button(
+            &text,
+            menu(MenuAct::Join(addr)),
+            Vec2::new(0.0, y - 0.05 - k as f32 * 0.085),
+            Vec2::new(width, 0.075),
+        ));
+    }
+}
+
+/// The start menu (src/menu.rs's levels; no typing, so no join by address and the server's
+/// name as it is).
+fn build_lobby(b: &mut Builder, m: &MenuModel) -> Vec<Button> {
     let size = Vec2::new(1.1, 1.12);
     b.backing(size);
     let top = size.y / 2.0;
     let (red, red_glow) = (b.mats.team[0].clone(), b.mats.glow[0].clone());
-    let (blue, dim, lit) = (
-        b.mats.team[1].clone(),
-        b.mats.dim.clone(),
-        b.mats.mine[2].clone(),
-    );
+    let (blue, dim) = (b.mats.team[1].clone(), b.mats.dim.clone());
     b.text(
         "NEON LASERTAG",
         0.075,
@@ -389,91 +520,101 @@ fn build_lobby(b: &mut Builder, choices: &LobbyChoices) -> Vec<Button> {
         Some(&red_glow),
     );
     b.text(
-        "RED VS BLUE",
+        m.screen.crumb(),
         0.028,
         Vec2::new(0.0, top - 0.15),
         Align::Center,
         &blue,
         None,
     );
-    let mut buttons = vec![
-        b.button(
-            "PLAY VS BOTS",
-            Act::Play { host: false },
-            Vec2::new(-0.26, top - 0.27),
-            Vec2::new(0.48, 0.1),
-        ),
-        b.button(
-            "HOST GAME",
-            Act::Play { host: true },
-            Vec2::new(0.26, top - 0.27),
-            Vec2::new(0.48, 0.1),
-        ),
-    ];
-    let label = |b: &mut Builder, s: &str, y: f32| {
-        b.text(s, 0.026, Vec2::new(0.0, y), Align::Center, &dim, None);
-    };
-    label(b, "BOTS", top - 0.37);
-    let y = top - 0.44;
-    buttons.push(b.button(
-        "-",
-        Act::Bots(-1),
-        Vec2::new(-0.2, y),
-        Vec2::new(0.12, 0.09),
-    ));
-    let white = b.mats.white.clone();
-    b.text(
-        &choices.bots.to_string(),
-        0.045,
-        Vec2::new(0.0, y),
-        Align::Center,
-        &white,
-        None,
-    );
-    buttons.push(b.button("+", Act::Bots(1), Vec2::new(0.2, y), Vec2::new(0.12, 0.09)));
-    // A row of choices, the chosen one lit.
-    let mut row = |b: &mut Builder, items: Vec<(String, Act, bool)>, y: f32, w: f32| {
-        let pitch = w + 0.02;
-        let x0 = -(items.len() as f32 - 1.0) * pitch / 2.0;
-        for (k, (name, act, on)) in items.into_iter().enumerate() {
-            let c = Vec2::new(x0 + k as f32 * pitch, y);
-            let sz = Vec2::new(w, 0.09);
-            if on {
-                b.fill(c, sz, &lit, true);
-            }
-            buttons.push(b.button(&name, act, c, sz));
+    let mut buttons = Vec::new();
+    let big = |b: &mut Builder, buttons: &mut Vec<Button>, items: &[(&str, MenuAct)]| {
+        for (k, (label, a)) in items.iter().enumerate() {
+            buttons.push(b.button(
+                label,
+                menu(a.clone()),
+                Vec2::new(0.0, top - 0.32 - k as f32 * 0.16),
+                Vec2::new(0.6, 0.12),
+            ));
         }
     };
-    label(b, "SKILL", top - 0.53);
-    let skills = Difficulty::ALL
-        .iter()
-        .map(|&d| {
-            (
-                d.name().to_uppercase(),
-                Act::Skill(d),
-                d == choices.difficulty,
-            )
-        })
-        .collect();
-    row(b, skills, top - 0.6, 0.3);
-    label(b, "ARENA", top - 0.69);
-    let arenas = SizeChoice::ALL
-        .iter()
-        .map(|&a| (a.name().to_uppercase(), Act::Arena(a), a == choices.arena))
-        .collect();
-    row(b, arenas, top - 0.76, 0.24);
-    label(b, "MODE", top - 0.85);
-    let modes = GameMode::ALL
-        .iter()
-        .map(|&m| (m.name().to_uppercase(), Act::Mode(m), m == choices.mode))
-        .collect();
-    row(b, modes, top - 0.92, 0.42);
-    buttons.push(b.button(
-        "QUIT",
-        Act::Quit,
-        Vec2::new(0.0, top - 1.03),
-        Vec2::new(0.4, 0.09),
-    ));
+    // Back (and the level's way on) at the bottom.
+    let bottom = top - 1.03;
+    let back = |b: &mut Builder, buttons: &mut Vec<Button>, go: Option<(&str, MenuAct)>| {
+        let items = std::iter::once(("BACK".to_string(), menu(MenuAct::Back), false))
+            .chain(go.map(|(l, a)| (l.to_string(), menu(a), false)))
+            .collect();
+        button_row(b, buttons, items, bottom, 0.46, 0.09);
+    };
+    match m.screen {
+        Screen::Top => big(
+            b,
+            &mut buttons,
+            &[
+                ("BOTMATCH", MenuAct::Go(Screen::Botmatch)),
+                ("MULTIPLAYER", MenuAct::Go(Screen::Multiplayer)),
+                ("QUIT", MenuAct::Quit),
+            ],
+        ),
+        Screen::Botmatch => {
+            lobby_choices(b, &mut buttons, m, top - 0.27);
+            back(b, &mut buttons, Some(("START", MenuAct::StartBots)));
+        }
+        Screen::Multiplayer => {
+            big(
+                b,
+                &mut buttons,
+                &[
+                    ("INTERNET", MenuAct::Go(Screen::Internet)),
+                    ("LAN", MenuAct::Go(Screen::Lan)),
+                ],
+            );
+            back(b, &mut buttons, None);
+        }
+        Screen::Internet | Screen::Lan => {
+            let internet = m.screen == Screen::Internet;
+            lobby_list(b, &mut buttons, m, top - 0.22, 0.96);
+            if internet {
+                buttons.push(b.button(
+                    "REFRESH",
+                    menu(MenuAct::Refresh),
+                    Vec2::new(0.0, bottom + 0.12),
+                    Vec2::new(0.3, 0.08),
+                ));
+            }
+            let host = if internet { "HOST ONLINE" } else { "HOST LAN" };
+            back(
+                b,
+                &mut buttons,
+                Some((host, MenuAct::Go(Screen::Host { internet }))),
+            );
+        }
+        Screen::Host { internet } => {
+            b.text(
+                &short(&m.server_name, 28),
+                0.034,
+                Vec2::new(0.0, top - 0.23),
+                Align::Center,
+                &dim,
+                None,
+            );
+            lobby_choices(b, &mut buttons, m, top - 0.3);
+            let note = if internet {
+                "LISTED ONLINE, PORT OPENED BY UPNP"
+            } else {
+                "FOUND UNDER LAN"
+            };
+            b.text(
+                note,
+                0.022,
+                Vec2::new(0.0, bottom + 0.09),
+                Align::Center,
+                &dim,
+                None,
+            );
+            back(b, &mut buttons, Some(("START HOSTING", MenuAct::StartHost)));
+        }
+    }
     buttons
 }
 
@@ -670,7 +811,7 @@ fn panels(
     game: Option<Res<Game>>,
     starting: Option<Res<crate::menu::Start>>,
     connecting: Option<Res<crate::Connecting>>,
-    choices: Res<LobbyChoices>,
+    model: Res<MenuModel>,
     session: Res<Session>,
     mats: Res<UiMats>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -697,7 +838,8 @@ fn panels(
     }
     // The start menu is built anew when its choices change, or once the head is tracked.
     let stale = ui.panel.as_ref().is_some_and(|p| {
-        p.kind == Kind::Lobby && (p.shows != Some(*choices) || p.headless && input.head.is_some())
+        p.kind == Kind::Lobby
+            && (p.shows != Some(lobby_key(&model)) || p.headless && input.head.is_some())
     });
     if ui.panel.as_ref().map(|p| p.kind) != want || stale {
         if let Some(p) = ui.panel.take() {
@@ -725,7 +867,7 @@ fn panels(
                 root,
             };
             let (buttons, countdown_at) = match (kind, game.as_deref()) {
-                (Kind::Lobby, _) => (build_lobby(&mut b, &choices), Vec3::ZERO),
+                (Kind::Lobby, _) => (build_lobby(&mut b, &model), Vec3::ZERO),
                 (Kind::Menu, Some(g)) => (build_menu(&mut b, g.is_local()), Vec3::ZERO),
                 (Kind::End, Some(g)) => build_end(&mut b, g),
                 _ => (Vec::new(), Vec3::ZERO),
@@ -737,7 +879,7 @@ fn panels(
                 buttons,
                 countdown: None,
                 countdown_at,
-                shows: (kind == Kind::Lobby).then_some(*choices),
+                shows: (kind == Kind::Lobby).then(|| lobby_key(&model)),
                 headless: input.head.is_none(),
             });
         }
@@ -795,7 +937,7 @@ fn pointer(
     mats: Res<UiMats>,
     mut rumble: ResMut<Rumble>,
     mut cmds: MessageWriter<SessionCmd>,
-    mut choices: ResMut<LobbyChoices>,
+    mut model: ResMut<MenuModel>,
     mut transforms: Query<&mut Transform>,
     mut vis: Query<&mut Visibility>,
     mut laser_mats: Query<&mut MeshMaterial3d<AccentMaterial>>,
@@ -909,7 +1051,10 @@ fn pointer(
             }
         }
     }
-    let Some(act) = pressed.and_then(|k| panel.buttons.get(k)).map(|b| b.act) else {
+    let Some(act) = pressed
+        .and_then(|k| panel.buttons.get(k))
+        .map(|b| b.act.clone())
+    else {
         return;
     };
     match act {
@@ -925,23 +1070,13 @@ fn pointer(
         Act::Quit => {
             cmds.write(SessionCmd::Quit);
         }
-        Act::Play { host } => {
-            commands.insert_resource(crate::menu::Start::Local {
-                host: host.then(|| crate::game::Hosting {
-                    internet: false,
-                    name: "LAN game".into(),
-                    port: lt_net::protocol::DEFAULT_PORT,
-                }),
-                bots: choices.bots,
-                difficulty: choices.difficulty,
-                arena: choices.arena,
-                mode: choices.mode,
-            });
-        }
-        Act::Bots(d) => choices.bots = (choices.bots as i32 + d).clamp(0, 15) as usize,
-        Act::Skill(d) => choices.difficulty = d,
-        Act::Arena(a) => choices.arena = a,
-        Act::Mode(m) => choices.mode = m,
+        Act::Menu(a) => match model.apply(&a) {
+            Outcome::Start(start) => commands.insert_resource(start),
+            Outcome::Quit => {
+                cmds.write(SessionCmd::Quit);
+            }
+            Outcome::Stay | Outcome::Options => {}
+        },
     }
 }
 
