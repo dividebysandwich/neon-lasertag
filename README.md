@@ -136,7 +136,19 @@ Without `--vr`, `--gl-vr` or `--flat` the game starts in VR on a Steam Frame (`-
 while a VR compositor runs (SteamVR's vrcompositor or Monado's service: `--vr`), and on the
 flat screen otherwise (or when the headset can't be used).
 
-Other flags: `--name NAME`, `--host [PORT]` (play and let others join), `--connect HOST[:PORT]`,
+**The start menu** (flat screen and VR alike): Botmatch (the bots' number and difficulty, the
+arena's size, the mode), Multiplayer, Options (flat screen) and Quit. Multiplayer offers Internet
+(the master server's list of servers, join one, or host an internet game) and LAN (the games
+found on your network, found by their broadcasts on UDP port 27421, join one, or host a LAN
+game); on the flat screen both also join a typed address. Hosting asks for the server's name
+(flat screen), the bots, the arena and the mode. A hosted game is announced on the LAN; an
+internet one is also listed on the master server, and its UDP port (27420) is opened on the
+router with UPnP, or NAT-PMP. If the router does neither, the game is hosted and listed anyway,
+and the in-game menu says to forward the port by hand.
+
+Other flags: `--name NAME`, `--host [PORT]` (play and let others on your network join),
+`--public` (with `--host`: on the internet, listed on the master server, the port opened on the
+router), `--server-name NAME` (the hosted game's name), `--connect HOST[:PORT]`,
 `--difficulty easy|normal|hard` (the bots, also in the start menu), `--arena small|medium|large|random`
 (the arenas' size in local and hosted games, also in the start menu; random picks one for every
 match), `--mode classic|megatarget` (what local and hosted games are played for, megatarget unless chosen, also in the start
@@ -150,7 +162,8 @@ opens the options screen, `arc` shows the throw arc, `target` hits a team target
 nearest other player 4 m (M m) in front of you; Megatarget mode: `power` hits both secondary targets, `warp-door`, `warp-room`, `warp-turret` and `warp-pocket` move
 you there; `warp-mirror` puts you before the nearest mirror, `warp-pad` (or `warp-pad=M`) 1 m (M m) before
 the nearest jump pad, `warp-gate` before the nearest laser gate; `yaw=DEG` and `pitch=DEG` turn the flat screen's view),
-`LT_VR_MENU=1` opens the VR menu, `LT_VR_FAKE_HANDS=1` fakes controllers, `LT_HOLSTER=x,y,z`
+`LT_MENU=top|botmatch|multiplayer|internet|lan|host-lan|host-internet` opens the start menu at
+that level, `LT_MASTER=URL` asks another master server, `LT_VR_MENU=1` opens the VR menu, `LT_VR_FAKE_HANDS=1` fakes controllers, `LT_HOLSTER=x,y,z`
 moves the holster (from the eyes; default `0.23,-0.58,-0.07`). `LT_GUN_TILT=DEG` turns the
 blaster nose down in the hand by that much from the controller's aim (default 15), for a more
 upright handle.
@@ -160,6 +173,7 @@ upright handle.
 
 ```
 cargo test --workspace                      # simulation, arena properties, transport, networking
+cargo test -p lt-net --test portmap -- --ignored --nocapture   # open (and list) ports on this router
 tools/models/build_all.sh                   # rebuild and check the models
 ```
 
@@ -184,7 +198,8 @@ CI (`.github/workflows/build.yml`) runs on every push and pull request:
     linked in).
   - macOS Apple silicon: `lasertag-VERSION-aarch64-apple-darwin.zip`, flat screen only. It is
     unsigned: `xattr -dr com.apple.quarantine` the unpacked folder before the first start.
-- **servers**: `lt-server-VERSION-...tar.gz` (dedicated server) and `lt-master-VERSION-...tar.gz`
+- **servers**: `lt-server-VERSION-...tar.gz` (dedicated server; announced on the LAN unless
+  `--no-lan`, listed on the master server unless `--private`) and `lt-master-VERSION-...tar.gz`
   (master server, with `deploy/`) for Linux x86_64.
 
 Every run keeps its packages as workflow artifacts; `/build` in a pull request comment answers
