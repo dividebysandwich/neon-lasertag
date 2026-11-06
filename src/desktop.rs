@@ -333,7 +333,7 @@ fn read_input(
         pos: off_hand,
         rot: view,
     };
-    let throw_vel = view * Vec3::NEG_Z * 33.0 + Vec3::Y * 7.5;
+    let throw_vel = view * Vec3::NEG_Z * 11.0 + Vec3::Y * 2.5;
     arc.0 = None;
     if holding {
         cmd.grenade_hand = Some(Hand::Left);

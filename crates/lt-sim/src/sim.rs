@@ -1138,8 +1138,10 @@ impl Sim {
                 if !pos.is_finite() || !self.world.clear(eye, pos) {
                     pos = eye;
                 }
+                // (VR players' throws harder.)
+                let k = if p.cmd.vr { rules.vr_throw_factor } else { 1.0 };
                 let vel = if vel.is_finite() {
-                    vel.clamp_length_max(rules.grenade_max_speed)
+                    (vel * k).clamp_length_max(rules.grenade_max_speed * k)
                 } else {
                     Vec3::ZERO
                 };
@@ -2756,6 +2758,30 @@ mod tests {
         sim.hit_player(bi, &bolt, Vec3::ZERO);
         assert_eq!(sim.player(a).unwrap().score, 2 * sim.rules.tag_points);
         assert_eq!(sim.scores[0], 2 * sim.rules.tag_points);
+    }
+
+    #[test]
+    fn vr_players_throw_harder() {
+        let thrown = |vr: bool, speed: f32| {
+            let (mut sim, a, _) = duel();
+            sim.give(a, PickupKind::Grenade);
+            sim.set_cmd(
+                a,
+                PlayerCmd {
+                    vr,
+                    throw: Some((Vec3::new(0.0, 1.5, 0.0), Vec3::new(0.0, 0.0, -speed))),
+                    ..Default::default()
+                },
+            );
+            sim.step();
+            // (Its first tick of flight: gravity aside, as thrown.)
+            sim.grenades[0].vel.with_y(0.0).length()
+        };
+        assert!((thrown(false, 5.0) - 5.0).abs() < 0.01);
+        assert!((thrown(true, 5.0) - 15.0).abs() < 0.01);
+        let max = Rules::default().grenade_max_speed;
+        assert!((thrown(false, 30.0) - max).abs() < 0.01);
+        assert!((thrown(true, 30.0) - 3.0 * max).abs() < 0.01);
     }
 
     #[test]

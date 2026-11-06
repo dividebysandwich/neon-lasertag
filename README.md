@@ -104,7 +104,8 @@ arena (25 shots a second).
 
 **Laser grenade.** Nobody starts with one: grenades appear at random spots in the arena (four
 at a time, two in each half; a taken one comes back somewhere else after 8 s to 16 s), and
-walking over one picks it up. You carry one at most. Thrown, it bounces around. After 3 s it
+walking over one picks it up. You carry one at most. Thrown, it bounces around (in VR it flies three times as fast as your
+hand threw it, so a small swing in a small room carries across the arena). After 3 s it
 jumps about a metre up, then hovers and spins for 4 s, spraying white bolts in all
 directions, one in five of them aimed at a player it can see (within 20 m). They hit everyone, team mates and the thrower included, and can hit the same
 player twice. A grenade in flight trails white sparks inside a slowly pulsing white glow, which

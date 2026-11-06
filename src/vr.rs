@@ -397,6 +397,7 @@ fn read_controls(
         }
     }
     local.cmd.gun_hand = vr.gun;
+    local.cmd.vr = true;
     let trigger = vr.gun.map_or(0.0, |h| input.hands[h.index()].trigger);
     let was = vr.firing;
     vr.firing = if was { trigger > 0.5 } else { trigger > 0.75 };
@@ -459,7 +460,8 @@ fn read_controls(
                     Vec3::ZERO
                 };
                 let feet = local.cmd.feet.unwrap_or_default();
-                local.cmd.throw = Some((p1 - feet, v * 3.9));
+                // (The sim throws it `Rules::vr_throw_factor` times as hard: `PlayerCmd::vr`.)
+                local.cmd.throw = Some((p1 - feet, v * 1.3));
             }
         }
         None => {

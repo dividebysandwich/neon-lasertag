@@ -208,6 +208,9 @@ pub struct PlayerCmd {
     pub fire: bool,
     /// A grenade is in this hand (drawn, not yet thrown).
     pub grenade_hand: Option<Hand>,
+    /// The player is in VR (its throws get `Rules::vr_throw_factor`).
+    #[serde(default)]
+    pub vr: bool,
     /// Throw this tick: start position (relative to the feet) and velocity.
     pub throw: Option<(Vec3, Vec3)>,
     /// Switch on the carried shield (powerup).

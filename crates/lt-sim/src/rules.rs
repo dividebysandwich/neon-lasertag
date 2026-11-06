@@ -82,6 +82,9 @@ pub struct Rules {
     pub grenade_aimed: f32,
     pub grenade_restitution: f32,
     pub grenade_max_speed: f32,
+    /// VR players throw this many times as hard as their hands move (and as fast as this many
+    /// times `grenade_max_speed`): a real throw in a small room is gentle.
+    pub vr_throw_factor: f32,
     /// Match length (seconds).
     pub match_time: f32,
     /// Arena events (`ArenaEvent`): whether there are any, when the first comes (seconds into
@@ -166,7 +169,8 @@ impl Default for Rules {
             grenade_burst_bolts: (2, 4),
             grenade_aimed: 0.2,
             grenade_restitution: 0.45,
-            grenade_max_speed: 48.0,
+            grenade_max_speed: 16.0,
+            vr_throw_factor: 3.0,
             match_time: 600.0,
             events: true,
             event_first: (120.0, 180.0),
