@@ -1015,7 +1015,7 @@ fn event_banner(
             &mut meshes,
             root,
             name,
-            0.09,
+            0.045,
             Vec3::ZERO,
             Align::Center,
             mat,
@@ -1042,7 +1042,8 @@ fn event_banner(
     let fwd = head.rotation * Vec3::NEG_Z;
     let fwd = Vec3::new(fwd.x, 0.0, fwd.z).normalize_or(Vec3::NEG_Z);
     if let Ok(mut t) = transforms.get_mut(*root) {
-        t.translation = head.translation + fwd * 1.6 + Vec3::Y * 0.25;
+        // (Near, so that walls close by don't hide it.)
+        t.translation = head.translation + fwd * 0.8 + Vec3::Y * 0.12;
         // (Its text faces +Z: turned about the vertical towards the eyes.)
         t.rotation = Quat::from_rotation_y((-fwd.x).atan2(-fwd.z));
         let age = crate::hud::BANNER_TIME - *left;
