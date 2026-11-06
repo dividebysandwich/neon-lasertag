@@ -1,0 +1,10 @@
+[package]
+name = "lt-server"
+version.workspace = true
+edition.workspace = true
+description = "The lasertag dedicated server"
+
+[dependencies]
+lt-sim.workspace = true
+lt-net.workspace = true
+rand.workspace = true

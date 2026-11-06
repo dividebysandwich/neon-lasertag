@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Neon Lasertag
+GenericName=Lasertag
+Comment=Red vs Blue lasertag in procedurally generated neon arenas, in VR or on the flat screen
+Exec=lasertag
+Icon=lasertag
+Terminal=false
+Categories=Game;ActionGame;
+Keywords=lasertag;VR;OpenXR;shooter;
+StartupWMClass=lasertag

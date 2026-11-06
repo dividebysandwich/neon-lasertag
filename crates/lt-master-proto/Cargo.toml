@@ -1,0 +1,11 @@
+[package]
+name = "lt-master-proto"
+version.workspace = true
+edition.workspace = true
+description = "Lasertag server list: what game servers report to the master server and what it lists"
+
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

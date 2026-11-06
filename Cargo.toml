@@ -1,0 +1,64 @@
+[workspace]
+members = [".", "crates/lt-sim", "crates/lt-net", "crates/lt-master-proto", "crates/lt-master", "crates/lt-server"]
+resolver = "3"
+exclude = ["vendor"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+
+[workspace.dependencies]
+lt-sim = { path = "crates/lt-sim" }
+lt-net = { path = "crates/lt-net" }
+lt-master-proto = { path = "crates/lt-master-proto" }
+glam = { version = "0.32", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ron = "0.12"
+rand = "0.9"
+anyhow = "1"
+
+[package]
+name = "lasertag"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "lt"
+
+[features]
+default = ["dev", "xr"]
+dev = ["bevy/dynamic_linking"]
+# OpenXR through bevy_mod_openxr (`--vr`); the loader is opened at runtime.
+xr = ["dep:bevy_mod_openxr", "dep:bevy_mod_xr", "dep:openxr"]
+# `--gl-vr`: the headset drawn by our own OpenGL renderer (src/glvr), foveated on the Steam Frame.
+glvr = ["xr", "dep:glow", "dep:khronos-egl", "dep:libloading"]
+
+[dependencies]
+bevy = { version = "0.19.1", features = ["trace"] }
+lt-sim.workspace = true
+lt-net.workspace = true
+glam.workspace = true
+serde.workspace = true
+rand.workspace = true
+anyhow.workspace = true
+ron.workspace = true
+gltf = "1.4"
+image = { version = "0.25", default-features = false, features = ["png"] }
+bevy_mod_openxr = { version = "0.6", optional = true }
+bevy_mod_xr = { version = "0.6", optional = true }
+openxr = { version = "0.21", optional = true }
+glow = { version = "0.18", optional = true }
+khronos-egl = { version = "6", features = ["dynamic"], optional = true }
+libloading = { version = "0.8", optional = true }
+
+[patch.crates-io]
+# bevy_mod_openxr 0.6.0 from stealth-mission-89: skips frames the runtime refuses
+# (ERROR_CALL_ORDER_INVALID under SteamVR) and makes swapchain images sampleable.
+bevy_mod_openxr = { path = "vendor/bevy_mod_openxr" }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

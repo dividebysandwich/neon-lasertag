@@ -1,0 +1,18 @@
+# /etc/systemd/system/lt-master.service
+[Unit]
+Description=Lasertag master server (server list)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/lt-master --bind 127.0.0.1:27500
+Restart=on-failure
+RestartSec=5
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

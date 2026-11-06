@@ -1,0 +1,13 @@
+[package]
+name = "lt-sim"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+glam.workspace = true
+serde.workspace = true
+rand.workspace = true
+rand_chacha = "0.9"
+
+[dev-dependencies]
+serde_json.workspace = true

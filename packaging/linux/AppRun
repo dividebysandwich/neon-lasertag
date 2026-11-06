@@ -1,0 +1,31 @@
+#!/bin/bash
+# The AppImage's entry point (packaged by tools/appimage.sh). The game, the OpenXR loader
+# (libopenxr_loader.so, found through the game's RUNPATH $ORIGIN) are in usr/bin, the assets in
+# usr/share/lasertag/assets; the game only reads them, so they stay inside the AppImage.
+#
+# DEFAULT_ARGS is set by tools/appimage.sh: `--gl-vr` in the aarch64 (Steam Frame) AppImage,
+# empty in the x86_64 one. They are used unless the arguments choose a mode themselves
+# (--vr, --gl-vr); `--desktop` keeps the flat-screen window and is not passed on.
+HERE="$(dirname "$(readlink -f "$0")")"
+DEFAULT_ARGS=(@DEFAULT_ARGS@)
+export BEVY_ASSET_ROOT="${BEVY_ASSET_ROOT:-$HERE/usr/share/lasertag}"
+
+args=() defaults=1
+for a in "$@"; do
+    case $a in
+        --desktop) defaults=0; continue ;;
+        --vr | --gl-vr) defaults=0 ;;
+    esac
+    args+=("$a")
+done
+[ $defaults = 1 ] && args=("${DEFAULT_ARGS[@]}" "${args[@]}")
+
+# Started from a launcher (Steam, a file manager), not a terminal: the log goes to
+# ${XDG_STATE_HOME:-~/.local/state}/lasertag/lasertag.log.
+if [ ! -t 2 ]; then
+    logdir="${XDG_STATE_HOME:-$HOME/.local/state}/lasertag"
+    if mkdir -p "$logdir" 2> /dev/null; then
+        NO_COLOR=1 exec "$HERE/usr/bin/lasertag" "${args[@]}" > "$logdir/lasertag.log" 2>&1
+    fi
+fi
+exec "$HERE/usr/bin/lasertag" "${args[@]}"

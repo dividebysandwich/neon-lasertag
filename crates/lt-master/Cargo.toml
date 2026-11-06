@@ -1,0 +1,11 @@
+[package]
+name = "lt-master"
+version.workspace = true
+edition.workspace = true
+description = "Lasertag master server: the list of game servers (REST API and web page)"
+
+[dependencies]
+lt-master-proto.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tiny_http = "0.12.0"

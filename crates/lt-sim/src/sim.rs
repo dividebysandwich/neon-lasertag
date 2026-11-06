@@ -1,0 +1,1494 @@
+//! The authoritative game state, stepped at a fixed `TICK`.
+//!
+//! **Lag compensation.** A remote player aims at the world as their client showed it, a
+//! little in the past (network delay plus interpolation). The sim keeps every player's
+//! hit-relevant state for the last `HISTORY` ticks; a bolt fired with a `PlayerCmd::view_tick`
+//! is flown at once through the ticks since then (at most `MAX_LAG`), hitting players where
+//! they were at the ticks the shooter saw and the arena as it is now, and then flies on
+//! normally. Grenade bolts are not compensated.
+
+use std::sync::Arc;
+
+use glam::{Quat, Vec2, Vec3};
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaCha8Rng;
+use serde::{Deserialize, Serialize};
+
+use crate::collide::{BODY_HEIGHT, BODY_RADIUS, GRAVITY, World, ray_box};
+use crate::hitbox::first_hit;
+use crate::level::{self, Ground, Level, MoverKind, Nav};
+use crate::rules::Rules;
+use crate::types::*;
+
+pub const TICK: f32 = 1.0 / 60.0;
+pub const MAX_PLAYERS: usize = 32;
+/// How close (horizontally) a player has to come to take a grenade pickup.
+pub const PICKUP_REACH: f32 = 0.9;
+/// Pickups hover this high above the floor.
+pub const PICKUP_HEIGHT: f32 = 0.6;
+/// Default standing eye height.
+pub const EYE: f32 = 1.65;
+/// Ticks of player history kept for lag compensation, and the most a bolt is compensated
+/// (250 ms).
+pub const HISTORY: usize = 20;
+pub const MAX_LAG: u64 = 15;
+
+/// A player as a bolt could hit them at a past tick.
+#[derive(Clone, Copy, Debug)]
+struct Ghost {
+    id: PlayerId,
+    alive: bool,
+    feet: Vec3,
+    eye: Vec3,
+    /// The parts of the command `hitbox::first_hit` uses (head, hands, blaster, yaw).
+    cmd: PlayerCmd,
+}
+
+#[derive(Clone, Debug)]
+pub struct Player {
+    pub id: PlayerId,
+    pub name: String,
+    pub team: Team,
+    pub bot: bool,
+    pub feet: Vec3,
+    pub vy: f32,
+    pub cmd: PlayerCmd,
+    prev_fire: bool,
+    /// Hits taken since the last respawn.
+    pub hits: u8,
+    /// Time left of the blaster's lockout after a hit (no hits taken meanwhile either).
+    pub cooldown: f32,
+    pub fire_cd: f32,
+    /// Waiting to respawn, seconds left.
+    pub respawn: Option<f32>,
+    pub grenades: u8,
+    /// Shots left in the blaster.
+    pub ammo: u16,
+    /// Refilling at a reload station or spawn pad (fractional shots so far).
+    pub reloading: Option<f32>,
+    pub score: u32,
+    /// Enemy players this player tagged out.
+    pub tags: u32,
+    /// Times this player was tagged out.
+    pub tagged: u32,
+    /// Bolts fired (match statistics).
+    pub shots: u32,
+    /// Bolts that hit an enemy player and counted (not during the victim's cooldown).
+    pub landed: u32,
+    /// Hits on the enemy team's targets.
+    pub target_hits: u32,
+    /// Ticks to ignore predicted positions (just respawned: the client hasn't seen it yet).
+    pub claim_block: u32,
+}
+
+impl Player {
+    pub fn alive(&self) -> bool {
+        self.respawn.is_none()
+    }
+
+    pub fn eye(&self) -> Vec3 {
+        self.feet + self.head_offset()
+    }
+
+    fn head_offset(&self) -> Vec3 {
+        let h = self.cmd.head.pos;
+        if h == Vec3::ZERO { Vec3::Y * EYE } else { h.clamp(Vec3::new(-0.6, 0.4, -0.6), Vec3::new(0.6, 2.2, 0.6)) }
+    }
+
+    /// The middle of the floating chest (bots aim here).
+    pub fn chest(&self) -> Vec3 {
+        self.eye() - Vec3::Y * (crate::hitbox::CHEST_DROP + crate::hitbox::CHEST_HALF.y)
+    }
+
+    /// Where along the segment `a`..`b` (0..1) it first hits this player, and what it hits.
+    pub fn hit_by(&self, a: Vec3, b: Vec3) -> Option<(f32, crate::hitbox::Part)> {
+        first_hit(self.feet, self.eye(), &self.cmd, a, b)
+    }
+}
+
+/// A grenade lying in the arena for anyone to take.
+#[derive(Clone, Copy, Debug)]
+pub struct Pickup {
+    pub id: u32,
+    pub pos: Vec3,
+}
+
+/// A place for pickups: there's a pickup there, or one will appear somewhere in `half` after
+/// `wait` seconds.
+#[derive(Clone, Copy, Debug)]
+struct PickupSlot {
+    half: Team,
+    pickup: Option<Pickup>,
+    wait: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Bolt {
+    pub id: u32,
+    pub owner: PlayerId,
+    pub owner_team: Team,
+    /// The bolt's colour: the shooter's team, or `None` (white) from a grenade.
+    pub team: Option<Team>,
+    pub pos: Vec3,
+    pub vel: Vec3,
+    pub life: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum GrenadePhase {
+    Flying,
+    /// Hovering between `from` and `to` (`hop` above where it landed).
+    Active { from: Vec3, to: Vec3 },
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Grenade {
+    pub id: u32,
+    pub owner: PlayerId,
+    pub team: Team,
+    pub pos: Vec3,
+    pub vel: Vec3,
+    pub age: f32,
+    pub spin: f32,
+    pub phase: GrenadePhase,
+    next_burst: f32,
+}
+
+/// Everything a client needs to draw a moment of the game.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Snapshot {
+    pub tick: u64,
+    pub time_left: f32,
+    pub scores: [u32; 2],
+    pub players: Vec<PlayerSnap>,
+    pub bolts: Vec<BoltSnap>,
+    pub grenades: Vec<GrenadeSnap>,
+    pub pickups: Vec<PickupSnap>,
+    pub over: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PickupSnap {
+    pub id: u32,
+    pub pos: Vec3,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PlayerSnap {
+    pub id: PlayerId,
+    pub team: Team,
+    pub feet: Vec3,
+    pub yaw: f32,
+    pub head: Pose,
+    pub hands: [Pose; 2],
+    pub gun_hand: Option<Hand>,
+    pub grenade_hand: Option<Hand>,
+    pub hits: u8,
+    pub cooldown: f32,
+    pub respawn: Option<f32>,
+    pub grenades: u8,
+    pub ammo: u16,
+    pub reloading: bool,
+    pub score: u32,
+    /// Match statistics: enemies tagged out, times tagged out, bolts fired, bolts that hit an
+    /// enemy and counted, enemy target hits.
+    pub tags: u32,
+    pub tagged: u32,
+    pub shots: u32,
+    pub landed: u32,
+    pub target_hits: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BoltSnap {
+    pub id: u32,
+    pub pos: Vec3,
+    pub vel: Vec3,
+    pub team: Option<Team>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GrenadeSnap {
+    pub id: u32,
+    pub pos: Vec3,
+    pub spin: f32,
+    pub active: bool,
+}
+
+pub struct Sim {
+    pub rules: Rules,
+    pub level: Arc<Level>,
+    pub world: World,
+    pub players: Vec<Player>,
+    pub bolts: Vec<Bolt>,
+    pub grenades: Vec<Grenade>,
+    slots: Vec<PickupSlot>,
+    pub scores: [u32; 2],
+    pub time_left: f32,
+    pub tick: u64,
+    pub over: bool,
+    /// Per target (by id): the tick and shooter of its last hit (the bots' alarm; events are
+    /// drained by the caller, so bots can't see them).
+    pub last_target_hit: Vec<Option<(u64, PlayerId)>>,
+    /// Every player's hit-relevant state at the end of each of the last `HISTORY` ticks.
+    history: std::collections::VecDeque<(u64, Vec<Ghost>)>,
+    events: Vec<SimEvent>,
+    rng: ChaCha8Rng,
+    next_id: u32,
+    /// Distance from a base to the far end, for the respawn time.
+    max_dist: f32,
+}
+
+impl Sim {
+    pub fn new(seed: u64, rules: Rules) -> Sim {
+        Self::with_level(Arc::new(Level::generate(seed)), rules)
+    }
+
+    pub fn with_level(level: Arc<Level>, rules: Rules) -> Sim {
+        let world = level.world_at(0);
+        let max_dist = (level.base_centre(Team::Red) - level.base_centre(Team::Blue)).length().max(1.0);
+        let pairs = rules.pickup_pairs as usize;
+        Sim {
+            time_left: rules.match_time,
+            rules,
+            world,
+            players: Vec::new(),
+            bolts: Vec::new(),
+            grenades: Vec::new(),
+            slots: (0..pairs * 2)
+                .map(|i| PickupSlot { half: if i % 2 == 0 { Team::Red } else { Team::Blue }, pickup: None, wait: 1.0 + (i / 2) as f32 * 2.0 })
+                .collect(),
+            scores: [0; 2],
+            tick: 0,
+            over: false,
+            last_target_hit: vec![None; level.targets.len()],
+            history: std::collections::VecDeque::with_capacity(HISTORY + 1),
+            events: Vec::new(),
+            rng: ChaCha8Rng::seed_from_u64(level.seed ^ 0x5EED),
+            next_id: 1,
+            max_dist,
+            level,
+        }
+    }
+
+    pub fn player(&self, id: PlayerId) -> Option<&Player> {
+        self.players.iter().find(|p| p.id == id)
+    }
+
+    fn player_mut(&mut self, id: PlayerId) -> Option<&mut Player> {
+        self.players.iter_mut().find(|p| p.id == id)
+    }
+
+    /// Joins a player (on the smaller team unless `team` is given); `None` if full.
+    pub fn add_player(&mut self, name: &str, team: Option<Team>, bot: bool) -> Option<PlayerId> {
+        if self.players.len() >= MAX_PLAYERS {
+            return None;
+        }
+        let id = (0..=255u8).find(|i| self.player(*i).is_none())?;
+        let team = team.unwrap_or_else(|| {
+            let red = self.players.iter().filter(|p| p.team == Team::Red).count();
+            let blue = self.players.len() - red;
+            if red <= blue { Team::Red } else { Team::Blue }
+        });
+        let mut p = Player {
+            id,
+            name: name.chars().take(24).collect(),
+            team,
+            bot,
+            feet: Vec3::ZERO,
+            vy: 0.0,
+            cmd: PlayerCmd::default(),
+            prev_fire: false,
+            hits: 0,
+            cooldown: 0.0,
+            fire_cd: 0.0,
+            respawn: None,
+            grenades: 0,
+            ammo: self.rules.ammo,
+            reloading: None,
+            score: 0,
+            tags: 0,
+            tagged: 0,
+            shots: 0,
+            landed: 0,
+            target_hits: 0,
+            claim_block: 0,
+        };
+        let spawn = self.pick_spawn(team);
+        p.feet = spawn.pos;
+        p.cmd.yaw = spawn.yaw;
+        self.players.push(p);
+        Some(id)
+    }
+
+    pub fn remove_player(&mut self, id: PlayerId) {
+        self.players.retain(|p| p.id != id);
+    }
+
+    /// The latest command of a player, applied by every `step` until replaced.
+    pub fn set_cmd(&mut self, id: PlayerId, cmd: PlayerCmd) {
+        if let Some(p) = self.player_mut(id) {
+            // A throw stays until a step uses it.
+            let throw = cmd.throw.or(p.cmd.throw);
+            p.cmd = cmd;
+            p.cmd.throw = throw;
+        }
+    }
+
+    pub fn drain_events(&mut self) -> Vec<SimEvent> {
+        std::mem::take(&mut self.events)
+    }
+
+    fn pick_spawn(&mut self, team: Team) -> crate::level::Spawn {
+        let spawns = &self.level.spawns[team.index()];
+        // The pad furthest from everyone else.
+        let mut best = spawns[0];
+        let mut best_d = -1.0;
+        for s in spawns {
+            let d = self
+                .players
+                .iter()
+                .filter(|p| p.alive())
+                .map(|p| (p.feet - s.pos).length_squared())
+                .fold(f32::MAX, f32::min);
+            let d = d + self.rng.random::<f32>() * 0.5;
+            if d > best_d {
+                best_d = d;
+                best = *s;
+            }
+        }
+        best
+    }
+
+    pub fn respawn_time(&self, team: Team, at: Vec3) -> f32 {
+        let d = (at - self.level.base_centre(team)).length();
+        let t = (d / self.max_dist).clamp(0.0, 1.0);
+        self.rules.respawn_min + (self.rules.respawn_max - self.rules.respawn_min) * t
+    }
+
+    fn id(&mut self) -> u32 {
+        self.next_id = self.next_id.wrapping_add(1).max(1);
+        self.next_id
+    }
+
+    pub fn step(&mut self) {
+        self.tick += 1;
+        if self.over {
+            return;
+        }
+        self.time_left -= TICK;
+        if self.time_left <= 0.0 {
+            self.time_left = 0.0;
+            self.over = true;
+            self.events.push(SimEvent::MatchOver { scores: self.scores });
+            return;
+        }
+        self.step_movers();
+        self.step_players();
+        self.step_bolts();
+        self.step_grenades();
+        self.step_pickups();
+        self.record();
+    }
+
+    /// Remembers where everyone is at the end of this tick (for lag compensation).
+    fn record(&mut self) {
+        let ghosts = self
+            .players
+            .iter()
+            .map(|p| Ghost { id: p.id, alive: p.alive(), feet: p.feet, eye: p.eye(), cmd: p.cmd })
+            .collect();
+        if self.history.len() >= HISTORY {
+            self.history.pop_front();
+        }
+        self.history.push_back((self.tick, ghosts));
+    }
+
+    /// The recorded players at the end of `tick`, if still kept.
+    fn past(&self, tick: u64) -> Option<usize> {
+        let first = self.history.front()?.0;
+        let i = tick.checked_sub(first)? as usize;
+        (i < self.history.len() && self.history[i].0 == tick).then_some(i)
+    }
+
+    /// The grenade pickups lying in the arena.
+    pub fn pickups(&self) -> impl Iterator<Item = &Pickup> {
+        self.slots.iter().filter_map(|s| s.pickup.as_ref())
+    }
+
+    /// A random spot for a pickup in `half`: a walkable cell (either floor) between the base and
+    /// the centre, not on a ramp or a station, away from other pickups.
+    fn pickup_spot(&mut self, half: Team) -> Option<Vec3> {
+        let nav = &self.level.nav;
+        let grid = &self.level.grid;
+        for _ in 0..60 {
+            let ix = self.rng.random_range(0..level::W);
+            let iz = self.rng.random_range(level::HALF..level::H - 3);
+            let iz = if half == Team::Red { iz } else { level::H - 1 - iz };
+            let upper = self.rng.random_bool(0.35);
+            let n = if upper { Nav::upper_node(ix, iz) } else { Nav::ground_node(ix, iz) };
+            if !nav.valid[n] || !upper && (grid.ground[level::idx(ix, iz)] != Ground::Open || self.level.on_track(ix, iz)) {
+                continue;
+            }
+            let pos = nav.pos[n] + Vec3::Y * PICKUP_HEIGHT;
+            if self.slots.iter().filter_map(|s| s.pickup).any(|p| (p.pos - pos).length() < 6.0) {
+                continue;
+            }
+            return Some(pos);
+        }
+        None
+    }
+
+    /// Moves the doors and panels to where they are this tick. A player in a sliding panel's
+    /// way is pushed ahead of it (the walls still stopping them; whatever overlap is left, the
+    /// player's own move resolves sideways). Doors rising under a player push them out of the
+    /// doorway in the player's move.
+    fn step_movers(&mut self) {
+        if self.level.movers.is_empty() {
+            return;
+        }
+        let level = self.level.clone();
+        let tick = self.tick;
+        let all = level.mover_colliders(tick);
+        for (i, m) in level.movers.iter().enumerate() {
+            if m.kind != MoverKind::Panel {
+                continue;
+            }
+            let d = m.offset(tick) - m.offset(tick.saturating_sub(1));
+            let dir = Vec2::new(d.x, d.z);
+            if dir.length_squared() < 1e-10 {
+                continue;
+            }
+            let dir = dir.normalize();
+            let mine: Vec<_> = m.colliders(m.fraction(tick)).collect();
+            // Pushed through a world without this panel (with it, the push would be undone).
+            let others: Vec<_> = level
+                .movers
+                .iter()
+                .enumerate()
+                .filter(|&(j, _)| j != i)
+                .flat_map(|(_, o)| o.colliders(o.fraction(tick)))
+                .collect();
+            self.world.set_dynamic(others);
+            for p in self.players.iter_mut().filter(|p| p.alive()) {
+                for c in &mine {
+                    let (min, max) = c.bounds();
+                    if p.feet.y >= max.y || p.feet.y + BODY_HEIGHT <= min.y {
+                        continue;
+                    }
+                    let (nx, nz) = (p.feet.x.clamp(min.x, max.x), p.feet.z.clamp(min.z, max.z));
+                    if Vec2::new(p.feet.x - nx, p.feet.z - nz).length_squared() >= BODY_RADIUS * BODY_RADIUS {
+                        continue;
+                    }
+                    // How far along the motion until the body clears the box.
+                    let need = if dir.x.abs() > dir.y.abs() {
+                        if dir.x > 0.0 { max.x + BODY_RADIUS - p.feet.x } else { p.feet.x - (min.x - BODY_RADIUS) }
+                    } else if dir.y > 0.0 {
+                        max.z + BODY_RADIUS - p.feet.z
+                    } else {
+                        p.feet.z - (min.z - BODY_RADIUS)
+                    };
+                    if need > 0.0 {
+                        let (feet, vy) = self.world.move_body(p.feet, dir * (need + 0.01), p.vy, 0.0);
+                        p.feet = feet;
+                        p.vy = vy;
+                    }
+                }
+            }
+        }
+        self.world.set_dynamic(all);
+    }
+
+    fn step_pickups(&mut self) {
+        for i in 0..self.slots.len() {
+            match self.slots[i].pickup {
+                Some(pk) => {
+                    let taker = self.players.iter_mut().find(|p| {
+                        p.alive()
+                            && p.grenades < self.rules.grenade_max
+                            && Vec2::new(p.feet.x - pk.pos.x, p.feet.z - pk.pos.z).length() < PICKUP_REACH
+                            && (pk.pos.y - p.feet.y).abs() < 1.6
+                    });
+                    if let Some(p) = taker {
+                        p.grenades += 1;
+                        let player = p.id;
+                        self.events.push(SimEvent::PickedUp { id: pk.id, player, pos: pk.pos });
+                        let (lo, hi) = self.rules.pickup_respawn;
+                        self.slots[i].pickup = None;
+                        self.slots[i].wait = self.rng.random_range(lo..=hi.max(lo));
+                    }
+                }
+                None => {
+                    self.slots[i].wait -= TICK;
+                    if self.slots[i].wait <= 0.0 {
+                        let half = self.slots[i].half;
+                        match self.pickup_spot(half) {
+                            Some(pos) => {
+                                let id = self.id();
+                                self.slots[i].pickup = Some(Pickup { id, pos });
+                                self.events.push(SimEvent::PickupSpawned { id, pos });
+                            }
+                            None => self.slots[i].wait = 1.0,
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn step_players(&mut self) {
+        let rules = self.rules.clone();
+        for i in 0..self.players.len() {
+            // Timers.
+            let respawn_now = {
+                let p = &mut self.players[i];
+                p.cooldown = (p.cooldown - TICK).max(0.0);
+                p.fire_cd = (p.fire_cd - TICK).max(0.0);
+                match p.respawn.as_mut() {
+                    Some(t) => {
+                        *t -= TICK;
+                        *t <= 0.0
+                    }
+                    None => false,
+                }
+            };
+            if respawn_now {
+                let team = self.players[i].team;
+                let s = self.pick_spawn(team);
+                let p = &mut self.players[i];
+                p.respawn = None;
+                p.hits = 0;
+                p.cooldown = 0.0;
+                p.ammo = rules.ammo;
+                p.grenades = 0;
+                p.reloading = None;
+                p.feet = s.pos;
+                p.vy = 0.0;
+                p.cmd.yaw = s.yaw;
+                p.claim_block = 30;
+                self.events.push(SimEvent::Respawned { player: p.id, pos: s.pos });
+            }
+            if !self.players[i].alive() {
+                let p = &mut self.players[i];
+                p.cmd.throw = None;
+                p.prev_fire = p.cmd.fire;
+                continue;
+            }
+
+            // Movement.
+            self.players[i].claim_block = self.players[i].claim_block.saturating_sub(1);
+            let (feet, vy) = {
+                let p = &self.players[i];
+                let d = match p.cmd.feet {
+                    Some(c) if c.is_finite() && p.claim_block == 0 => {
+                        // A predicted position: as far as the speed limit allows (with slack for
+                        // ticks arriving unevenly).
+                        let max = (rules.move_speed + rules.walk_speed_max) * TICK * 2.5;
+                        Vec2::new(c.x - p.feet.x, c.z - p.feet.z).clamp_length_max(max)
+                    }
+                    _ => {
+                        let stick = p.cmd.stick.clamp_length_max(1.0) * rules.move_speed * TICK;
+                        let walk = p.cmd.walk.clamp_length_max(rules.walk_speed_max * TICK);
+                        stick + walk
+                    }
+                };
+                let d = if d.is_finite() { d } else { Vec2::ZERO };
+                self.world.move_body(p.feet, d, p.vy, TICK)
+            };
+            let reload_here = self.level.reloads_at(feet);
+            let p = &mut self.players[i];
+            p.feet = feet;
+            p.vy = vy;
+
+            // Refilling the blaster at a reload station or a spawn pad.
+            if reload_here && p.ammo < rules.ammo {
+                let acc = match p.reloading {
+                    Some(a) => a,
+                    None => {
+                        self.events.push(SimEvent::Reloading { player: p.id });
+                        0.0
+                    }
+                } + rules.reload_rate * TICK;
+                let whole = acc.floor();
+                p.ammo = (p.ammo as u32 + whole as u32).min(rules.ammo as u32) as u16;
+                p.reloading = Some(acc - whole);
+                if p.ammo >= rules.ammo {
+                    p.reloading = None;
+                    self.events.push(SimEvent::Reloaded { player: p.id });
+                }
+            } else {
+                p.reloading = None;
+            }
+
+            // Firing (one bolt per trigger pull).
+            let pull = p.cmd.fire && !p.prev_fire;
+            p.prev_fire = p.cmd.fire;
+            if pull && p.cmd.gun_hand.is_some() {
+                if p.cooldown > 0.0 {
+                    self.events.push(SimEvent::Denied { player: p.id });
+                } else if p.fire_cd > 0.0 {
+                    // Faster than the blaster's rate: ignored.
+                } else if p.ammo == 0 {
+                    p.fire_cd = rules.fire_cooldown;
+                    self.events.push(SimEvent::Empty { player: p.id });
+                } else {
+                    p.fire_cd = rules.fire_cooldown;
+                    p.ammo -= 1;
+                    p.shots += 1;
+                    let eye = p.eye();
+                    let mut from = p.feet + p.cmd.muzzle.pos;
+                    // A muzzle far from its player, or through a wall, fires from the eye.
+                    if !from.is_finite() || (from - eye).length() > 1.5 {
+                        from = eye;
+                    }
+                    let mut dir = p.cmd.muzzle.forward();
+                    if !dir.is_finite() || dir.length_squared() < 0.5 {
+                        dir = Quat::from_rotation_y(p.cmd.yaw) * Vec3::NEG_Z;
+                    }
+                    let dir = dir.normalize();
+                    let (id, team, view) = (p.id, p.team, p.cmd.view_tick);
+                    let blocked = self.world.ray(eye, from);
+                    let bid = self.id();
+                    // Fired first, so its event comes before any hit it makes straight away.
+                    self.events.push(SimEvent::Fired { player: id, pos: from, dir });
+                    match blocked {
+                        Some((_, q, n)) => {
+                            self.events.push(SimEvent::BoltImpact { pos: q, normal: n, team: Some(team) });
+                        }
+                        None => {
+                            let mut bolt = Bolt {
+                                id: bid,
+                                owner: id,
+                                owner_team: team,
+                                team: Some(team),
+                                pos: from,
+                                vel: dir * rules.bolt_speed,
+                                life: rules.bolt_life,
+                            };
+                            if self.compensate(&mut bolt, view) {
+                                self.bolts.push(bolt);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Throwing.
+            let p = &mut self.players[i];
+            if let Some((rel, vel)) = p.cmd.throw.take()
+                && p.grenades > 0
+            {
+                p.grenades -= 1;
+                let eye = p.eye();
+                let mut pos = p.feet + rel.clamp_length_max(2.0);
+                let (id, team) = (p.id, p.team);
+                if !pos.is_finite() || !self.world.clear(eye, pos) {
+                    pos = eye;
+                }
+                let vel = if vel.is_finite() { vel.clamp_length_max(rules.grenade_max_speed) } else { Vec3::ZERO };
+                let gid = self.id();
+                self.grenades.push(Grenade {
+                    id: gid,
+                    owner: id,
+                    team,
+                    pos,
+                    vel,
+                    age: 0.0,
+                    spin: 0.0,
+                    phase: GrenadePhase::Flying,
+                    next_burst: 0.0,
+                });
+                self.events.push(SimEvent::GrenadeThrown { player: id, pos });
+            }
+        }
+    }
+
+    /// Lag compensation for a bolt just fired from a command made looking at `view_tick`:
+    /// flies it through the ticks since then against the players as they were (see the module
+    /// documentation). False if it hit something meanwhile.
+    fn compensate(&mut self, bolt: &mut Bolt, view_tick: u64) -> bool {
+        if view_tick == 0 || view_tick >= self.tick {
+            return true;
+        }
+        let lag = (self.tick - view_tick).min(MAX_LAG);
+        for k in 0..lag {
+            // The bolt's k-th tick meets the world the shooter saw k ticks after `view_tick`.
+            let Some(h) = self.past(self.tick - lag + k) else { continue };
+            if self.bolt_tick(bolt, Some(h)) {
+                return false;
+            }
+            bolt.pos += bolt.vel * TICK;
+            bolt.life -= TICK;
+        }
+        bolt.life > 0.0
+    }
+
+    /// One tick of a bolt's flight from `b.pos`: the first of the arena (including the target
+    /// panels) and the players it meets, the players as they are now or as they were at the
+    /// end of the recorded tick `past`. Applies the hit; true if the bolt is used up.
+    fn bolt_tick(&mut self, b: &Bolt, past: Option<usize>) -> bool {
+        let to = b.pos + b.vel * TICK;
+        let mut t_best = 1.0f32;
+        let mut hit: Option<(Vec3, Vec3)> = None;
+        if let Some((t, q, n)) = self.world.ray(b.pos, to) {
+            t_best = t;
+            hit = Some((q, n));
+        }
+        // Team bolts pass through team mates (and their shooter); grenade bolts hit everyone.
+        let passes = |p: &Player| !p.alive() || b.team.is_some() && (p.id == b.owner || b.team == Some(p.team));
+        let mut victim: Option<usize> = None;
+        match past {
+            None => {
+                for (pi, p) in self.players.iter().enumerate() {
+                    if passes(p) {
+                        continue;
+                    }
+                    if let Some((s, _)) = p.hit_by(b.pos, to)
+                        && s <= t_best
+                    {
+                        t_best = s;
+                        victim = Some(pi);
+                    }
+                }
+            }
+            Some(h) => {
+                for g in &self.history[h].1 {
+                    // Where they were, if they were there then and are still in the game now.
+                    let Some(pi) = self.players.iter().position(|p| p.id == g.id) else { continue };
+                    if !g.alive || passes(&self.players[pi]) {
+                        continue;
+                    }
+                    if let Some((s, _)) = first_hit(g.feet, g.eye, &g.cmd, b.pos, to)
+                        && s <= t_best
+                    {
+                        t_best = s;
+                        victim = Some(pi);
+                    }
+                }
+            }
+        }
+        let mut remove = false;
+        if let Some(pi) = victim {
+            let at = b.pos + (to - b.pos) * t_best;
+            self.hit_player(pi, b, at);
+            remove = true;
+        } else if let Some((q, n)) = hit {
+            // A target panel?
+            let dir = (to - b.pos).normalize_or_zero();
+            let len = (to - b.pos).length();
+            let target = self.level.targets.iter().find(|t| {
+                ray_box(b.pos, dir, t.min - 0.01, t.max + 0.01, len)
+                    .is_some_and(|(tt, _)| (tt / len - t_best).abs() < 0.02)
+            }).copied();
+            match target {
+                Some(t) if t.team != b.owner_team => {
+                    let points = self.rules.target_points;
+                    self.scores[b.owner_team.index()] += points;
+                    if let Some(p) = self.player_mut(b.owner) {
+                        p.score += points;
+                        p.target_hits += 1;
+                    }
+                    if let Some(h) = self.last_target_hit.get_mut(t.id as usize) {
+                        *h = Some((self.tick, b.owner));
+                    }
+                    self.events.push(SimEvent::TargetHit { target: t.id, by: b.owner, pos: q });
+                }
+                _ => self.events.push(SimEvent::BoltImpact { pos: q, normal: n, team: b.team }),
+            }
+            remove = true;
+        }
+        remove
+    }
+
+    fn step_bolts(&mut self) {
+        let mut i = 0;
+        while i < self.bolts.len() {
+            let bolt = self.bolts[i];
+            let remove = self.bolt_tick(&bolt, None);
+            let b = &mut self.bolts[i];
+            b.pos += b.vel * TICK;
+            b.life -= TICK;
+            if remove || b.life <= 0.0 {
+                self.bolts.swap_remove(i);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    fn hit_player(&mut self, pi: usize, b: &Bolt, at: Vec3) {
+        let (hit_cooldown, hits_to_tag) = (self.rules.hit_cooldown, self.rules.hits_to_tag);
+        let p = &mut self.players[pi];
+        if p.cooldown > 0.0 {
+            // Still recovering from the last hit: the bolt just fizzles.
+            self.events.push(SimEvent::BoltImpact { pos: at, normal: (b.pos - at).normalize_or_zero(), team: b.team });
+            return;
+        }
+        p.hits += 1;
+        p.cooldown = hit_cooldown;
+        let (id, team, feet, hits) = (p.id, p.team, p.feet, p.hits);
+        // Only team bolts at an enemy count as landed (grenade bolts hit anyone).
+        if b.team.is_some_and(|t| t != team)
+            && let Some(s) = self.player_mut(b.owner)
+        {
+            s.landed += 1;
+        }
+        self.events.push(SimEvent::Hit { player: id, by: b.owner, pos: at, hits });
+        if hits >= hits_to_tag {
+            let wait = self.respawn_time(team, feet);
+            let p = &mut self.players[pi];
+            p.respawn = Some(wait);
+            p.tagged += 1;
+            p.cmd.fire = false;
+            self.events.push(SimEvent::TaggedOut { player: id, by: b.owner, pos: at, respawn_in: wait });
+            if b.owner_team != team {
+                self.scores[b.owner_team.index()] += self.rules.tag_points;
+                let points = self.rules.tag_points;
+                if let Some(s) = self.player_mut(b.owner) {
+                    s.score += points;
+                    s.tags += 1;
+                }
+            }
+        }
+    }
+
+    fn step_grenades(&mut self) {
+        let rules = self.rules.clone();
+        let mut i = 0;
+        while i < self.grenades.len() {
+            let mut g = self.grenades[i];
+            g.age += TICK;
+            let mut done = false;
+            match g.phase {
+                GrenadePhase::Flying => {
+                    let (pos, vel, bounce) = grenade_step(&self.world, g.pos, g.vel, rules.grenade_restitution);
+                    (g.pos, g.vel) = (pos, vel);
+                    if let Some((q, speed)) = bounce
+                        && speed > 1.2
+                    {
+                        self.events.push(SimEvent::GrenadeBounce { pos: q, speed });
+                    }
+                    g.spin += g.vel.length() * TICK * 2.0;
+                    if g.age >= rules.grenade_fuse {
+                        let up = g.pos + Vec3::Y * rules.grenade_hop;
+                        let to = match self.world.ray(g.pos, up + Vec3::Y * 0.2) {
+                            Some((_, q, _)) => q - Vec3::Y * 0.2,
+                            None => up,
+                        };
+                        g.phase = GrenadePhase::Active { from: g.pos, to: to.max(g.pos) };
+                        g.next_burst = 0.3;
+                        self.events.push(SimEvent::GrenadeArmed { pos: g.pos });
+                    }
+                }
+                GrenadePhase::Active { from, to } => {
+                    let t = g.age - rules.grenade_fuse;
+                    let k = (t / 0.3).clamp(0.0, 1.0);
+                    let k = k * k * (3.0 - 2.0 * k);
+                    g.pos = from.lerp(to, k) + Vec3::Y * (t * 3.0).sin() * 0.04 * k;
+                    g.spin += TICK * (4.0 + 8.0 * k);
+                    g.next_burst -= TICK;
+                    if g.next_burst <= 0.0 {
+                        g.next_burst += rules.grenade_burst_every;
+                        let (lo, hi) = rules.grenade_burst_bolts;
+                        let n = self.rng.random_range(lo..=hi.max(lo));
+                        // Players the grenade sees (anyone: team mates and the thrower too).
+                        let seen: Vec<Vec3> = self
+                            .players
+                            .iter()
+                            .filter(|p| p.alive())
+                            .map(|p| p.eye() - Vec3::Y * 0.35)
+                            .filter(|c| c.distance(g.pos) < GRENADE_AIM_RANGE && self.world.clear(g.pos, *c))
+                            .collect();
+                        for _ in 0..n {
+                            let z: f32 = self.rng.random_range(-1.0..1.0);
+                            let phi: f32 = self.rng.random_range(0.0..std::f32::consts::TAU);
+                            let r = (1.0 - z * z).sqrt();
+                            let mut dir = Vec3::new(r * phi.cos(), z, r * phi.sin());
+                            if !seen.is_empty() && self.rng.random::<f32>() < rules.grenade_aimed {
+                                // At a player, a little off (the random direction nudges it).
+                                let at = seen[self.rng.random_range(0..seen.len())];
+                                dir = ((at - g.pos).normalize_or(dir) + dir * 0.06).normalize_or(dir);
+                            }
+                            let id = self.id();
+                            self.bolts.push(Bolt {
+                                id,
+                                owner: g.owner,
+                                owner_team: g.team,
+                                team: None,
+                                pos: g.pos + dir * 0.1,
+                                vel: dir * rules.bolt_speed,
+                                life: rules.bolt_life,
+                            });
+                        }
+                        self.events.push(SimEvent::GrenadeBurst { pos: g.pos });
+                    }
+                    if t >= rules.grenade_active {
+                        done = true;
+                        self.events.push(SimEvent::GrenadeDone { pos: g.pos });
+                    }
+                }
+            }
+            if done {
+                self.grenades.swap_remove(i);
+            } else {
+                self.grenades[i] = g;
+                i += 1;
+            }
+        }
+    }
+
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            tick: self.tick,
+            time_left: self.time_left,
+            scores: self.scores,
+            over: self.over,
+            players: self
+                .players
+                .iter()
+                .map(|p| PlayerSnap {
+                    id: p.id,
+                    team: p.team,
+                    feet: p.feet,
+                    yaw: p.cmd.yaw,
+                    head: Pose { pos: p.head_offset(), rot: p.cmd.head.rot },
+                    hands: p.cmd.hands,
+                    gun_hand: p.cmd.gun_hand,
+                    grenade_hand: p.cmd.grenade_hand,
+                    hits: p.hits,
+                    cooldown: p.cooldown,
+                    respawn: p.respawn,
+                    grenades: p.grenades,
+                    ammo: p.ammo,
+                    reloading: p.reloading.is_some(),
+                    score: p.score,
+                    tags: p.tags,
+                    tagged: p.tagged,
+                    shots: p.shots,
+                    landed: p.landed,
+                    target_hits: p.target_hits,
+                })
+                .collect(),
+            bolts: self.bolts.iter().map(|b| BoltSnap { id: b.id, pos: b.pos, vel: b.vel, team: b.team }).collect(),
+            grenades: self
+                .grenades
+                .iter()
+                .map(|g| GrenadeSnap {
+                    id: g.id,
+                    pos: g.pos,
+                    spin: g.spin,
+                    active: matches!(g.phase, GrenadePhase::Active { .. }),
+                })
+                .collect(),
+            pickups: self.pickups().map(|p| PickupSnap { id: p.id, pos: p.pos }).collect(),
+        }
+    }
+}
+
+/// Yaw (0 = facing -Z) of a horizontal direction.
+pub fn yaw_of(dir: Vec3) -> f32 {
+    (-dir.x).atan2(-dir.z)
+}
+
+/// The rotation looking along `dir`.
+pub fn look_rot(dir: Vec3) -> Quat {
+    let d = dir.normalize_or(Vec3::NEG_Z);
+    let yaw = yaw_of(d);
+    let pitch = d.y.clamp(-1.0, 1.0).asin();
+    Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch)
+}
+
+/// A hovering grenade aims some bolts (`Rules::grenade_aimed`) at players it sees this close.
+pub const GRENADE_AIM_RANGE: f32 = 20.0;
+
+/// One tick of a flying grenade: falling, bouncing off the arena (losing speed), coming to rest
+/// on a floor. Returns the new position and velocity, and where it bounced and how hard.
+pub fn grenade_step(world: &World, pos: Vec3, vel: Vec3, restitution: f32) -> (Vec3, Vec3, Option<(Vec3, f32)>) {
+    let mut vel = vel;
+    vel.y -= GRAVITY * TICK;
+    let to = pos + vel * TICK;
+    match world.ray(pos, to) {
+        Some((_, q, n)) => {
+            let vn = vel.dot(n);
+            let tangent = vel - n * vn;
+            vel = tangent * 0.8 - n * vn * restitution;
+            if n.y > 0.7 && vel.length() < 0.4 {
+                vel = Vec3::ZERO;
+            }
+            (q + n * 0.06, vel, Some((q, vn.abs())))
+        }
+        None => (to, vel, None),
+    }
+}
+
+/// Where a grenade thrown from `from` (world) with `vel` flies until its fuse runs out (as the
+/// sim will fly it, the arena's moving pieces aside): a point a tick, and the bounces.
+pub fn grenade_path(world: &World, rules: &Rules, from: Vec3, vel: Vec3) -> (Vec<Vec3>, Vec<Vec3>) {
+    let vel = if vel.is_finite() { vel.clamp_length_max(rules.grenade_max_speed) } else { Vec3::ZERO };
+    let (mut pos, mut vel) = (from, vel);
+    let mut path = vec![pos];
+    let mut bounces = Vec::new();
+    for _ in 0..(rules.grenade_fuse / TICK) as usize {
+        let (p, v, b) = grenade_step(world, pos, vel, rules.grenade_restitution);
+        (pos, vel) = (p, v);
+        path.push(pos);
+        if let Some((q, speed)) = b
+            && speed > 1.2
+        {
+            bounces.push(q);
+        }
+        if vel == Vec3::ZERO {
+            break;
+        }
+    }
+    (path, bounces)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An empty-ish arena spot: two players facing each other in the open.
+    fn duel() -> (Sim, PlayerId, PlayerId) {
+        let mut sim = Sim::new(7, Rules::default());
+        let a = sim.add_player("a", Some(Team::Red), false).unwrap();
+        let b = sim.add_player("b", Some(Team::Blue), false).unwrap();
+        // Put them in their spawn areas' open rows, 3 m apart on the same line.
+        let base = sim.level.base_centre(Team::Red);
+        sim.players[0].feet = base;
+        sim.players[1].feet = base + Vec3::new(0.0, 0.0, -3.0);
+        (sim, a, b)
+    }
+
+    fn shoot(sim: &mut Sim, from: PlayerId, at: PlayerId) {
+        let target = sim.player(at).unwrap().eye() - Vec3::Y * 0.3;
+        let me = sim.player(from).unwrap();
+        let muzzle_pos = me.eye() - Vec3::Y * 0.2 - me.feet;
+        let dir = (target - (me.feet + muzzle_pos)).normalize();
+        let cmd = PlayerCmd {
+            gun_hand: Some(Hand::Right),
+            muzzle: Pose { pos: muzzle_pos, rot: look_rot(dir) },
+            fire: true,
+            ..Default::default()
+        };
+        sim.set_cmd(from, cmd);
+        sim.step();
+        sim.set_cmd(from, PlayerCmd { fire: false, ..cmd });
+        for _ in 0..30 {
+            sim.step();
+        }
+    }
+
+    #[test]
+    fn three_hits_tag_out_with_cooldowns() {
+        let (mut sim, a, b) = duel();
+        shoot(&mut sim, a, b);
+        assert_eq!(sim.player(b).unwrap().hits, 1);
+        let ev = sim.drain_events();
+        assert!(ev.iter().any(|e| matches!(e, SimEvent::Hit { player, hits: 1, .. } if *player == b)));
+        // During the cooldown further hits don't count.
+        shoot(&mut sim, a, b);
+        assert_eq!(sim.player(b).unwrap().hits, 1);
+        // The victim can't fire meanwhile.
+        sim.drain_events();
+        shoot(&mut sim, b, a);
+        assert!(sim.drain_events().iter().any(|e| matches!(e, SimEvent::Denied { player } if *player == b)));
+        assert_eq!(sim.player(a).unwrap().hits, 0);
+        // Wait out the cooldown, hit twice more.
+        for _ in 0..(3.0 / TICK) as usize {
+            sim.step();
+        }
+        shoot(&mut sim, a, b);
+        assert_eq!(sim.player(b).unwrap().hits, 2);
+        for _ in 0..(3.0 / TICK) as usize {
+            sim.step();
+        }
+        sim.drain_events();
+        shoot(&mut sim, a, b);
+        let pb = sim.player(b).unwrap();
+        assert!(!pb.alive());
+        let wait = pb.respawn.unwrap();
+        assert!((5.0..=15.0).contains(&(wait + 0.6)), "{wait}");
+        assert_eq!(sim.scores, [100, 0]);
+        // Respawns at its own base, healed.
+        for _ in 0..(16.0 / TICK) as usize {
+            sim.step();
+        }
+        let pb = sim.player(b).unwrap();
+        assert!(pb.alive() && pb.hits == 0);
+        assert!(pb.feet.z < 0.0, "blue respawns on blue's side: {}", pb.feet);
+    }
+
+    #[test]
+    fn predicted_feet_are_limited_and_collide() {
+        let (mut sim, a, _) = duel();
+        let start = sim.player(a).unwrap().feet;
+        // A claim 10 m away moves only a speed-limited step.
+        sim.set_cmd(a, PlayerCmd { feet: Some(start + Vec3::new(10.0, 0.0, 0.0)), ..Default::default() });
+        sim.step();
+        let moved = (sim.player(a).unwrap().feet - start).length();
+        assert!(moved > 0.05 && moved < 0.4, "{moved}");
+        // Claims into the border wall stop at the wall.
+        for _ in 0..600 {
+            let f = sim.player(a).unwrap().feet;
+            sim.set_cmd(a, PlayerCmd { feet: Some(f + Vec3::new(0.0, 0.0, 0.1)), ..Default::default() });
+            sim.step();
+        }
+        let f = sim.player(a).unwrap().feet;
+        assert!(f.z < lt_level_half() - 0.3, "{f}");
+    }
+
+    fn lt_level_half() -> f32 {
+        crate::level::HALF_LENGTH
+    }
+
+    #[test]
+    fn respawn_time_grows_with_distance() {
+        let sim = Sim::new(3, Rules::default());
+        let base = sim.level.base_centre(Team::Red);
+        let near = sim.respawn_time(Team::Red, base);
+        let mid = sim.respawn_time(Team::Red, Vec3::ZERO);
+        let far = sim.respawn_time(Team::Red, sim.level.base_centre(Team::Blue));
+        assert!((near - 5.0).abs() < 0.01 && (far - 15.0).abs() < 0.01 && near < mid && mid < far);
+    }
+
+    #[test]
+    fn team_target_scores_for_the_enemy_only() {
+        let mut sim = Sim::new(11, Rules::default());
+        let blue = sim.add_player("b", Some(Team::Blue), false).unwrap();
+        let red = sim.add_player("r", Some(Team::Red), false).unwrap();
+        let t = *sim.level.targets.iter().find(|t| t.team == Team::Red).unwrap();
+        let spot = crate::level::cell_centre(t.rear_cell.0, t.rear_cell.1) + t.normal * 0.6;
+        for (who, expect) in [(red, [0, 0]), (blue, [0, 100])] {
+            let pi = sim.players.iter().position(|p| p.id == who).unwrap();
+            sim.players[pi].feet = spot;
+            let eye = sim.players[pi].eye();
+            let dir = (t.centre() - eye).normalize();
+            let cmd = PlayerCmd {
+                gun_hand: Some(Hand::Right),
+                muzzle: Pose { pos: eye - spot, rot: look_rot(dir) },
+                fire: true,
+                ..Default::default()
+            };
+            sim.set_cmd(who, cmd);
+            sim.step();
+            sim.set_cmd(who, PlayerCmd { fire: false, ..cmd });
+            for _ in 0..30 {
+                sim.step();
+            }
+            assert_eq!(sim.scores, expect);
+            sim.players[pi].feet = Vec3::new(0.0, 0.0, 100.0);
+        }
+    }
+
+    #[test]
+    fn grenade_timeline_and_white_bolts() {
+        let (mut sim, a, _b) = duel();
+        let base = sim.level.base_centre(Team::Red);
+        sim.players[0].grenades = 1;
+        sim.set_cmd(a, PlayerCmd { throw: Some((Vec3::new(0.0, 1.2, -0.3), Vec3::new(0.0, 2.0, -3.0))), ..Default::default() });
+        sim.step();
+        assert_eq!(sim.grenades.len(), 1);
+        assert_eq!(sim.player(a).unwrap().grenades, 0);
+        let mut armed_at = None;
+        let mut bursts = 0;
+        let mut max_y_active = 0.0f32;
+        let mut ground_y = 0.0;
+        for k in 0..(8.0 / TICK) as usize {
+            sim.step();
+            for e in sim.drain_events() {
+                match e {
+                    SimEvent::GrenadeArmed { pos } => {
+                        armed_at = Some(k as f32 * TICK);
+                        ground_y = pos.y;
+                    }
+                    SimEvent::GrenadeBurst { .. } => bursts += 1,
+                    _ => {}
+                }
+            }
+            if let Some(g) = sim.grenades.first()
+                && matches!(g.phase, GrenadePhase::Active { .. })
+            {
+                max_y_active = max_y_active.max(g.pos.y);
+            }
+            if sim.bolts.iter().any(|b| b.team.is_none()) {
+                assert!(sim.bolts.iter().filter(|b| b.team.is_none()).all(|b| b.owner == a));
+            }
+        }
+        let armed = armed_at.unwrap();
+        assert!((armed - 3.0).abs() < 0.05, "{armed}");
+        assert!(sim.grenades.is_empty(), "gone after 3 + 4 s");
+        assert!((max_y_active - ground_y - 1.0).abs() < 0.1, "hops about a metre: {max_y_active} {ground_y}");
+        assert!(bursts >= 25, "{bursts}");
+        let _ = base;
+    }
+
+    #[test]
+    fn grenade_bolts_hit_team_mates() {
+        let mut sim = Sim::new(5, Rules::default());
+        let a = sim.add_player("a", Some(Team::Red), false).unwrap();
+        let mate = sim.add_player("m", Some(Team::Red), false).unwrap();
+        let base = sim.level.base_centre(Team::Red);
+        sim.players[0].feet = base + Vec3::new(0.0, 0.0, 30.0); // out of the way
+        sim.players[1].feet = base;
+        let mi = 1;
+        // A bolt from a grenade straight at the team mate.
+        let eye = sim.players[mi].eye();
+        sim.bolts.push(Bolt {
+            id: 99,
+            owner: a,
+            owner_team: Team::Red,
+            team: None,
+            pos: eye + Vec3::X * 2.0,
+            vel: Vec3::NEG_X * 40.0,
+            life: 1.0,
+        });
+        for _ in 0..10 {
+            sim.step();
+        }
+        assert_eq!(sim.player(mate).unwrap().hits, 1);
+        assert_eq!(sim.scores, [0, 0], "no points for hitting one's own team");
+    }
+
+    #[test]
+    fn ammo_runs_out_and_refills_at_the_base() {
+        let (mut sim, a, _) = duel();
+        // Away from the spawn pads, holding the trigger every other tick: three shots a second.
+        sim.players[0].feet = Vec3::new(0.0, 0.0, 6.0);
+        sim.players[1].feet = Vec3::new(0.0, 0.0, 100.0);
+        let fire = |sim: &mut Sim, on: bool| {
+            sim.set_cmd(
+                a,
+                PlayerCmd {
+                    gun_hand: Some(Hand::Right),
+                    muzzle: Pose { pos: Vec3::Y * 1.4, rot: Quat::IDENTITY },
+                    fire: on,
+                    ..Default::default()
+                },
+            );
+            sim.step();
+        };
+        let mut fired = 0;
+        let mut empty = 0;
+        for k in 0..(10.0 / TICK) as usize {
+            fire(&mut sim, k % 2 == 0);
+            for e in sim.drain_events() {
+                match e {
+                    SimEvent::Fired { .. } => fired += 1,
+                    SimEvent::Empty { .. } => empty += 1,
+                    _ => {}
+                }
+            }
+        }
+        assert!((29..=31).contains(&fired), "three shots a second: {fired}");
+        for _ in 0..(10.0 / TICK) as usize {
+            fire(&mut sim, false);
+            fire(&mut sim, true);
+        }
+        let shots: usize = sim.drain_events().iter().filter(|e| matches!(e, SimEvent::Fired { .. })).count();
+        assert_eq!(fired + shots, 50, "50 shots in a blaster");
+        assert!(empty > 0 || sim.player(a).unwrap().ammo == 0);
+        // Standing on a spawn pad refills it.
+        let pad = sim.level.spawns[0][0].pos;
+        sim.players[0].feet = pad;
+        for _ in 0..(3.0 / TICK) as usize {
+            fire(&mut sim, false);
+        }
+        assert_eq!(sim.player(a).unwrap().ammo, 50);
+        let ev = sim.drain_events();
+        assert!(ev.iter().any(|e| matches!(e, SimEvent::Reloading { .. })));
+        assert!(ev.iter().any(|e| matches!(e, SimEvent::Reloaded { .. })));
+        // And so does a reload station.
+        assert!(sim.level.reloads.iter().all(|r| sim.level.reloads_at(*r)));
+    }
+
+    /// Whether a body at `feet` is inside anything solid (beyond a little slack).
+    fn embedded(world: &World, feet: Vec3) -> Option<crate::collide::Collider> {
+        world.colliders.iter().skip(1).chain(&world.dynamic).copied().find(|c| {
+            if matches!(c, crate::collide::Collider::Ramp { .. }) {
+                return false;
+            }
+            let (min, max) = c.bounds();
+            if max.y <= feet.y + crate::collide::STEP || min.y >= feet.y + BODY_HEIGHT {
+                return false;
+            }
+            let n = Vec2::new(feet.x.clamp(min.x, max.x), feet.z.clamp(min.z, max.z));
+            Vec2::new(feet.x, feet.z).distance(n) < BODY_RADIUS - 0.03
+        })
+    }
+
+    #[test]
+    fn sliding_panels_push_players_out_of_the_way() {
+        let mut checked = 0;
+        for seed in 0..10u64 {
+            let mut sim = Sim::new(seed, Rules { match_time: 1000.0, ..Rules::default() });
+            let Some(mi) = sim.level.movers.iter().position(|m| m.kind == MoverKind::Panel) else { continue };
+            let m = sim.level.movers[mi];
+            let a = sim.add_player("a", Some(Team::Red), false).unwrap();
+            // Wait for the panel to rest at the start of its track, then stand where it's going.
+            while m.fraction(sim.tick) > 0.0 || m.fraction(sim.tick + 1) > 0.0 {
+                sim.tick += 1;
+            }
+            let spot = m.pos + m.travel;
+            sim.players[0].feet = spot;
+            let mut moved: f32 = 0.0;
+            for _ in 0..m.period() {
+                sim.step();
+                let f = sim.player(a).unwrap().feet;
+                moved = moved.max(Vec2::new(f.x - spot.x, f.z - spot.z).length());
+                assert!(embedded(&sim.world, f).is_none(), "seed {seed}: player at {f} inside {:?}", embedded(&sim.world, f));
+                assert!(f.y.abs() < 0.05, "seed {seed}: still on the floor: {f}");
+            }
+            assert!(moved > 0.5, "seed {seed}: pushed only {moved} m");
+            checked += 1;
+        }
+        assert!(checked >= 5, "{checked}");
+    }
+
+    #[test]
+    fn doors_block_bolts_while_closed() {
+        let mut checked = 0;
+        for seed in 0..10u64 {
+            let mut sim = Sim::new(seed, Rules { match_time: 1000.0, ..Rules::default() });
+            let Some(m) = sim.level.movers.iter().find(|m| m.kind == MoverKind::Door).copied() else { continue };
+            let across = if m.rot % 2 == 0 { Vec3::Z } else { Vec3::X };
+            for open in [false, true] {
+                let want = if open { 1.0 } else { 0.0 };
+                while (0..90).any(|k| m.fraction(sim.tick + k) != want) {
+                    sim.tick += 1;
+                }
+                sim.step();
+                sim.drain_events();
+                let from = m.pos + Vec3::Y * 1.5 - across * 1.5;
+                sim.bolts.push(Bolt {
+                    id: 1,
+                    owner: 0,
+                    owner_team: Team::Red,
+                    team: Some(Team::Red),
+                    pos: from,
+                    vel: across * 40.0,
+                    life: 2.0,
+                });
+                for _ in 0..4 {
+                    sim.step();
+                }
+                let impact = sim.drain_events().into_iter().find_map(|e| match e {
+                    SimEvent::BoltImpact { pos, .. } => Some(pos),
+                    _ => None,
+                });
+                let at_door = impact.is_some_and(|q| (q - from).dot(across) < 1.6);
+                assert_eq!(at_door, !open, "seed {seed}, door open {open}: impact {impact:?}, door at {}", m.pos);
+                sim.bolts.clear();
+            }
+            checked += 1;
+        }
+        assert!(checked >= 5, "{checked}");
+    }
+
+    /// A Blue player strafing across Red's base, a Red shooter 3.5 m away aiming where the
+    /// target was `lag` ticks ago (leading it as it then moved); the command made at
+    /// `view_tick` = now - `lag` if `compensated`, else 0. Returns the target's hits.
+    fn lagged_shot(lag: u64, compensated: bool) -> u8 {
+        let mut sim = Sim::new(7, Rules { pickup_pairs: 0, ..Rules::default() });
+        let a = sim.add_player("shooter", Some(Team::Red), false).unwrap();
+        let b = sim.add_player("target", Some(Team::Blue), false).unwrap();
+        // Somewhere open: the target walks 3 m along x in plain sight of the shooter.
+        let start = Vec3::new(-2.5, 0.0, -3.0);
+        let world = sim.level.world();
+        let shooter = (0..level::W * level::H)
+            .map(|n| sim.level.nav.pos[n])
+            .find(|&p| {
+                let eye = p + Vec3::Y * EYE;
+                (0..=14).all(|k| {
+                    let q = p + start + Vec3::X * (k as f32 * 0.25);
+                    level::cell_at(q).is_some_and(|(x, z)| sim.level.nav.valid[level::idx(x, z)])
+                        && world.clear(eye, q + Vec3::Y * 1.2)
+                        && world.clear(q + Vec3::Y * 0.5, q + Vec3::new(0.6, 0.5, 0.0))
+                        && world.clear(q + Vec3::Y * 0.5, q + Vec3::new(0.0, 0.5, 0.6))
+                        && world.clear(q + Vec3::Y * 0.5, q + Vec3::new(0.0, 0.5, -0.6))
+                })
+            })
+            .expect("an open spot");
+        sim.players[0].feet = shooter;
+        sim.players[1].feet = shooter + start;
+        let walk = PlayerCmd { stick: Vec2::X, ..Default::default() };
+        sim.set_cmd(b, walk);
+        for _ in 0..30 {
+            sim.step();
+        }
+        // The next step fires; the shooter's client showed the world `lag` ticks before it.
+        let view = sim.tick + 1 - lag;
+        let me = sim.player(a).unwrap();
+        let muzzle = me.eye() - Vec3::Y * 0.2;
+        let chest_at = |sim: &Sim, t: u64| {
+            let h = sim.past(t).unwrap();
+            let g = sim.history[h].1.iter().find(|g| g.id == b).unwrap();
+            g.eye - Vec3::Y * (crate::hitbox::CHEST_DROP + crate::hitbox::CHEST_HALF.y)
+        };
+        // Lead the target as the shooter saw it move: the k-th tick of the bolt's flight meets
+        // the target as it was at view + k.
+        let step = sim.rules.bolt_speed * TICK;
+        let aim = (0..lag)
+            .map(|k| chest_at(&sim, view + k))
+            .enumerate()
+            .min_by(|(k1, c1), (k2, c2)| {
+                let e = |k: usize, c: &Vec3| ((c.distance(muzzle) / step) - (k as f32 + 0.5)).abs();
+                e(*k1, c1).total_cmp(&e(*k2, c2))
+            })
+            .unwrap()
+            .1;
+        let dir = (aim - muzzle).normalize();
+        let me = sim.player(a).unwrap();
+        let cmd = PlayerCmd {
+            gun_hand: Some(Hand::Right),
+            muzzle: Pose { pos: muzzle - me.feet, rot: look_rot(dir) },
+            fire: true,
+            view_tick: if compensated { view } else { 0 },
+            ..Default::default()
+        };
+        sim.set_cmd(a, cmd);
+        sim.step();
+        sim.set_cmd(a, PlayerCmd { fire: false, ..cmd });
+        for _ in 0..30 {
+            sim.step();
+        }
+        sim.player(b).unwrap().hits
+    }
+
+    #[test]
+    fn lag_compensation_hits_what_the_shooter_saw() {
+        for lag in [6, 10, 14] {
+            assert_eq!(lagged_shot(lag, true), 1, "{lag} ticks behind, compensated: a hit");
+            assert_eq!(lagged_shot(lag, false), 0, "{lag} ticks behind, uncompensated: a miss");
+        }
+        // Beyond the history only `MAX_LAG` is made up: still nothing breaks.
+        let _ = lagged_shot(19, true);
+    }
+
+    #[test]
+    fn grenade_pickups_appear_and_are_taken() {
+        let mut sim = Sim::new(4, Rules::default());
+        let a = sim.add_player("a", Some(Team::Red), false).unwrap();
+        assert_eq!(sim.player(a).unwrap().grenades, 0, "players start without grenades");
+        for _ in 0..(10.0 / TICK) as usize {
+            sim.step();
+        }
+        let pickups: Vec<Pickup> = sim.pickups().copied().collect();
+        assert_eq!(pickups.len(), 4);
+        assert_eq!(pickups.iter().filter(|p| p.pos.z > 0.0).count(), 2, "two in each half");
+        let p = pickups[0];
+        sim.players[0].feet = p.pos - Vec3::Y * PICKUP_HEIGHT;
+        sim.step();
+        assert_eq!(sim.player(a).unwrap().grenades, 1);
+        assert_eq!(sim.pickups().count(), 3);
+        // Only one carried: the next one stays.
+        let q = sim.pickups().next().copied().unwrap();
+        sim.players[0].feet = q.pos - Vec3::Y * PICKUP_HEIGHT;
+        sim.step();
+        assert_eq!(sim.pickups().count(), 3);
+        for _ in 0..(17.0 / TICK) as usize {
+            sim.step();
+        }
+        assert_eq!(sim.pickups().count(), 4, "the taken one comes back");
+    }
+}

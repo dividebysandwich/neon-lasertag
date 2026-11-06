@@ -1,0 +1,21 @@
+[package]
+name = "lt-net"
+version.workspace = true
+edition.workspace = true
+description = "Lasertag networking: UDP transport and the master server's list"
+
+[dependencies]
+lt-master-proto.workspace = true
+lt-sim.workspace = true
+ciborium = "0.2"
+lz4_flex = "0.11"
+serde.workspace = true
+anyhow.workspace = true
+rand.workspace = true
+ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
+
+[dev-dependencies]
+glam.workspace = true
+# The reporter test: a real master server on an ephemeral port.
+lt-master = { path = "../lt-master" }
+tiny_http = "0.12.0"

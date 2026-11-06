@@ -1,0 +1,319 @@
+//! The OpenXR session of the headset renderer: EGL's OpenGL context (`egl.rs`), swapchains
+//! of two layers (one per eye, both drawn in one pass), the stage space (floor at y = 0), and
+//! the frame loop's calls (as stealth-mission-89's src/glvr/headset.rs).
+
+use super::controllers::Controllers;
+use crate::vr::HandInput;
+use super::egl::{Context, Egl};
+use bevy::log::{info, warn};
+use openxr as xr;
+
+/// GL_SRGB8_ALPHA8 / GL_RGBA8.
+const SRGB8_ALPHA8: u32 = 0x8C43;
+const RGBA8: u32 = 0x8058;
+
+pub struct Headset {
+    _instance: xr::Instance,
+    controllers: Option<Controllers>,
+    session: xr::Session<Egl>,
+    waiter: xr::FrameWaiter,
+    stream: xr::FrameStream<Egl>,
+    space: xr::Space,
+    /// The swapchains drawn in turn (one; two when a frame's image is drawn while the last
+    /// one's is still held, to be shown once the GPU is done with it: a swapchain holds one at a
+    /// time), each with its images: 2D array textures of two layers.
+    swapchains: Vec<(xr::Swapchain<Egl>, Vec<glow::Texture>)>,
+    /// The swapchain drawn next.
+    next: usize,
+    /// The size of an eye's image.
+    pub size: (u32, u32),
+    /// The images encode linear light as sRGB themselves.
+    pub srgb: bool,
+    blend: xr::EnvironmentBlendMode,
+    running: bool,
+    events: xr::EventDataBuffer,
+    /// The last frame's display time, and the frames' interval measured from them (ns).
+    last_time: Option<xr::Time>,
+    interval: f64,
+    /// The runtime's frame periods since `pacing` was last asked (ns, min and max).
+    periods: (i64, i64),
+}
+
+/// Frames' intervals believed (ns): 30 to 144 Hz.
+const INTERVALS: std::ops::RangeInclusive<f64> = 6.9e6..=33.4e6;
+
+/// A frame to draw: when it is shown, and the eyes' and the controllers' poses then (tracking
+/// space).
+pub struct Frame {
+    pub time: xr::Time,
+    pub views: Vec<xr::View>,
+    pub controllers: [HandInput; 2],
+}
+
+/// Eye height the local space is lifted by when the runtime has no stage space.
+const LOCAL_EYE_HEIGHT: f32 = 1.6;
+
+fn err(what: &'static str) -> impl Fn(xr::sys::Result) -> String {
+    move |e| format!("{what}: {e}")
+}
+
+impl Headset {
+    /// The session on `context` (current on this thread), drawing into `chains` swapchains in
+    /// turn.
+    pub fn new(context: &Context, chains: usize) -> Result<Self, String> {
+        // SAFETY: loads the OpenXR loader library.
+        let entry = unsafe { xr::Entry::load() }.map_err(|e| format!("no OpenXR loader: {e}"))?;
+        let offered = entry.enumerate_extensions().map_err(err("the runtime's extensions"))?;
+        if !offered.mndx_egl_enable || !offered.khr_opengl_enable {
+            return Err("the OpenXR runtime has no OpenGL through EGL (XR_MNDX_egl_enable)".into());
+        }
+        let mut exts = xr::ExtensionSet::default();
+        exts.mndx_egl_enable = true;
+        exts.khr_opengl_enable = true;
+        let instance = entry
+            .create_instance(
+                &xr::ApplicationInfo {
+                    application_name: "Neon Lasertag",
+                    application_version: 1,
+                    engine_name: "lasertag-glvr",
+                    engine_version: 1,
+                    api_version: xr::Version::new(1, 0, 0),
+                },
+                &exts,
+                &[],
+            )
+            .map_err(err("the OpenXR instance"))?;
+        let system =
+            instance.system(xr::FormFactor::HEAD_MOUNTED_DISPLAY).map_err(err("the headset"))?;
+        // (The runtime wants to be asked before a session is made.)
+        let _ = <Egl as xr::Graphics>::requirements(&instance, system);
+        let blend = instance
+            .enumerate_environment_blend_modes(system, xr::ViewConfigurationType::PRIMARY_STEREO)
+            .map_err(err("the blend modes"))?
+            .first()
+            .copied()
+            .unwrap_or(xr::EnvironmentBlendMode::OPAQUE);
+        let views = instance
+            .enumerate_view_configuration_views(system, xr::ViewConfigurationType::PRIMARY_STEREO)
+            .map_err(err("the eyes' views"))?;
+        let size = (views[0].recommended_image_rect_width, views[0].recommended_image_rect_height);
+        let binding = context.binding()?;
+        // SAFETY: the binding is the context current on this thread.
+        let (session, waiter, stream) = unsafe { instance.create_session::<Egl>(system, &binding) }
+            .map_err(err("the session"))?;
+        // The stage (floor at y = 0); else the local space with its origin put on the floor
+        // under a standing player's eyes.
+        let stage = session
+            .enumerate_reference_spaces()
+            .map_err(err("the reference spaces"))?
+            .contains(&xr::ReferenceSpaceType::STAGE);
+        let space = if stage {
+            session.create_reference_space(xr::ReferenceSpaceType::STAGE, xr::Posef::IDENTITY)
+        } else {
+            warn!("glvr: no stage space; the local space with the eyes {LOCAL_EYE_HEIGHT} m above the floor");
+            let pose = xr::Posef {
+                orientation: xr::Quaternionf::IDENTITY,
+                position: xr::Vector3f { x: 0.0, y: -LOCAL_EYE_HEIGHT, z: 0.0 },
+            };
+            session.create_reference_space(xr::ReferenceSpaceType::LOCAL, pose)
+        }
+        .map_err(err("the tracking space"))?;
+        let formats = session.enumerate_swapchain_formats().map_err(err("the formats"))?;
+        let (format, srgb) = if formats.contains(&SRGB8_ALPHA8) {
+            (SRGB8_ALPHA8, true)
+        } else if formats.contains(&RGBA8) {
+            (RGBA8, false)
+        } else {
+            return Err(format!("the headset takes no RGBA8 format ({formats:x?})"));
+        };
+        let mut swapchains = Vec::new();
+        for _ in 0..chains.max(1) {
+            let swapchain = session
+                .create_swapchain(&xr::SwapchainCreateInfo {
+                    create_flags: xr::SwapchainCreateFlags::EMPTY,
+                    usage_flags: xr::SwapchainUsageFlags::COLOR_ATTACHMENT,
+                    format,
+                    sample_count: 1,
+                    width: size.0,
+                    height: size.1,
+                    face_count: 1,
+                    array_size: 2,
+                    mip_count: 1,
+                })
+                .map_err(err("the swapchain"))?;
+            let images = swapchain
+                .enumerate_images()
+                .map_err(err("the swapchain's images"))?
+                .into_iter()
+                .map(|image| {
+                    std::num::NonZeroU32::new(image)
+                        .map(glow::NativeTexture)
+                        .ok_or("an empty swapchain image")
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            swapchains.push((swapchain, images));
+        }
+        let controllers = Controllers::new(&instance, &session)
+            .inspect_err(|e| warn!("glvr: no controllers: {e}"))
+            .ok();
+        Ok(Headset {
+            _instance: instance,
+            controllers,
+            session,
+            waiter,
+            stream,
+            space,
+            swapchains,
+            next: 0,
+            size,
+            srgb,
+            blend,
+            running: false,
+            events: xr::EventDataBuffer::new(),
+            last_time: None,
+            interval: 1e9 / 72.0,
+            periods: (i64::MAX, 0),
+        })
+    }
+
+    /// Handles the runtime's events: false once the session is over.
+    pub fn poll(&mut self) -> Result<bool, String> {
+        while let Some(event) = self
+            .session
+            .instance()
+            .poll_event(&mut self.events)
+            .map_err(err("the runtime's events"))?
+        {
+            match event {
+                xr::Event::SessionStateChanged(e) => {
+                    info!("glvr: XR state {:?}", e.state());
+                    match e.state() {
+                        xr::SessionState::READY => {
+                            self.session
+                                .begin(xr::ViewConfigurationType::PRIMARY_STEREO)
+                                .map_err(err("beginning the session"))?;
+                            self.running = true;
+                        }
+                        xr::SessionState::STOPPING => {
+                            self.session.end().map_err(err("ending the session"))?;
+                            self.running = false;
+                        }
+                        xr::SessionState::EXITING | xr::SessionState::LOSS_PENDING => {
+                            return Ok(false);
+                        }
+                        _ => {}
+                    }
+                }
+                xr::Event::InstanceLossPending(_) => return Ok(false),
+                _ => {}
+            }
+        }
+        Ok(true)
+    }
+
+    pub fn running(&self) -> bool {
+        self.running
+    }
+
+    /// For the log: the runtime's frame periods since last asked (min, max) and the interval
+    /// the eyes are put ahead by, in ms.
+    pub fn pacing(&mut self) -> (f32, f32, f32) {
+        let (lo, hi) = std::mem::replace(&mut self.periods, (i64::MAX, 0));
+        (lo as f32 / 1e6, hi as f32 / 1e6, self.interval as f32 / 1e6)
+    }
+
+    /// Waits for the next frame and begins it: the eyes to draw (`ahead`: where they will be a
+    /// frame later, for an image shown then), or None for a frame not shown (ended at once).
+    pub fn begin(&mut self, ahead: bool) -> Result<Option<Frame>, String> {
+        let state = self.waiter.wait().map_err(err("waiting for the frame"))?;
+        self.stream.begin().map_err(err("beginning the frame"))?;
+        if !state.should_render {
+            self.stream
+                .end(state.predicted_display_time, self.blend, &[])
+                .map_err(err("ending the frame"))?;
+            return Ok(None);
+        }
+        // The image drawn now is shown a frame later (`present`): the eyes and the hands
+        // where they will be then. A frame later by the frames' measured interval: SteamVR on
+        // the Steam Frame gives periods of 90 Hz frames (11.1, 22.2, 33.3 ms) while it shows
+        // 72 a second, so the eyes were put ahead by varying amounts, frame to frame (images
+        // a little behind or ahead of the head in turn: a judder whenever it turned).
+        let time = state.predicted_display_time;
+        let period = state.predicted_display_period.as_nanos();
+        self.periods = (self.periods.0.min(period), self.periods.1.max(period));
+        if let Some(last) = self.last_time {
+            let d = (time.as_nanos() - last.as_nanos()) as f64;
+            // (Averaged: a frame now and then not shown counts little; 36 a second, SteamVR's
+            // half rate, is learnt in a second or two.)
+            if INTERVALS.contains(&d) {
+                self.interval += (d - self.interval) * 0.05;
+            }
+        }
+        self.last_time = Some(time);
+        let shown =
+            xr::Time::from_nanos(time.as_nanos() + if ahead { self.interval as i64 } else { 0 });
+        let (_, views) = self
+            .session
+            .locate_views(xr::ViewConfigurationType::PRIMARY_STEREO, shown, &self.space)
+            .map_err(err("the eyes' poses"))?;
+        let controllers = self
+            .controllers
+            .as_ref()
+            .map_or([HandInput::default(); 2], |c| c.read(&self.session, &self.space, shown));
+        Ok(Some(Frame { time, views, controllers }))
+    }
+
+    /// The image to draw the frame into, waited for: its swapchain (for `present`) and texture.
+    pub fn acquire(&mut self) -> Result<(usize, glow::Texture), String> {
+        let k = self.next;
+        self.next = (k + 1) % self.swapchains.len();
+        let (swapchain, images) = &mut self.swapchains[k];
+        let image = swapchain.acquire_image().map_err(err("acquiring the image"))?;
+        swapchain.wait_image(xr::Duration::INFINITE).map_err(err("waiting for the image"))?;
+        let texture = *images.get(image as usize).ok_or("the headset's image")?;
+        Ok((k, texture))
+    }
+
+    /// A short vibration of `amount` (0..1) on hand `i`.
+    pub fn pulse(&self, i: usize, amount: f32) {
+        if let Some(c) = &self.controllers {
+            c.pulse(&self.session, i, amount);
+        }
+    }
+
+    /// Ends the frame with nothing drawn (no picture yet).
+    pub fn end_empty(&mut self, frame: &Frame) -> Result<(), String> {
+        self.stream.end(frame.time, self.blend, &[]).map_err(err("ending the frame"))
+    }
+
+    /// Releases the image of swapchain `chain` (drawn last frame, done on the GPU) and ends
+    /// `frame` with it, shown with the eyes' poses it was drawn with (`views`).
+    pub fn present(
+        &mut self,
+        frame: &Frame,
+        chain: usize,
+        views: &[xr::View],
+    ) -> Result<(), String> {
+        let swapchain = &mut self.swapchains[chain].0;
+        swapchain.release_image().map_err(err("releasing the image"))?;
+        let swapchain = &self.swapchains[chain].0;
+        let rect = xr::Rect2Di {
+            offset: xr::Offset2Di { x: 0, y: 0 },
+            extent: xr::Extent2Di { width: self.size.0 as i32, height: self.size.1 as i32 },
+        };
+        let views: Vec<_> = views
+            .iter()
+            .enumerate()
+            .map(|(i, view)| {
+                xr::CompositionLayerProjectionView::new().pose(view.pose).fov(view.fov).sub_image(
+                    xr::SwapchainSubImage::new()
+                        .swapchain(swapchain)
+                        .image_array_index(i as u32)
+                        .image_rect(rect),
+                )
+            })
+            .collect();
+        let layer = xr::CompositionLayerProjection::new().space(&self.space).views(&views);
+        self.stream.end(frame.time, self.blend, &[&layer]).map_err(err("ending the frame"))
+    }
+}

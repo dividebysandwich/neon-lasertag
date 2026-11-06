@@ -1,0 +1,156 @@
+// Neon accents and their glow halos (src/materials.rs). The GL port for the foveated headset
+// renderer is assets/shaders/gl/neon.glsl: keep the two in step.
+//
+// Mode 0 (the arena): accents are coloured by which half of the arena they are in (Red at +z,
+// Blue at -z), unless the mesh's vertex colour says otherwise: its alpha mixes towards its rgb
+// (the arena's middle has zones of other colours, reload stations are white). Waves of intense
+// colour run from each base towards the centre, and event pulses (target hits, tag-outs) ripple
+// out from where they happened.
+// Mode 1: a fixed colour (bolts, blasters). Mode 2: a fixed colour with pulses of light
+// flowing along the strip (uv.x: metres along it).
+// Halos fade with uv.y (0 at the strip, 1 at the outer edge); volume halos (light cones) also
+// fade where they are seen edge on.
+
+#import bevy_pbr::forward_io::VertexOutput
+#import bevy_pbr::mesh_view_bindings::view
+
+struct Neon {
+    // rgb: fixed colour (modes 1, 2), a: intensity.
+    color: vec4<f32>,
+    // x: mode, y: glow (0 accent, 1 halo), z: time (s), w: half length of the arena (m).
+    params: vec4<f32>,
+    red: vec4<f32>,
+    blue: vec4<f32>,
+    // Event pulses: xyz origin, w start time (negative: unused).
+    pulse_pos: array<vec4<f32>, 8>,
+    // rgb colour of each pulse.
+    pulse_color: array<vec4<f32>, 8>,
+    // x: halo shape (0 strip, 1 volume), y: flow speed (m/s, mode 2).
+    extra: vec4<f32>,
+};
+
+@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> neon: Neon;
+
+fn hash2(p: vec2<f32>) -> f32 {
+    return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);
+}
+
+// Smooth value noise, about 0..1.
+fn vnoise(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = hash2(i);
+    let b = hash2(i + vec2<f32>(1.0, 0.0));
+    let c = hash2(i + vec2<f32>(0.0, 1.0));
+    let d = hash2(i + vec2<f32>(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+// Now and then a pulse of light streaks along the accents: the arena is cut into 8 m blocks
+// and 0.6 m height bands; in each, every few seconds there's a chance of a streak racing
+// across it (along x + z, so along walls of either direction), a bright head and a tail.
+fn streaks(world: vec3<f32>, t: f32) -> f32 {
+    let block = floor(world.xz / 8.0);
+    let band = floor(world.y / 0.6);
+    let key = block * 1.7 + vec2<f32>(band * 5.3, band * 2.9);
+    let slot = 3.5;
+    let phase = hash2(key + 0.5) * 9.0;
+    let n = floor(t / slot + phase);
+    let local = fract(t / slot + phase) * slot;
+    if (hash2(key + n * 1.31) > 0.22) {
+        return 0.0;
+    }
+    let dir = select(-1.0, 1.0, hash2(key + n * 2.17) > 0.5);
+    let along = dir * (world.x + world.z - (block.x + block.y) * 8.0 - 8.0);
+    let head = -10.0 + local * 26.0;
+    let d = head - along;
+    if (d < 0.0) {
+        return 0.0;
+    }
+    return exp(-d * 0.9) * (1.0 + 2.0 * exp(-d * 8.0));
+}
+
+fn neon_color(world: vec3<f32>, uv: vec2<f32>, tint: vec4<f32>) -> vec3<f32> {
+    let t = neon.params.z;
+    let half_len = neon.params.w;
+    var base: vec3<f32>;
+    if (neon.params.x < 0.5) {
+        let k = smoothstep(-0.12, 0.12, world.z);
+        base = mix(neon.blue.rgb, neon.red.rgb, k);
+        base = mix(base, tint.rgb, tint.a);
+        // Waves from each base towards the centre: a sharp front with a fading tail.
+        let from_base = half_len - abs(world.z);
+        let jitter = hash2(floor(world.xz * 0.5)) * 0.6;
+        let w = fract((from_base - t * 9.0) / 22.0 + jitter * 0.05);
+        let wave = smoothstep(0.0, 0.03, w) * exp(-w * 14.0);
+        // (Dimmed accents, whose tint is darker than full colour, get a dimmer white too.)
+        let level = mix(1.0, max(max(tint.r, tint.g), tint.b), tint.a);
+        base = base * (1.0 + 3.5 * wave) + vec3<f32>(wave * 0.6 * level);
+        // A slow shimmer so the accents feel alive, and slowly drifting brighter and darker
+        // patches so the arena isn't lit evenly.
+        base *= 0.85 + 0.15 * sin(t * 2.0 + world.x * 0.7 + world.y * 1.3 + jitter * 6.0);
+        base *= 0.55 + 0.75 * vnoise(world.xz * 0.09 + vec2<f32>(t * 0.035, -t * 0.025));
+        // Streaks (on the dimmed accents too, a little weaker there).
+        let s = streaks(world, t) * (0.5 + 0.5 * level);
+        base = base * (1.0 + 3.0 * s) + vec3<f32>(s * 0.35 * level);
+    } else if (neon.params.x < 1.5) {
+        base = neon.color.rgb;
+    } else {
+        // Pulses running along the strip, a few per metre.
+        let w = fract(uv.x * 2.2 - t * neon.extra.y);
+        let pulse = smoothstep(0.0, 0.06, w) * exp(-w * 5.0);
+        base = neon.color.rgb * (0.45 + 2.2 * pulse);
+    }
+    var col = base * neon.color.a;
+    for (var i = 0; i < 8; i++) {
+        let p = neon.pulse_pos[i];
+        if (p.w < 0.0) {
+            continue;
+        }
+        let age = t - p.w;
+        if (age < 0.0 || age > 2.5) {
+            continue;
+        }
+        let r = age * 14.0;
+        let d = distance(world, p.xyz) - r;
+        let ring = exp(-d * d / 1.2) * (1.0 - age / 2.5);
+        col += neon.pulse_color[i].rgb * ring * 8.0;
+    }
+    return col;
+}
+
+fn world_xz_noise(world: vec3<f32>, t: f32) -> f32 {
+    let n = vnoise(world.xz * 0.11 + vec2<f32>(t * 0.05, t * 0.02)) * 0.65
+        + vnoise(world.xz * 0.27 - vec2<f32>(t * 0.08, -t * 0.04)) * 0.35;
+    return smoothstep(0.5, 0.9, n);
+}
+
+@fragment
+fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+    var uv = vec2<f32>(0.5, 0.5);
+#ifdef VERTEX_UVS_A
+    uv = in.uv;
+#endif
+    var tint = vec4<f32>(0.0);
+#ifdef VERTEX_COLORS
+    tint = in.color;
+#endif
+    let col = neon_color(in.world_position.xyz, uv, tint);
+    if (neon.params.y > 0.5) {
+        let v = clamp(uv.y, 0.0, 1.0);
+        var a = (1.0 - v) * (1.0 - v) * 0.35;
+        if (neon.extra.x > 0.5 && neon.extra.x < 1.5) {
+            let to_eye = normalize(view.world_position - in.world_position.xyz);
+            let facing = abs(dot(normalize(in.world_normal), to_eye));
+            a *= facing * facing;
+        }
+        if (neon.extra.x > 1.5) {
+            // Haze: drifting patches.
+            let w = world_xz_noise(in.world_position.xyz, neon.params.z);
+            a *= w;
+        }
+        return vec4<f32>(col * a, a);
+    }
+    return vec4<f32>(col, 1.0);
+}
