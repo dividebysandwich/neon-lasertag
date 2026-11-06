@@ -22,7 +22,10 @@ pub struct Rules {
     pub ammo: u16,
     /// Shots a second refilled at a reload station or a spawn pad.
     pub reload_rate: f32,
+    /// Grenade and turret bolts' speed.
     pub bolt_speed: f32,
+    /// Blaster bolts' speed (players' and bots').
+    pub blaster_bolt_speed: f32,
     pub bolt_life: f32,
     pub move_speed: f32,
     /// Most physical (room-scale) walking accepted per second.
@@ -77,6 +80,7 @@ impl Default for Rules {
             ammo: 50,
             reload_rate: 25.0,
             bolt_speed: 48.0,
+            blaster_bolt_speed: 96.0,
             bolt_life: 2.0,
             move_speed: 4.0,
             walk_speed_max: 4.0,

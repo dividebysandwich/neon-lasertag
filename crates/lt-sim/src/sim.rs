@@ -772,7 +772,7 @@ impl Sim {
                                 owner_team: team,
                                 team: Some(team),
                                 pos: from,
-                                vel: dir * rules.bolt_speed,
+                                vel: dir * rules.blaster_bolt_speed,
                                 life: rules.bolt_life,
                             };
                             if self.compensate(&mut bolt, view) {
@@ -1980,7 +1980,7 @@ mod tests {
         };
         // Lead the target as the shooter saw it move: the k-th tick of the bolt's flight meets
         // the target as it was at view + k.
-        let step = sim.rules.bolt_speed * TICK;
+        let step = sim.rules.blaster_bolt_speed * TICK;
         let aim = (0..lag)
             .map(|k| chest_at(&sim, view + k))
             .enumerate()

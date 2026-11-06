@@ -2231,7 +2231,7 @@ impl Controller for Bot {
                     .iter()
                     .find(|s| s.id == id)
                     .map_or(Vec3::ZERO, |s| s.vel);
-                let lead = vel * (d / sim.rules.bolt_speed) * (0.4 + 0.6 * self.skill);
+                let lead = vel * (d / sim.rules.blaster_bolt_speed) * (0.4 + 0.6 * self.skill);
                 Some((point + lead, ok && self.seen_for >= self.reaction))
             }
             None => self.panel_in_reach(sim, p, eye, muzzle).map(|c| (c, true)),
