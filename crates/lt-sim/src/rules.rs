@@ -46,6 +46,9 @@ pub struct Rules {
     pub shotgun_bolts: u8,
     pub shotgun_spread: f32,
     pub shotgun_range: f32,
+    /// Seconds a cloak lasts, and how long one shows after firing or a hit.
+    pub cloak_time: f32,
+    pub cloak_flash: f32,
     pub grenade_fuse: f32,
     pub grenade_active: f32,
     pub grenade_hop: f32,
@@ -104,6 +107,8 @@ impl Default for Rules {
             shotgun_bolts: 10,
             shotgun_spread: 0.07,
             shotgun_range: 14.0,
+            cloak_time: 100.0,
+            cloak_flash: 0.5,
             grenade_fuse: 3.0,
             grenade_active: 4.0,
             grenade_hop: 1.0,

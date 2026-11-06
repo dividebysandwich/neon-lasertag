@@ -38,6 +38,7 @@ pub fn pickup_color(kind: PickupKind) -> Vec3 {
         PickupKind::Rapid => Vec3::new(1.0, 0.75, 0.04),
         PickupKind::Shield => Vec3::new(0.25, 0.9, 1.0),
         PickupKind::Shotgun => Vec3::new(1.0, 0.4, 0.04),
+        PickupKind::Cloak => Vec3::new(0.6, 0.15, 1.0),
     }
 }
 
@@ -57,8 +58,8 @@ pub struct NeonUniform {
     pub blue: Vec4,
     pub pulse_pos: [Vec4; PULSES],
     pub pulse_color: [Vec4; PULSES],
-    /// x: halo shape (0 strip, 1 volume: fades where seen edge on, 2 haze, 3 forcefield), y:
-    /// flow speed (m/s, mode 2).
+    /// x: halo shape (0 strip, 1 volume: fades where seen edge on, 2 haze, 3 forcefield, 4
+    /// cloak), y: flow speed (m/s, mode 2).
     pub extra: Vec4,
 }
 
@@ -94,6 +95,12 @@ impl NeonUniform {
     /// As a halo: a translucent forcefield (uv 0..1 across and up the sheet).
     pub fn shield(mut self) -> Self {
         self.extra.x = 3.0;
+        self
+    }
+
+    /// As a halo: a cloaked player's shimmer, brightest at the silhouette.
+    pub fn cloak(mut self) -> Self {
+        self.extra.x = 4.0;
         self
     }
 

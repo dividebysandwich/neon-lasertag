@@ -57,18 +57,26 @@ pub enum PickupKind {
     /// A shotgun instead of the blaster until tagged out (`Rules::shotgun_bolts` short-lived
     /// bolts a shot, in a spread); taking one also fills it up.
     Shotgun,
+    /// Unseen from afar and see-through up close for `Rules::cloak_time` or until tagged out
+    /// (showing for a moment after firing or a hit).
+    Cloak,
 }
 
 impl PickupKind {
-    pub const ALL: [PickupKind; 4] = [
+    pub const ALL: [PickupKind; 5] = [
         PickupKind::Grenade,
         PickupKind::Rapid,
         PickupKind::Shield,
         PickupKind::Shotgun,
+        PickupKind::Cloak,
     ];
     /// The powerups (everything but the grenade).
-    pub const POWERUPS: [PickupKind; 3] =
-        [PickupKind::Rapid, PickupKind::Shield, PickupKind::Shotgun];
+    pub const POWERUPS: [PickupKind; 4] = [
+        PickupKind::Rapid,
+        PickupKind::Shield,
+        PickupKind::Shotgun,
+        PickupKind::Cloak,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -76,6 +84,7 @@ impl PickupKind {
             PickupKind::Rapid => "rapid fire",
             PickupKind::Shield => "shield",
             PickupKind::Shotgun => "shotgun",
+            PickupKind::Cloak => "cloak",
         }
     }
 
@@ -86,6 +95,7 @@ impl PickupKind {
             PickupKind::Rapid => "rapid",
             PickupKind::Shield => "shield",
             PickupKind::Shotgun => "shotgun",
+            PickupKind::Cloak => "cloak",
         }
     }
 
@@ -195,6 +205,10 @@ pub enum SimEvent {
         player: PlayerId,
     },
     ShieldDown {
+        player: PlayerId,
+    },
+    /// A player's cloak ran out.
+    Uncloaked {
         player: PlayerId,
     },
     /// A bolt hit a shielded player (and did nothing).

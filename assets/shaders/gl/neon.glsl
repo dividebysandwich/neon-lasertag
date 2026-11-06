@@ -180,6 +180,16 @@ vec2 shield(vec3 world, vec2 uv, vec3 n, vec3 to_eye, float t) {
     return vec2(clamp(a, 0.0, 1.0), 1.0 + bands * 1.5 + spark * 2.0);
 }
 
+// A cloaked player (halo shape 4), as neon.wgsl's `cloak`: alpha.
+float cloak(vec3 world, vec3 n, vec3 to_eye, float t) {
+    float facing = abs(dot(normalize(n), to_eye));
+    float rim = pow(1.0 - facing, 2.5);
+    vec2 p = vec2(world.x + world.z, world.y) * 7.0;
+    float crawl = vnoise(p + vec2(t * 0.7, -t * 1.6));
+    float ripple = 0.5 + 0.5 * sin(world.y * 22.0 - t * 5.0 + crawl * 4.0);
+    return clamp((0.03 + 0.55 * rim) * (0.5 + 0.9 * crawl) * (0.75 + 0.25 * ripple), 0.0, 1.0);
+}
+
 // HDR to the display's range: the brightest channel rolls off (1 - e^-x) with the others
 // scaled alongside (the hue kept), and very bright light goes towards white as a bloomed
 // core would.
@@ -198,6 +208,11 @@ vec3 tone(vec3 c) {
 void main() {
     vec3 col = neon_colour(v_world);
 #ifdef GLOW
+    if (u_extra.x > 3.5) {
+        float a = cloak(v_world, v_normal, normalize(v_eye - v_world), u_time);
+        o_colour = vec4(tone(col * a), a);
+        return;
+    }
     if (u_extra.x > 2.5) {
         vec2 f = shield(v_world, v_uv, v_normal, normalize(v_eye - v_world), u_time);
         o_colour = vec4(tone(col * f.y * f.x), f.x);

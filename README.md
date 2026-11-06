@@ -26,8 +26,8 @@ holster on the left hip; or `LT_LEFT_HANDED=1`), `--autopilot` (a bot plays you,
 `--match-time S` (local games), `--screenshot FILE --after 5,10`, `--quit-after S`.
 Testing: `LT_DEV="6:menu,8:leave,10:play-hard,14:hit,20:next"` scripts menu actions and hits (`options`
 opens the options screen, `arc` shows the throw arc, `target` hits a team target;
-`give-KIND` gives you a pickup's contents and `drop-KIND` lays one in front of you, KIND
-`grenade`, `rapid`, `shield`, `shotgun`; `shields-up` switches everyone's shield on, `summon` (or `summon=M`) puts the
+`give-KIND` gives you a pickup's contents (`give-all-KIND` everyone) and `drop-KIND` lays one in front of you, KIND
+`grenade`, `rapid`, `shield`, `shotgun`, `cloak`; `shields-up` switches everyone's shield on, `summon` (or `summon=M`) puts the
 nearest other player 4 m (M m) in front of you; Megatarget mode: `power` hits both secondary targets, `warp-door`, `warp-room`, `warp-turret` and `warp-pocket` move
 you there, `yaw=DEG` and `pitch=DEG` turn the flat screen's view),
 `LT_VR_MENU=1` opens the VR menu, `LT_VR_FAKE_HANDS=1` fakes controllers, `LT_HOLSTER=x,y,z`
@@ -88,6 +88,9 @@ it. You lose them all when you're tagged out.
   from above (flickering in its last two seconds); bots and turrets don't waste shots on them.
 - **Shotgun** (orange): replaces your blaster. Every shot (one of the 50) fires 10 bolts in a
   slight spread that fly only 14 m. Taking one also fills it up.
+- **Cloak** (purple, a cape): for 100 s you can't be seen from further than 7 m, and closer you
+  are only a faint shimmer (bots and turrets only notice you within 3 m, though they still hear
+  you). You show for half a second whenever you fire or are hit.
 
 | | VR | Flat screen |
 |---|---|---|

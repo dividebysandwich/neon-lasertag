@@ -34,7 +34,8 @@
 //! hasn't got) → fetch it. Visible enemies in range
 //! are always shot at (strafing while doing so); a hit makes the bot look for the shooter.
 //! A carried shield goes on as soon as it has an enemy to shoot at; shielded enemies aren't
-//! shot at, and with a shotgun nothing out of its reach. Carrying a grenade, it lobs it at two or more enemies close together that it knows about
+//! shot at, and with a shotgun nothing out of its reach. Cloaked enemies are only seen up close
+//! (`sim::CLOAK_NEAR`), though still heard. Carrying a grenade, it lobs it at two or more enemies close together that it knows about
 //! (seen recently, heard nearby or heard shooting), picking a low or high arc whose simulated
 //! flight first lands next to the group, and never near team mates or itself.
 //!
@@ -1339,7 +1340,7 @@ impl Bot {
             let d = to.length();
             let in_view = d < SENSE || fwd.dot(Vec2::new(to.x, to.z).normalize_or_zero()) > FOV_COS;
             let mut known = false;
-            if d < SIGHT && in_view {
+            if d < SIGHT && in_view && o.seen_from(d) {
                 // The chest if it shows, otherwise the head (over a half wall).
                 let point = if clear(&sim.world, eye, chest) {
                     Some(chest)

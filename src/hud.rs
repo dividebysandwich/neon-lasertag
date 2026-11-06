@@ -622,6 +622,10 @@ pub fn powerup_line(p: &lt_sim::sim::PlayerSnap) -> String {
     if p.shotgun {
         parts.push("SHOTGUN".to_string());
     }
+    if p.cloak > 0.0 {
+        let state = if p.cloaked() { "CLOAKED" } else { "SEEN" };
+        parts.push(format!("{state} {:.0}", p.cloak.ceil()));
+    }
     if p.shield > 0.0 {
         parts.push(format!("SHIELD {:.0}", p.shield.ceil()));
     } else if p.shields > 0 {

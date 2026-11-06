@@ -9,7 +9,8 @@
 // Mode 1: a fixed colour (bolts, blasters). Mode 2: a fixed colour with pulses of light
 // flowing along the strip (uv.x: metres along it).
 // Halos fade with uv.y (0 at the strip, 1 at the outer edge); volume halos (light cones) also
-// fade where they are seen edge on; forcefields (shape 3) are translucent sheets of their own.
+// fade where they are seen edge on; forcefields (shape 3) are translucent sheets of their own;
+// cloaks (shape 4) are a faint shimmer, brightest at the silhouette.
 
 #import bevy_pbr::forward_io::VertexOutput
 #import bevy_pbr::mesh_view_bindings::view
@@ -25,7 +26,8 @@ struct Neon {
     pulse_pos: array<vec4<f32>, 8>,
     // rgb colour of each pulse.
     pulse_color: array<vec4<f32>, 8>,
-    // x: halo shape (0 strip, 1 volume, 2 haze, 3 forcefield), y: flow speed (m/s, mode 2).
+    // x: halo shape (0 strip, 1 volume, 2 haze, 3 forcefield, 4 cloak), y: flow speed (m/s,
+    // mode 2).
     extra: vec4<f32>,
 };
 
@@ -165,6 +167,17 @@ fn shield(world: vec3<f32>, uv: vec2<f32>, n: vec3<f32>, to_eye: vec3<f32>, t: f
     return vec2<f32>(clamp(a, 0.0, 1.0), 1.0 + bands * 1.5 + spark * 2.0);
 }
 
+// A cloaked player (halo shape 4): next to nothing face on, a shimmering rim at the silhouette,
+// with ripples crawling up it. Alpha.
+fn cloak(world: vec3<f32>, n: vec3<f32>, to_eye: vec3<f32>, t: f32) -> f32 {
+    let facing = abs(dot(normalize(n), to_eye));
+    let rim = pow(1.0 - facing, 2.5);
+    let p = vec2<f32>(world.x + world.z, world.y) * 7.0;
+    let crawl = vnoise(p + vec2<f32>(t * 0.7, -t * 1.6));
+    let ripple = 0.5 + 0.5 * sin(world.y * 22.0 - t * 5.0 + crawl * 4.0);
+    return clamp((0.03 + 0.55 * rim) * (0.5 + 0.9 * crawl) * (0.75 + 0.25 * ripple), 0.0, 1.0);
+}
+
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var uv = vec2<f32>(0.5, 0.5);
@@ -176,6 +189,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     tint = in.color;
 #endif
     let col = neon_color(in.world_position.xyz, uv, tint);
+    if (neon.params.y > 0.5 && neon.extra.x > 3.5) {
+        let to_eye = normalize(view.world_position - in.world_position.xyz);
+        let a = cloak(in.world_position.xyz, in.world_normal, to_eye, neon.params.z);
+        return vec4<f32>(col * a, a);
+    }
     if (neon.params.y > 0.5 && neon.extra.x > 2.5) {
         let to_eye = normalize(view.world_position - in.world_position.xyz);
         let f = shield(in.world_position.xyz, uv, in.world_normal, to_eye, neon.params.z);

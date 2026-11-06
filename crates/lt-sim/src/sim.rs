@@ -34,6 +34,10 @@ pub const EYE: f32 = 1.65;
 /// comes back on.
 pub const TURRET_WARMUP: f32 = 0.5;
 pub const HISTORY: usize = 20;
+/// A cloaked player can't be seen from further than `CLOAK_FAR` (m), and is see-through, fading
+/// in to `CLOAK_NEAR` (the bots and turrets see one closer than `CLOAK_NEAR`).
+pub const CLOAK_NEAR: f32 = 3.0;
+pub const CLOAK_FAR: f32 = 7.0;
 pub const MAX_LAG: u64 = 15;
 
 /// A player as a bolt could hit them at a past tick.
@@ -93,9 +97,22 @@ pub struct Player {
     pub shield: f32,
     /// Holding a shotgun instead of the blaster (until tagged out).
     pub shotgun: bool,
+    /// Seconds left of the cloak (0: none), and of showing after firing or a hit.
+    pub cloak: f32,
+    pub decloak: f32,
 }
 
 impl Player {
+    /// Cloaked and not showing right now.
+    pub fn cloaked(&self) -> bool {
+        self.cloak > 0.0 && self.decloak <= 0.0
+    }
+
+    /// Whether the bots and the turrets see this player from `dist` (m) away.
+    pub fn seen_from(&self, dist: f32) -> bool {
+        !self.cloaked() || dist < CLOAK_NEAR
+    }
+
     pub fn alive(&self) -> bool {
         self.respawn.is_none()
     }
@@ -116,6 +133,7 @@ impl Player {
             PickupKind::Rapid => !self.rapid,
             PickupKind::Shield => self.shields == 0,
             PickupKind::Shotgun => !self.shotgun || self.ammo < rules.ammo,
+            PickupKind::Cloak => self.cloak <= 0.0,
         }
     }
 
@@ -130,6 +148,7 @@ impl Player {
                 self.ammo = rules.ammo;
                 self.reloading = None;
             }
+            PickupKind::Cloak => self.cloak = rules.cloak_time,
         }
     }
 
@@ -139,6 +158,8 @@ impl Player {
         self.shields = 0;
         self.shield = 0.0;
         self.shotgun = false;
+        self.cloak = 0.0;
+        self.decloak = 0.0;
     }
 
     pub fn eye(&self) -> Vec3 {
@@ -290,6 +311,9 @@ pub struct PlayerSnap {
     pub shields: u8,
     pub shield: f32,
     pub shotgun: bool,
+    /// `Player::cloak`, `decloak`.
+    pub cloak: f32,
+    pub decloak: f32,
 }
 
 impl PlayerSnap {
@@ -300,7 +324,13 @@ impl PlayerSnap {
             PickupKind::Rapid => self.rapid,
             PickupKind::Shield => self.shields > 0 || self.shield > 0.0,
             PickupKind::Shotgun => self.shotgun,
+            PickupKind::Cloak => self.cloak > 0.0,
         }
+    }
+
+    /// Cloaked and not showing right now (`Player::cloaked`).
+    pub fn cloaked(&self) -> bool {
+        self.cloak > 0.0 && self.decloak <= 0.0
     }
 }
 
@@ -457,6 +487,8 @@ impl Sim {
             shields: 0,
             shield: 0.0,
             shotgun: false,
+            cloak: 0.0,
+            decloak: 0.0,
         };
         let spawn = self.pick_spawn(team);
         p.feet = spawn.pos;
@@ -839,6 +871,16 @@ impl Sim {
                 }
             }
 
+            // The cloak running out.
+            p.decloak = (p.decloak - TICK).max(0.0);
+            if p.cloak > 0.0 {
+                p.cloak -= TICK;
+                if p.cloak <= 0.0 {
+                    p.cloak = 0.0;
+                    self.events.push(SimEvent::Uncloaked { player: p.id });
+                }
+            }
+
             // Firing (one bolt per trigger pull).
             let pull = p.cmd.fire && !p.prev_fire;
             p.prev_fire = p.cmd.fire;
@@ -852,6 +894,7 @@ impl Sim {
                     self.events.push(SimEvent::Empty { player: p.id });
                 } else {
                     p.fire_cd = p.fire_interval(&rules);
+                    p.decloak = rules.cloak_flash;
                     p.ammo -= 1;
                     p.shots += 1;
                     let eye = p.eye();
@@ -1108,6 +1151,7 @@ impl Sim {
         }
         p.hits += 1;
         p.cooldown = hit_cooldown;
+        p.decloak = self.rules.cloak_flash;
         let (id, team, feet, hits) = (p.id, p.team, p.feet, p.hits);
         // Only team bolts at an enemy count as landed (grenade bolts hit anyone).
         if b.team.is_some_and(|t| t != team)
@@ -1296,7 +1340,12 @@ impl Sim {
             let target = self
                 .players
                 .iter()
-                .filter(|p| p.alive() && p.cooldown <= 0.0 && p.shield <= 0.0)
+                .filter(|p| {
+                    p.alive()
+                        && p.cooldown <= 0.0
+                        && p.shield <= 0.0
+                        && p.seen_from(p.chest().distance(muzzle))
+                })
                 .map(|p| p.chest())
                 .filter(|c| {
                     let d = *c - muzzle;
@@ -1556,6 +1605,8 @@ impl Sim {
                     shields: p.shields,
                     shield: p.shield,
                     shotgun: p.shotgun,
+                    cloak: p.cloak,
+                    decloak: p.decloak,
                 })
                 .collect(),
             bolts: self
@@ -2419,6 +2470,62 @@ mod tests {
         // Gone with the next tag-out.
         sim.players[0].lose_powerups();
         assert!(!sim.player(a).unwrap().shotgun);
+    }
+
+    #[test]
+    fn a_cloak_shows_after_firing_and_hits_and_runs_out() {
+        let (mut sim, a, b) = duel();
+        sim.players[0].feet = Vec3::new(0.0, 0.0, 6.0);
+        sim.players[1].feet = Vec3::new(0.0, 0.0, 100.0);
+        sim.give(a, PickupKind::Cloak);
+        let pa = sim.player(a).unwrap();
+        assert!(pa.cloaked());
+        assert!(!pa.seen_from(CLOAK_FAR) && pa.seen_from(CLOAK_NEAR - 0.5));
+        let fire = PlayerCmd {
+            gun_hand: Some(Hand::Right),
+            muzzle: Pose {
+                pos: Vec3::Y * 1.4,
+                rot: Quat::IDENTITY,
+            },
+            fire: true,
+            ..Default::default()
+        };
+        sim.set_cmd(a, fire);
+        sim.step();
+        sim.set_cmd(
+            a,
+            PlayerCmd {
+                fire: false,
+                ..fire
+            },
+        );
+        assert!(!sim.player(a).unwrap().cloaked(), "showing after firing");
+        for _ in 0..(0.5 / TICK) as usize + 1 {
+            sim.step();
+        }
+        assert!(sim.player(a).unwrap().cloaked(), "and hidden again");
+        // A hit shows it too.
+        let bolt = Bolt {
+            id: 1,
+            owner: b,
+            owner_team: Team::Blue,
+            team: Some(Team::Blue),
+            pos: Vec3::ZERO,
+            vel: Vec3::ZERO,
+            life: 1.0,
+        };
+        sim.hit_player(0, &bolt, Vec3::ZERO);
+        assert!(!sim.player(a).unwrap().cloaked());
+        sim.drain_events();
+        for _ in 0..(100.0 / TICK) as usize {
+            sim.step();
+        }
+        assert_eq!(sim.player(a).unwrap().cloak, 0.0);
+        assert!(
+            sim.drain_events()
+                .iter()
+                .any(|e| matches!(e, SimEvent::Uncloaked { player } if *player == a))
+        );
     }
 
     fn mega_sim(turrets: bool) -> Sim {

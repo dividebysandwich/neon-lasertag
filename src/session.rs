@@ -214,10 +214,11 @@ fn dev_script(
                 }
             });
         }
-        // Local games: `give-KIND` hands the local player a pickup's contents, `drop-KIND` lays
-        // one 2.5 m in front of them (KIND: grenade, rapid, ...).
+        // Local games: `give-KIND` hands the local player a pickup's contents (`give-all-KIND`:
+        // everyone), `drop-KIND` lays one 2.5 m in front of them (KIND: grenade, rapid, ...).
         a if a.starts_with("give-") || a.starts_with("drop-") => {
-            let Some(kind) = lt_sim::PickupKind::parse(&a[5..]) else {
+            let all = a.starts_with("give-all-");
+            let Some(kind) = lt_sim::PickupKind::parse(&a[if all { 9 } else { 5 }..]) else {
                 warn!("LT_DEV: unknown pickup in {a}");
                 return;
             };
@@ -230,7 +231,12 @@ fn dev_script(
                 let Source::Local { sim, .. } = &mut game.source else {
                     return;
                 };
-                if give {
+                if all {
+                    let ids: Vec<_> = sim.players.iter().map(|p| p.id).collect();
+                    for id in ids {
+                        sim.give(id, kind);
+                    }
+                } else if give {
                     sim.give(me, kind);
                 } else if let Some(p) = sim.player(me) {
                     let ahead = Quat::from_rotation_y(p.cmd.yaw) * Vec3::NEG_Z * 2.5;

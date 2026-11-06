@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use bevy::prelude::*;
-use lt_sim::sim::{EYE, PlayerSnap, TICK};
+use lt_sim::sim::{CLOAK_FAR, CLOAK_NEAR, EYE, PlayerSnap, TICK};
 use lt_sim::{PickupKind, PlayerId, Pose, SimEvent, Team};
 
 use crate::assets::{Model, Models};
@@ -45,6 +45,11 @@ struct AvatarParts {
     grenade: Entity,
     /// The shield's beam of light (a child of `root`), with its light on the player.
     beam: Entity,
+    /// Every part twice: as it is (`solid`), and as a cloaked player's shimmer (`ghost`, in
+    /// `ghost_mat`, faded with the distance).
+    solid: Vec<Entity>,
+    ghost: Vec<Entity>,
+    ghost_mat: Handle<GlowMaterial>,
     team: Team,
 }
 
@@ -176,14 +181,60 @@ pub fn spawn_model(
     hits
 }
 
+/// A cloaked player's shimmer: its colour and brightest intensity (up close).
+const CLOAK_TINT: Vec3 = Vec3::new(0.6, 0.75, 1.0);
+const CLOAK_GLOW: f32 = 2.2;
+
+/// Spawns a model under `parent` twice (see `AvatarParts::solid`); returns the parts named
+/// `hit_N` with their N.
+#[allow(clippy::too_many_arguments)]
+fn spawn_dual(
+    commands: &mut Commands,
+    parent: Entity,
+    model: &Model,
+    palette: &Palette,
+    team: Option<Team>,
+    ghost_mat: &Handle<GlowMaterial>,
+    solid: &mut Vec<Entity>,
+    ghost: &mut Vec<Entity>,
+) -> Vec<(Entity, u8)> {
+    let s = commands
+        .spawn((Transform::IDENTITY, Visibility::default(), ChildOf(parent)))
+        .id();
+    let hits = spawn_model(commands, s, model, palette, team);
+    let g = commands
+        .spawn((Transform::IDENTITY, Visibility::Hidden, ChildOf(parent)))
+        .id();
+    for (mat, mesh) in &model.parts {
+        // (Not the halos.)
+        if matches!(mat.as_str(), "glow" | "eye_glow" | "halo_white") {
+            continue;
+        }
+        commands.spawn((
+            Mesh3d(mesh.clone()),
+            MeshMaterial3d(ghost_mat.clone()),
+            Transform::IDENTITY,
+            ChildOf(g),
+        ));
+    }
+    solid.push(s);
+    ghost.push(g);
+    hits
+}
+
 fn spawn_avatar(
     commands: &mut Commands,
     p: &PlayerSnap,
     models: &Models,
     palette: &Palette,
     meshes: &ActorMeshes,
+    glows: &mut Assets<GlowMaterial>,
 ) -> AvatarParts {
     let team = Some(p.team);
+    let ghost_mat = glows.add(GlowMaterial {
+        neon: crate::materials::NeonUniform::fixed(CLOAK_TINT, CLOAK_GLOW).cloak(),
+    });
+    let (mut solid, mut ghost) = (Vec::new(), Vec::new());
     let root = commands
         .spawn((
             Avatar(p.id),
@@ -195,7 +246,16 @@ fn spawn_avatar(
     let body = commands
         .spawn((Transform::IDENTITY, Visibility::default(), ChildOf(root)))
         .id();
-    let bars = spawn_model(commands, body, &models.torso, palette, team);
+    let bars = spawn_dual(
+        commands,
+        body,
+        &models.torso,
+        palette,
+        team,
+        &ghost_mat,
+        &mut solid,
+        &mut ghost,
+    );
     let head = commands
         .spawn((
             Transform::from_xyz(0.0, EYE, 0.0),
@@ -204,12 +264,23 @@ fn spawn_avatar(
         ))
         .id();
     let animal = &models.heads[p.id as usize % models.heads.len()];
-    spawn_model(commands, head, animal, palette, team);
+    spawn_dual(
+        commands, head, animal, palette, team, &ghost_mat, &mut solid, &mut ghost,
+    );
     let hands = [0, 1].map(|i| {
         let h = commands
             .spawn((Transform::IDENTITY, Visibility::default(), ChildOf(root)))
             .id();
-        spawn_model(commands, h, &models.hands[i], palette, team);
+        spawn_dual(
+            commands,
+            h,
+            &models.hands[i],
+            palette,
+            team,
+            &ghost_mat,
+            &mut solid,
+            &mut ghost,
+        );
         h
     });
     let gun = commands
@@ -218,16 +289,28 @@ fn spawn_avatar(
     let blaster = commands
         .spawn((Transform::IDENTITY, Visibility::default(), ChildOf(gun)))
         .id();
-    let mut gun_hits = spawn_model(commands, blaster, &models.blaster, palette, team);
+    let mut gun_hits = spawn_dual(
+        commands,
+        blaster,
+        &models.blaster,
+        palette,
+        team,
+        &ghost_mat,
+        &mut solid,
+        &mut ghost,
+    );
     let shotgun = commands
         .spawn((Transform::IDENTITY, Visibility::Hidden, ChildOf(gun)))
         .id();
-    gun_hits.extend(spawn_model(
+    gun_hits.extend(spawn_dual(
         commands,
         shotgun,
         &models.shotgun,
         palette,
         team,
+        &ghost_mat,
+        &mut solid,
+        &mut ghost,
     ));
     let grenade = commands
         .spawn((Transform::IDENTITY, Visibility::Hidden))
@@ -268,6 +351,9 @@ fn spawn_avatar(
         gun_hits,
         grenade,
         beam,
+        solid,
+        ghost,
+        ghost_mat,
         team: p.team,
     }
 }
@@ -302,6 +388,7 @@ fn sync_players(
     mover: Res<Mover>,
     xr: Option<Res<crate::vr::XrInput>>,
     meshes: Res<ActorMeshes>,
+    mut glows: ResMut<Assets<GlowMaterial>>,
 ) {
     let vr = xr.is_some();
     let a = alpha(&time);
@@ -335,11 +422,18 @@ fn sync_players(
         }
     }
     let blink = (real.elapsed_secs() * 8.0).fract() < 0.5;
+    // Where the local player sees from.
+    let viewer = if mover.valid {
+        Some(mover.feet + local.cmd.head.pos)
+    } else {
+        game.me
+            .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
+            .map(|p| p.feet + p.head.pos)
+    };
     for p in &game.snap.players {
-        let v = views
-            .players
-            .entry(p.id)
-            .or_insert_with(|| spawn_avatar(&mut commands, p, &models, &palette, &meshes));
+        let v = views.players.entry(p.id).or_insert_with(|| {
+            spawn_avatar(&mut commands, p, &models, &palette, &meshes, &mut glows)
+        });
         let prev = game.prev.players.iter().find(|q| q.id == p.id);
         let feet = prev.map_or(p.feet, |q| q.feet.lerp(p.feet, a));
         let yaw = prev.map_or(p.yaw, |q| lerp_angle(q.yaw, p.yaw, a));
@@ -423,6 +517,24 @@ fn sync_players(
         {
             place(&mut t, &hands[h.index()]);
             t.translation += hands[h.index()].rot * Vec3::new(0.0, 0.02, -0.04);
+        }
+        // Cloaked: unseen from afar, a shimmer fading in closer (one's own gun and gloves
+        // always shimmer).
+        let cloaked = alive && p.cloaked();
+        let seen = if !cloaked || me {
+            1.0
+        } else {
+            let d = viewer.map_or(0.0, |e| e.distance(feet + Vec3::Y * 1.2));
+            ((CLOAK_FAR - d) / (CLOAK_FAR - CLOAK_NEAR)).clamp(0.0, 1.0)
+        };
+        for &e in &v.solid {
+            set_vis(&mut vis, e, !cloaked);
+        }
+        for &e in &v.ghost {
+            set_vis(&mut vis, e, cloaked && seen > 0.01);
+        }
+        if cloaked && let Some(mut m) = glows.get_mut(&v.ghost_mat) {
+            m.neon.color.w = CLOAK_GLOW * seen;
         }
         // The shield's beam, flickering in its last two seconds.
         let flicker = p.shield > 2.0 || (real.elapsed_secs() * 10.0).fract() < 0.6;
