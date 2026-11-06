@@ -18,8 +18,11 @@ fn client_joins_and_receives_the_world() {
     let mut me = None;
     let mut snaps = 0;
     let mut events = 0;
+    // Count simulation steps rather than wall time: slow CI runners (macOS) oversleep and
+    // step the sim far fewer times in a fixed window. The deadline is only a safety net.
+    let mut steps = 0;
     let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(4) {
+    while steps < 240 && start.elapsed() < Duration::from_secs(60) {
         for ev in client.poll() {
             match ev {
                 ClientEvent::Welcome { id, seed, .. } => {
@@ -41,6 +44,9 @@ fn client_joins_and_receives_the_world() {
         sim.step();
         let evs = sim.drain_events();
         server.after_step(&sim, &evs);
+        if me.is_some() {
+            steps += 1;
+        }
         std::thread::sleep(Duration::from_millis(16));
     }
     let me = me.expect("welcomed");
