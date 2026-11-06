@@ -456,7 +456,7 @@ fn read_controls(
                     Vec3::ZERO
                 };
                 let feet = local.cmd.feet.unwrap_or_default();
-                local.cmd.throw = Some((p1 - feet, v * 1.3));
+                local.cmd.throw = Some((p1 - feet, v * 3.9));
             }
         }
         None => {

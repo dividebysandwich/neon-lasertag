@@ -116,7 +116,7 @@ impl Default for Rules {
             grenade_burst_bolts: (2, 4),
             grenade_aimed: 0.2,
             grenade_restitution: 0.45,
-            grenade_max_speed: 16.0,
+            grenade_max_speed: 48.0,
             match_time: 600.0,
             arena: ArenaSize::Small,
             mode: GameMode::Classic,
