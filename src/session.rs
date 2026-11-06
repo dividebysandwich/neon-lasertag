@@ -214,6 +214,31 @@ fn dev_script(
                 }
             });
         }
+        // Local games: `give-KIND` hands the local player a pickup's contents, `drop-KIND` lays
+        // one 2.5 m in front of them (KIND: grenade, rapid, ...).
+        a if a.starts_with("give-") || a.starts_with("drop-") => {
+            let Some(kind) = lt_sim::PickupKind::parse(&a[5..]) else {
+                warn!("LT_DEV: unknown pickup in {a}");
+                return;
+            };
+            let give = a.starts_with("give-");
+            commands.queue(move |w: &mut World| {
+                let Some(mut game) = w.get_resource_mut::<Game>() else {
+                    return;
+                };
+                let Some(me) = game.me else { return };
+                let Source::Local { sim, .. } = &mut game.source else {
+                    return;
+                };
+                if give {
+                    sim.give(me, kind);
+                } else if let Some(p) = sim.player(me) {
+                    let ahead = Quat::from_rotation_y(p.cmd.yaw) * Vec3::NEG_Z * 2.5;
+                    let pos = p.feet + ahead + Vec3::Y * lt_sim::sim::PICKUP_HEIGHT;
+                    sim.drop_pickup(kind, pos);
+                }
+            });
+        }
         // The flat screen's view: turn to `yaw=DEG` (0: facing -z, 90: -x) or `pitch=DEG`.
         a if a.starts_with("yaw=") || a.starts_with("pitch=") => {
             let (key, v) = a.split_once('=').unwrap_or_default();

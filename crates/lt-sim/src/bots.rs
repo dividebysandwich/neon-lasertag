@@ -30,7 +30,8 @@
 //! a bit of randomness) and claimed, so team mates spread out.
 //!
 //! **Overrides.** Low on shots → refill at the nearest reload station or own spawn pad, then
-//! carry on. A grenade pickup in sight while carrying none → fetch it. Visible enemies in range
+//! carry on. A pickup in sight that it would take (a grenade while carrying none, a powerup it
+//! hasn't got) → fetch it. Visible enemies in range
 //! are always shot at (strafing while doing so); a hit makes the bot look for the shooter.
 //! Carrying a grenade, it lobs it at two or more enemies close together that it knows about
 //! (seen recently, heard nearby or heard shooting), picking a low or high arc whose simulated
@@ -133,7 +134,7 @@ const SHOT_HEAR: f32 = 25.0;
 const MEMORY: f64 = 5.0;
 /// Below this many shots the bot goes to refill.
 const LOW_AMMO: u16 = 8;
-/// Grenade pickups in sight this close are fetched.
+/// Pickups in sight this close are fetched.
 const PICKUP_SIGHT: f32 = 18.0;
 /// Grenades: enemies this close together are a group, thrown at from this range, landing this
 /// close to the group; never with team mates or the thrower this close to the landing point.
@@ -1351,7 +1352,7 @@ impl Bot {
                     known = true;
                 }
             }
-            if d < HEAR || d < SHOT_HEAR && o.fire_cd > sim.rules.fire_cooldown - 0.05 {
+            if d < HEAR || d < SHOT_HEAR && o.fire_cd > o.fire_interval(&sim.rules) - 0.05 {
                 known = true;
             }
             if known {
@@ -1472,8 +1473,8 @@ impl Bot {
         let done = match self.errand {
             Some(Errand::Reload { .. }) => p.ammo >= sim.rules.ammo || self.errand_time > 30.0,
             Some(Errand::Pickup { id, .. }) => {
-                p.grenades >= sim.rules.grenade_max
-                    || !sim.pickups().any(|k| k.id == id)
+                !sim.pickups()
+                    .any(|k| k.id == id && p.wants(k.kind, &sim.rules))
                     || self.errand_time > 15.0
             }
             None => false,
@@ -1504,11 +1505,15 @@ impl Bot {
                 Some((_, node, pos)) => self.set_errand(Errand::Reload { node, pos }),
                 None => self.errand_retry = 3.0,
             }
-        } else if self.errand.is_none() && p.grenades < sim.rules.grenade_max {
+        } else if self.errand.is_none() {
             let eye = p.eye();
             let best = sim
                 .pickups()
-                .filter(|k| eye.distance(k.pos) < PICKUP_SIGHT && sim.world.clear(eye, k.pos))
+                .filter(|k| {
+                    p.wants(k.kind, &sim.rules)
+                        && eye.distance(k.pos) < PICKUP_SIGHT
+                        && sim.world.clear(eye, k.pos)
+                })
                 .filter_map(|k| {
                     let node = sim.level.nav.node_at(k.pos - Vec3::Y * PICKUP_HEIGHT)?;
                     g.connected(here, node).then_some((
@@ -2604,13 +2609,14 @@ mod tests {
 
     #[test]
     fn bots_miss_a_fair_share() {
-        // No grenades, so every hit is a blaster's; shots at panels don't count.
+        // No grenades (nor powerups), so every hit is a blaster's; shots at panels don't count.
         let s = play(
             21,
             8,
             150.0,
             Rules {
                 pickup_pairs: 0,
+                powerup_pairs: 0,
                 ..Rules::default()
             },
         );
@@ -2623,7 +2629,12 @@ mod tests {
     /// When each of a lone team's attackers first got into the enemy half (seconds), with team
     /// play on or off.
     fn crossings(seed: u64, teamwork: bool) -> Vec<f32> {
-        let mut sim = Sim::new(seed, Rules::default());
+        // (No powerups to fetch on the way.)
+        let rules = Rules {
+            powerup_pairs: 0,
+            ..Rules::default()
+        };
+        let mut sim = Sim::new(seed, rules);
         let mut bots = Bots::default();
         bots.set_teamwork(teamwork);
         for _ in 0..6 {

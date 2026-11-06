@@ -25,8 +25,9 @@ menu), `--left-handed` (VR: the
 holster on the left hip; or `LT_LEFT_HANDED=1`), `--autopilot` (a bot plays you, for testing),
 `--match-time S` (local games), `--screenshot FILE --after 5,10`, `--quit-after S`.
 Testing: `LT_DEV="6:menu,8:leave,10:play-hard,14:hit,20:next"` scripts menu actions and hits (`options`
-opens the options screen, `arc` shows the throw arc, `target` hits a team target; Megatarget mode:
-`power` hits both secondary targets, `warp-door`, `warp-room`, `warp-turret` and `warp-pocket` move
+opens the options screen, `arc` shows the throw arc, `target` hits a team target;
+`give-KIND` gives you a pickup's contents and `drop-KIND` lays one in front of you, KIND
+`grenade`, `rapid`; Megatarget mode: `power` hits both secondary targets, `warp-door`, `warp-room`, `warp-turret` and `warp-pocket` move
 you there, `yaw=DEG` and `pitch=DEG` turn the flat screen's view),
 `LT_VR_MENU=1` opens the VR menu, `LT_VR_FAKE_HANDS=1` fakes controllers, `LT_HOLSTER=x,y,z`
 moves the holster (from the eyes; default `0.23,-0.58,-0.07`). `LT_GUN_TILT=DEG` turns the
@@ -76,6 +77,11 @@ jumps about a metre up, then hovers and spins for 4 s, spraying white bolts in a
 directions, one in five of them aimed at a player it can see (within 20 m). They hit everyone, team mates and the thrower included, and can hit the same
 player twice. A grenade in flight trails white sparks inside a slowly pulsing white glow, which
 grows and pulses faster while it hovers and fires.
+
+**Powerups.** Each kind lies in the arena once in each half, turning over a ring of its colour
+(a taken one comes back somewhere else in that half after 25 s to 45 s); walk over one to take
+it. You lose them all when you're tagged out.
+- **Rapid fire** (yellow, two chevrons): the blaster fires twice as fast.
 
 | | VR | Flat screen |
 |---|---|---|

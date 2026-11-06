@@ -86,11 +86,43 @@ pub struct Player {
     /// both are, the seconds left to get into the megatarget's room.
     pub mega_hits: u8,
     pub power: Option<f32>,
+    /// Powerups: rapid fire (until tagged out).
+    pub rapid: bool,
 }
 
 impl Player {
     pub fn alive(&self) -> bool {
         self.respawn.is_none()
+    }
+
+    /// Least time between this player's shots.
+    pub fn fire_interval(&self, rules: &Rules) -> f32 {
+        if self.rapid {
+            rules.fire_cooldown * 0.5
+        } else {
+            rules.fire_cooldown
+        }
+    }
+
+    /// Whether walking over a pickup of this kind would take it.
+    pub fn wants(&self, kind: PickupKind, rules: &Rules) -> bool {
+        match kind {
+            PickupKind::Grenade => self.grenades < rules.grenade_max,
+            PickupKind::Rapid => !self.rapid,
+        }
+    }
+
+    /// Gives this player what a pickup of this kind holds.
+    fn take(&mut self, kind: PickupKind) {
+        match kind {
+            PickupKind::Grenade => self.grenades += 1,
+            PickupKind::Rapid => self.rapid = true,
+        }
+    }
+
+    /// Tagged out: the powerups are gone.
+    fn lose_powerups(&mut self) {
+        self.rapid = false;
     }
 
     pub fn eye(&self) -> Vec3 {
@@ -135,18 +167,20 @@ pub struct TurretSnap {
     pub off: f32,
 }
 
-/// A grenade lying in the arena for anyone to take.
+/// A grenade or a powerup lying in the arena for anyone to take.
 #[derive(Clone, Copy, Debug)]
 pub struct Pickup {
     pub id: u32,
     pub pos: Vec3,
+    pub kind: PickupKind,
 }
 
-/// A place for pickups: there's a pickup there, or one will appear somewhere in `half` after
-/// `wait` seconds.
+/// A place for pickups of a kind: there's a pickup there, or one will appear somewhere in
+/// `half` after `wait` seconds.
 #[derive(Clone, Copy, Debug)]
 struct PickupSlot {
     half: Team,
+    kind: PickupKind,
     pickup: Option<Pickup>,
     wait: f32,
 }
@@ -205,6 +239,7 @@ pub struct Snapshot {
 pub struct PickupSnap {
     pub id: u32,
     pub pos: Vec3,
+    pub kind: PickupKind,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -234,6 +269,18 @@ pub struct PlayerSnap {
     /// Megatarget mode (`Player::mega_hits`, `Player::power`).
     pub mega_hits: u8,
     pub power: Option<f32>,
+    /// Powerups (`Player::rapid`).
+    pub rapid: bool,
+}
+
+impl PlayerSnap {
+    /// Whether the player has this powerup now (carried or in use).
+    pub fn has(&self, kind: PickupKind) -> bool {
+        match kind {
+            PickupKind::Grenade => self.grenades > 0,
+            PickupKind::Rapid => self.rapid,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -290,7 +337,25 @@ impl Sim {
         let max_dist = (level.base_centre(Team::Red) - level.base_centre(Team::Blue))
             .length()
             .max(1.0);
-        let pairs = rules.pickup_pairs as usize;
+        let grenades = (0..rules.pickup_pairs as usize * 2).map(|i| PickupSlot {
+            half: if i % 2 == 0 { Team::Red } else { Team::Blue },
+            kind: PickupKind::Grenade,
+            pickup: None,
+            wait: 1.0 + (i / 2) as f32 * 2.0,
+        });
+        // Powerups come a little later, one kind after the other.
+        let powerups = PickupKind::POWERUPS
+            .iter()
+            .enumerate()
+            .flat_map(|(k, &kind)| {
+                (0..rules.powerup_pairs as usize * 2).map(move |i| PickupSlot {
+                    half: if i % 2 == 0 { Team::Red } else { Team::Blue },
+                    kind,
+                    pickup: None,
+                    wait: 6.0 + k as f32 * 3.0 + (i / 2) as f32 * 10.0,
+                })
+            });
+        let slots = grenades.chain(powerups).collect();
         Sim {
             time_left: rules.match_time,
             rules,
@@ -298,13 +363,7 @@ impl Sim {
             players: Vec::new(),
             bolts: Vec::new(),
             grenades: Vec::new(),
-            slots: (0..pairs * 2)
-                .map(|i| PickupSlot {
-                    half: if i % 2 == 0 { Team::Red } else { Team::Blue },
-                    pickup: None,
-                    wait: 1.0 + (i / 2) as f32 * 2.0,
-                })
-                .collect(),
+            slots,
             scores: [0; 2],
             tick: 0,
             over: false,
@@ -373,6 +432,7 @@ impl Sim {
             claim_block: 0,
             mega_hits: 0,
             power: None,
+            rapid: false,
         };
         let spawn = self.pick_spawn(team);
         p.feet = spawn.pos;
@@ -480,7 +540,7 @@ impl Sim {
         (i < self.history.len() && self.history[i].0 == tick).then_some(i)
     }
 
-    /// The grenade pickups lying in the arena.
+    /// The pickups (grenades and powerups) lying in the arena.
     pub fn pickups(&self) -> impl Iterator<Item = &Pickup> {
         self.slots.iter().filter_map(|s| s.pickup.as_ref())
     }
@@ -597,22 +657,28 @@ impl Sim {
         for i in 0..self.slots.len() {
             match self.slots[i].pickup {
                 Some(pk) => {
+                    let rules = &self.rules;
                     let taker = self.players.iter_mut().find(|p| {
                         p.alive()
-                            && p.grenades < self.rules.grenade_max
+                            && p.wants(pk.kind, rules)
                             && Vec2::new(p.feet.x - pk.pos.x, p.feet.z - pk.pos.z).length()
                                 < PICKUP_REACH
                             && (pk.pos.y - p.feet.y).abs() < 1.6
                     });
                     if let Some(p) = taker {
-                        p.grenades += 1;
+                        p.take(pk.kind);
                         let player = p.id;
                         self.events.push(SimEvent::PickedUp {
                             id: pk.id,
                             player,
                             pos: pk.pos,
+                            kind: pk.kind,
                         });
-                        let (lo, hi) = self.rules.pickup_respawn;
+                        let (lo, hi) = if pk.kind == PickupKind::Grenade {
+                            self.rules.pickup_respawn
+                        } else {
+                            self.rules.powerup_respawn
+                        };
                         self.slots[i].pickup = None;
                         self.slots[i].wait = self.rng.random_range(lo..=hi.max(lo));
                     }
@@ -620,12 +686,12 @@ impl Sim {
                 None => {
                     self.slots[i].wait -= TICK;
                     if self.slots[i].wait <= 0.0 {
-                        let half = self.slots[i].half;
+                        let (half, kind) = (self.slots[i].half, self.slots[i].kind);
                         match self.pickup_spot(half) {
                             Some(pos) => {
                                 let id = self.id();
-                                self.slots[i].pickup = Some(Pickup { id, pos });
-                                self.events.push(SimEvent::PickupSpawned { id, pos });
+                                self.slots[i].pickup = Some(Pickup { id, pos, kind });
+                                self.events.push(SimEvent::PickupSpawned { id, pos, kind });
                             }
                             None => self.slots[i].wait = 1.0,
                         }
@@ -642,7 +708,13 @@ impl Sim {
             let respawn_now = {
                 let p = &mut self.players[i];
                 p.cooldown = (p.cooldown - TICK).max(0.0);
-                p.fire_cd = (p.fire_cd - TICK).max(0.0);
+                // (Snapped to 0 within a rounding error of the last tick, so an interval of
+                // whole ticks is just that.)
+                p.fire_cd = if p.fire_cd > TICK + 1e-5 {
+                    p.fire_cd - TICK
+                } else {
+                    0.0
+                };
                 match p.respawn.as_mut() {
                     Some(t) => {
                         *t -= TICK;
@@ -660,6 +732,7 @@ impl Sim {
                 p.cooldown = 0.0;
                 p.ammo = rules.ammo;
                 p.grenades = 0;
+                p.lose_powerups();
                 p.reloading = None;
                 p.feet = s.pos;
                 p.vy = 0.0;
@@ -738,10 +811,10 @@ impl Sim {
                 } else if p.fire_cd > 0.0 {
                     // Faster than the blaster's rate: ignored.
                 } else if p.ammo == 0 {
-                    p.fire_cd = rules.fire_cooldown;
+                    p.fire_cd = p.fire_interval(&rules);
                     self.events.push(SimEvent::Empty { player: p.id });
                 } else {
-                    p.fire_cd = rules.fire_cooldown;
+                    p.fire_cd = p.fire_interval(&rules);
                     p.ammo -= 1;
                     p.shots += 1;
                     let eye = p.eye();
@@ -993,6 +1066,7 @@ impl Sim {
             p.cmd.fire = false;
             p.mega_hits = 0;
             p.power = None;
+            p.lose_powerups();
             self.events.push(SimEvent::TaggedOut {
                 player: id,
                 by: b.owner,
@@ -1220,6 +1294,29 @@ impl Sim {
         }
     }
 
+    /// Gives a player a pickup's contents at once (testing).
+    pub fn give(&mut self, id: PlayerId, kind: PickupKind) {
+        let rules = self.rules.clone();
+        if let Some(p) = self.player_mut(id)
+            && p.alive()
+            && p.wants(kind, &rules)
+        {
+            p.take(kind);
+        }
+    }
+
+    /// Lays a pickup at `pos` (testing; it doesn't come back once taken).
+    pub fn drop_pickup(&mut self, kind: PickupKind, pos: Vec3) {
+        let id = self.id();
+        self.slots.push(PickupSlot {
+            half: Team::of_z(pos.z),
+            kind,
+            pickup: Some(Pickup { id, pos, kind }),
+            wait: f32::MAX,
+        });
+        self.events.push(SimEvent::PickupSpawned { id, pos, kind });
+    }
+
     /// Puts a player somewhere else at once, facing `yaw` (testing; its client is told by a
     /// `Respawned` event, as after a respawn).
     pub fn teleport(&mut self, id: PlayerId, feet: Vec3, yaw: f32) {
@@ -1245,6 +1342,7 @@ impl Sim {
         p.cmd.fire = false;
         p.mega_hits = 0;
         p.power = None;
+        p.lose_powerups();
         self.events.push(SimEvent::TaggedOut {
             player: p.id,
             by: HAZARD,
@@ -1391,6 +1489,7 @@ impl Sim {
                     target_hits: p.target_hits,
                     mega_hits: p.mega_hits,
                     power: p.power,
+                    rapid: p.rapid,
                 })
                 .collect(),
             bolts: self
@@ -1418,6 +1517,7 @@ impl Sim {
                 .map(|p| PickupSnap {
                     id: p.id,
                     pos: p.pos,
+                    kind: p.kind,
                 })
                 .collect(),
             turrets: self
@@ -2060,7 +2160,11 @@ mod tests {
 
     #[test]
     fn grenade_pickups_appear_and_are_taken() {
-        let mut sim = Sim::new(4, Rules::default());
+        let rules = Rules {
+            powerup_pairs: 0,
+            ..Rules::default()
+        };
+        let mut sim = Sim::new(4, rules);
         let a = sim.add_player("a", Some(Team::Red), false).unwrap();
         assert_eq!(
             sim.player(a).unwrap().grenades,
@@ -2091,6 +2195,83 @@ mod tests {
             sim.step();
         }
         assert_eq!(sim.pickups().count(), 4, "the taken one comes back");
+    }
+
+    #[test]
+    fn powerups_appear_in_both_halves_and_are_taken_once() {
+        let mut sim = Sim::new(4, Rules::default());
+        let a = sim.add_player("a", Some(Team::Red), false).unwrap();
+        for _ in 0..(30.0 / TICK) as usize {
+            sim.step();
+        }
+        for kind in PickupKind::POWERUPS {
+            let of_kind: Vec<Pickup> = sim.pickups().filter(|p| p.kind == kind).copied().collect();
+            assert_eq!(of_kind.len(), 2, "{kind:?}: one in each half");
+            assert_eq!(of_kind.iter().filter(|p| p.pos.z > 0.0).count(), 1);
+        }
+        let rapid: Vec<Pickup> = sim
+            .pickups()
+            .filter(|p| p.kind == PickupKind::Rapid)
+            .copied()
+            .collect();
+        sim.players[0].feet = rapid[0].pos - Vec3::Y * PICKUP_HEIGHT;
+        sim.step();
+        assert!(sim.player(a).unwrap().rapid);
+        assert!(sim.drain_events().iter().any(|e| matches!(
+            e,
+            SimEvent::PickedUp {
+                kind: PickupKind::Rapid,
+                ..
+            }
+        )));
+        // Already has it: the other stays.
+        sim.players[0].feet = rapid[1].pos - Vec3::Y * PICKUP_HEIGHT;
+        sim.step();
+        assert!(sim.pickups().any(|p| p.id == rapid[1].id));
+    }
+
+    #[test]
+    fn rapid_fire_doubles_the_rate_until_tagged_out() {
+        let (mut sim, a, b) = duel();
+        sim.players[0].feet = Vec3::new(0.0, 0.0, 6.0);
+        sim.players[1].feet = Vec3::new(0.0, 0.0, 100.0);
+        sim.give(a, PickupKind::Rapid);
+        let mut fired = 0;
+        for k in 0..(5.0 / TICK) as usize {
+            sim.set_cmd(
+                a,
+                PlayerCmd {
+                    gun_hand: Some(Hand::Right),
+                    muzzle: Pose {
+                        pos: Vec3::Y * 1.4,
+                        rot: Quat::IDENTITY,
+                    },
+                    fire: k % 2 == 0,
+                    ..Default::default()
+                },
+            );
+            sim.step();
+            fired += sim
+                .drain_events()
+                .iter()
+                .filter(|e| matches!(e, SimEvent::Fired { .. }))
+                .count();
+        }
+        assert!((29..=31).contains(&fired), "six shots a second: {fired}");
+        // Tagged out: gone.
+        let bolt = Bolt {
+            id: 1,
+            owner: b,
+            owner_team: Team::Blue,
+            team: Some(Team::Blue),
+            pos: Vec3::ZERO,
+            vel: Vec3::ZERO,
+            life: 1.0,
+        };
+        sim.players[0].hits = 2;
+        sim.hit_player(0, &bolt, Vec3::ZERO);
+        assert!(!sim.player(a).unwrap().alive());
+        assert!(!sim.player(a).unwrap().rapid);
     }
 
     fn mega_sim(turrets: bool) -> Sim {

@@ -33,6 +33,9 @@ struct DifficultyText;
 /// Megatarget mode: the local player's progress (bottom middle).
 #[derive(Component)]
 struct MegaText;
+/// The local player's powerups (bottom left, above the hit lights).
+#[derive(Component)]
+struct PowerText;
 /// A piece of hit arc `mark` (of `MARKS`), `piece` (of `PIECES`).
 #[derive(Component)]
 struct ArcPiece {
@@ -69,7 +72,7 @@ impl Plugin for HudPlugin {
             .add_systems(Update, reset.run_if(resource_added::<Game>))
             .add_systems(
                 Update,
-                (events, update, hit_arcs, mega_status)
+                (events, update, hit_arcs, mega_status, powerup_status)
                     .chain()
                     .run_if(resource_exists::<Game>),
             )
@@ -296,6 +299,18 @@ fn spawn(mut commands: Commands) {
                 ));
             }
         });
+    // Above the hit pips: the powerups.
+    commands.spawn((
+        HudRoot,
+        PowerText,
+        text("", 24.0, Color::srgb(1.0, 0.85, 0.3)),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(20.0),
+            bottom: Val::Px(148.0),
+            ..default()
+        },
+    ));
     // Right: the feed.
     commands.spawn((
         HudRoot,
@@ -590,6 +605,23 @@ fn hit_arcs(
 
 /// Megatarget mode: which secondary targets the local player has hit, or the time left to get
 /// into the megatarget's room.
+fn powerup_status(game: Res<Game>, mut q: Query<&mut Text, With<PowerText>>) {
+    let Ok(mut t) = q.single_mut() else { return };
+    let me = game
+        .me
+        .and_then(|id| game.snap.players.iter().find(|p| p.id == id));
+    t.0 = me.map(powerup_line).unwrap_or_default();
+}
+
+/// What the HUD says about a player's powerups ("" with none).
+pub fn powerup_line(p: &lt_sim::sim::PlayerSnap) -> String {
+    let mut parts = Vec::new();
+    if p.rapid {
+        parts.push("RAPID FIRE".to_string());
+    }
+    parts.join("   ")
+}
+
 fn mega_status(game: Res<Game>, mut q: Query<(&mut Text, &mut TextColor), With<MegaText>>) {
     let Ok((mut t, mut colour)) = q.single_mut() else {
         return;

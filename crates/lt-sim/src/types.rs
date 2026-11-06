@@ -46,6 +46,39 @@ impl Team {
     }
 }
 
+/// What lies in the arena to be picked up: a grenade or a powerup.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PickupKind {
+    Grenade,
+    /// Twice the blaster's rate of fire, until tagged out.
+    Rapid,
+}
+
+impl PickupKind {
+    pub const ALL: [PickupKind; 2] = [PickupKind::Grenade, PickupKind::Rapid];
+    /// The powerups (everything but the grenade).
+    pub const POWERUPS: [PickupKind; 1] = [PickupKind::Rapid];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            PickupKind::Grenade => "grenade",
+            PickupKind::Rapid => "rapid fire",
+        }
+    }
+
+    /// A short name for scripts (`LT_DEV`).
+    pub fn id(self) -> &'static str {
+        match self {
+            PickupKind::Grenade => "grenade",
+            PickupKind::Rapid => "rapid",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<PickupKind> {
+        Self::ALL.into_iter().find(|k| k.id() == s)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Hand {
     Left,
@@ -144,15 +177,17 @@ pub enum SimEvent {
     Healed {
         player: PlayerId,
     },
-    /// A grenade pickup appeared, and was taken.
+    /// A pickup (a grenade or a powerup) appeared, and was taken.
     PickupSpawned {
         id: u32,
         pos: Vec3,
+        kind: PickupKind,
     },
     PickedUp {
         id: u32,
         player: PlayerId,
         pos: Vec3,
+        kind: PickupKind,
     },
     /// A bolt hit a player (`hits` taken so far, 1..=hits_to_tag); `by` is the shooter.
     Hit {

@@ -216,7 +216,9 @@ fn play_events(
             SimEvent::Healed { player } if Some(player) == me => {
                 play(&mut commands, gain, &sounds.reload_done, None, 0.8, 1.5)
             }
-            SimEvent::PickedUp { player, pos, .. } => {
+            SimEvent::PickedUp {
+                player, pos, kind, ..
+            } => {
                 let mine = Some(player) == me;
                 play(
                     &mut commands,
@@ -224,8 +226,15 @@ fn play_events(
                     &sounds.pickup,
                     (!mine).then_some(pos),
                     if mine { 0.8 } else { 1.0 },
-                    1.0,
+                    if kind == lt_sim::PickupKind::Grenade {
+                        1.0
+                    } else {
+                        1.3
+                    },
                 );
+                if mine && kind != lt_sim::PickupKind::Grenade {
+                    play(&mut commands, gain, &sounds.power_up, None, 0.5, 1.2);
+                }
             }
             SimEvent::PickupSpawned { pos, .. } => {
                 play(&mut commands, gain, &sounds.pickup, Some(pos), 0.5, 0.7)

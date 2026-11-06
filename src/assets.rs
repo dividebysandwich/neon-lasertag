@@ -213,11 +213,21 @@ pub struct Models {
     pub hands: [Model; 2],
     /// A reload station (origin on the floor in the middle of its cell).
     pub reload: Model,
+    /// The powerups lying in the arena (origin at their centre, front towards -Z).
+    pub powerups: HashMap<lt_sim::PickupKind, Model>,
 }
 
 pub const ANIMALS: [&str; 8] = [
     "wolf", "cat", "deer", "fox", "bear", "rabbit", "owl", "boar",
 ];
+
+/// A powerup's mesh in powerups.glb.
+fn powerup_mesh(kind: lt_sim::PickupKind) -> &'static str {
+    match kind {
+        lt_sim::PickupKind::Grenade => "grenade",
+        lt_sim::PickupKind::Rapid => "rapid",
+    }
+}
 
 pub fn load_models(meshes: &mut Assets<Mesh>) -> Models {
     let mut models = Models {
@@ -255,6 +265,28 @@ pub fn load_models(meshes: &mut Assets<Mesh>) -> Models {
             }
         }
         Err(e) => warn!("avatars: {e}"),
+    }
+    match load_glb("models/powerups.glb") {
+        Ok(f) => {
+            for kind in lt_sim::PickupKind::POWERUPS {
+                let name = powerup_mesh(kind);
+                if f.meshes.contains_key(name) {
+                    models
+                        .powerups
+                        .insert(kind, Model::from_glb(&f, Some(name), meshes));
+                }
+            }
+        }
+        Err(e) => warn!("powerups: {e}"),
+    }
+    for kind in lt_sim::PickupKind::POWERUPS {
+        models.powerups.entry(kind).or_insert_with(|| Model {
+            parts: vec![
+                ("body".into(), meshes.add(Cuboid::new(0.25, 0.25, 0.06))),
+                ("accent".into(), meshes.add(Cuboid::new(0.15, 0.15, 0.08))),
+            ],
+            ..default()
+        });
     }
     match load_glb("models/reload.glb") {
         Ok(f) => models.reload = Model::from_glb(&f, Some("reload_station"), meshes),

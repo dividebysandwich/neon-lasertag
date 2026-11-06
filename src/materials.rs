@@ -12,7 +12,7 @@ use bevy::render::render_resource::{
     ShaderType, SpecializedMeshPipelineError,
 };
 use bevy::shader::ShaderRef;
-use lt_sim::Team;
+use lt_sim::{PickupKind, Team};
 
 const SHADER: &str = "shaders/neon.wgsl";
 pub const PULSES: usize = 8;
@@ -30,6 +30,14 @@ pub const ZONE_COLORS: [Vec3; 5] = [
     Vec3::new(0.04, 0.85, 0.9),
     Vec3::new(1.0, 0.35, 0.02),
 ];
+
+/// A pickup's colour: white grenades, and a colour of its own for every powerup.
+pub fn pickup_color(kind: PickupKind) -> Vec3 {
+    match kind {
+        PickupKind::Grenade => WHITE,
+        PickupKind::Rapid => Vec3::new(1.0, 0.75, 0.04),
+    }
+}
 
 pub fn team_color(team: Option<Team>) -> Vec3 {
     match team {
@@ -234,6 +242,9 @@ pub struct Palette {
     /// Avatars: eyes (bright) and flowing stripes.
     pub eyes: [Handle<AccentMaterial>; 3],
     pub flow: [Handle<AccentMaterial>; 3],
+    /// Pickups' accents and halos, per kind (`pickup_color`).
+    pub pickup:
+        std::collections::HashMap<PickupKind, (Handle<AccentMaterial>, Handle<GlowMaterial>)>,
 }
 
 impl Palette {
@@ -255,6 +266,10 @@ impl Palette {
 
     pub fn flow_for(&self, team: Option<Team>) -> Handle<AccentMaterial> {
         self.flow[team.map_or(2, |t| t.index())].clone()
+    }
+
+    pub fn pickup_for(&self, kind: PickupKind) -> (Handle<AccentMaterial>, Handle<GlowMaterial>) {
+        self.pickup[&kind].clone()
     }
 }
 
@@ -338,6 +353,19 @@ fn make_palette(
                 neon: NeonUniform::flow(c, 3.0, 0.8),
             })
         }),
+        pickup: PickupKind::ALL
+            .iter()
+            .map(|&k| {
+                let c = pickup_color(k);
+                let accent = accents.add(AccentMaterial {
+                    neon: fixed(c, 4.0),
+                });
+                let glow = glows.add(GlowMaterial {
+                    neon: fixed(c, 2.0),
+                });
+                (k, (accent, glow))
+            })
+            .collect(),
     });
 }
 

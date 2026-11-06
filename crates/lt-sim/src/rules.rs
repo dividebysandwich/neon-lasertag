@@ -35,6 +35,10 @@ pub struct Rules {
     pub pickup_pairs: u8,
     /// A taken pickup's pair comes back after this long (random in the range).
     pub pickup_respawn: (f32, f32),
+    /// Powerup pickups lying in the arena at once, per kind (in mirrored pairs), and how long a
+    /// taken one's pair takes to come back (random in the range).
+    pub powerup_pairs: u8,
+    pub powerup_respawn: (f32, f32),
     pub grenade_fuse: f32,
     pub grenade_active: f32,
     pub grenade_hop: f32,
@@ -87,6 +91,8 @@ impl Default for Rules {
             grenade_max: 1,
             pickup_pairs: 2,
             pickup_respawn: (8.0, 16.0),
+            powerup_pairs: 1,
+            powerup_respawn: (25.0, 45.0),
             grenade_fuse: 3.0,
             grenade_active: 4.0,
             grenade_hop: 1.0,

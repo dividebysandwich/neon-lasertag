@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use lt_sim::sim::{EYE, PlayerSnap, TICK};
-use lt_sim::{Hand, PlayerId, Pose, SimEvent, Team};
+use lt_sim::{Hand, PickupKind, PlayerId, Pose, SimEvent, Team};
 
 use crate::assets::{Model, Models};
 use crate::game::{DrawSet, Game, GameEvent, LocalCmd, Mover, alpha};
@@ -36,6 +36,8 @@ struct AvatarParts {
     gun: Entity,
     gun_hits: Vec<(Entity, u8)>,
     grenade: Entity,
+    /// VR: small copies of the powerups the local player has, over the back of the free hand.
+    icons: Vec<(PickupKind, Entity)>,
     team: Team,
 }
 
@@ -194,6 +196,24 @@ fn spawn_avatar(
         .spawn((Transform::IDENTITY, Visibility::Hidden))
         .id();
     spawn_model(commands, grenade, &models.grenade, palette, None);
+    let icons = PickupKind::POWERUPS
+        .iter()
+        .filter_map(|&k| {
+            let model = models.powerups.get(&k)?;
+            let e = commands
+                .spawn((Transform::IDENTITY, Visibility::Hidden))
+                .id();
+            let inner = commands
+                .spawn((
+                    Transform::from_scale(Vec3::splat(ICON_SCALE)),
+                    Visibility::default(),
+                    ChildOf(e),
+                ))
+                .id();
+            spawn_powerup(commands, inner, model, palette, k);
+            Some((k, e))
+        })
+        .collect();
     AvatarParts {
         root,
         body,
@@ -203,9 +223,13 @@ fn spawn_avatar(
         gun,
         gun_hits,
         grenade,
+        icons,
         team: p.team,
     }
 }
+
+/// The VR powerup icons' size (of the pickups').
+const ICON_SCALE: f32 = 0.14;
 
 /// A bolt's light (lumens).
 const BOLT_LIGHT: f32 = 60_000.0;
@@ -243,6 +267,9 @@ fn sync_players(
             commands.entity(v.root).despawn();
             commands.entity(v.gun).despawn();
             commands.entity(v.grenade).despawn();
+            for (_, e) in v.icons {
+                commands.entity(e).despawn();
+            }
         }
     }
     let gone: Vec<PlayerId> = views
@@ -262,6 +289,9 @@ fn sync_players(
             commands.entity(v.root).despawn();
             commands.entity(v.gun).despawn();
             commands.entity(v.grenade).despawn();
+            for (_, e) in v.icons {
+                commands.entity(e).despawn();
+            }
         }
     }
     let blink = (real.elapsed_secs() * 8.0).fract() < 0.5;
@@ -352,7 +382,24 @@ fn sync_players(
             place(&mut t, &hands[h.index()]);
             t.translation += hands[h.index()].rot * Vec3::new(0.0, 0.02, -0.04);
         }
-        let _ = Hand::Left;
+        // VR: the powerups one has, in a row over the back of the hand without the blaster.
+        let free = match gun_hand {
+            Some(Hand::Left) => Hand::Right,
+            _ => Hand::Left,
+        };
+        let pose = hands[free.index()];
+        let mut k = 0.0;
+        for &(kind, e) in &v.icons {
+            let on = me && vr && alive && p.has(kind);
+            set_vis(&mut vis, e, on);
+            if on && let Ok(mut t) = transforms.get_mut(e) {
+                let spin = real.elapsed_secs() * 1.5 + k;
+                t.translation =
+                    base + pose.pos + pose.rot * Vec3::new((k - 0.5) * 0.06, 0.075, 0.03);
+                t.rotation = pose.rot * Quat::from_rotation_y(spin);
+                k += 1.0;
+            }
+        }
     }
 }
 
@@ -653,7 +700,27 @@ fn burst(
     }
 }
 
-/// Grenades lying in the arena to be picked up: bigger, turning and bobbing over a white ring.
+/// Spawns a powerup's model as children of `parent`: its accents in the powerup's colour.
+pub fn spawn_powerup(
+    commands: &mut Commands,
+    parent: Entity,
+    model: &Model,
+    palette: &Palette,
+    kind: PickupKind,
+) {
+    let (accent, _) = palette.pickup_for(kind);
+    for (mat, mesh) in &model.parts {
+        let mut e = commands.spawn((Mesh3d(mesh.clone()), Transform::IDENTITY, ChildOf(parent)));
+        if mat == "body" {
+            e.insert(MeshMaterial3d(palette.suit.clone()));
+        } else {
+            e.insert(MeshMaterial3d(accent.clone()));
+        }
+    }
+}
+
+/// Grenades and powerups lying in the arena to be picked up: bigger, turning and bobbing over a
+/// ring of their colour (white for grenades).
 #[allow(clippy::too_many_arguments)]
 fn sync_pickups(
     mut commands: Commands,
@@ -679,17 +746,26 @@ fn sync_pickups(
             let root = commands
                 .spawn((Transform::from_translation(p.pos), Visibility::default()))
                 .id();
+            let grenade = p.kind == PickupKind::Grenade;
             let spin = commands
                 .spawn((
-                    Transform::IDENTITY.with_scale(Vec3::splat(1.8)),
+                    Transform::IDENTITY.with_scale(Vec3::splat(if grenade { 1.8 } else { 1.3 })),
                     Visibility::default(),
                     ChildOf(root),
                 ))
                 .id();
-            spawn_model(&mut commands, spin, &models.grenade, &palette, None);
+            match models.powerups.get(&p.kind) {
+                Some(m) if !grenade => {
+                    spawn_powerup(&mut commands, spin, m, &palette, p.kind);
+                }
+                _ => {
+                    spawn_model(&mut commands, spin, &models.grenade, &palette, None);
+                }
+            }
+            let (accent, _) = palette.pickup_for(p.kind);
             commands.spawn((
                 Mesh3d(meshes.ring.clone()),
-                MeshMaterial3d(palette.accent_for(None)),
+                MeshMaterial3d(accent),
                 Transform::from_xyz(0.0, -lt_sim::sim::PICKUP_HEIGHT + 0.03, 0.0)
                     .with_scale(Vec3::new(0.32, 0.4, 0.32)),
                 ChildOf(root),

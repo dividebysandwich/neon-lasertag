@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Checks the exported models against the game's conventions (stdlib only).
 
-    python3 tools/models/check_glb.py   # checks assets/models/{kit,blaster,grenade,avatars,reload}.glb
+    python3 tools/models/check_glb.py   # checks assets/models/{kit,blaster,grenade,avatars,reload,powerups}.glb
 
 kit.glb: every piece of tools/models/kit_dims.json is a mesh named exactly the piece name whose
 POSITION extent (union over primitives, read from the binary buffer) equals the piece bounds
@@ -291,6 +291,8 @@ def main():
     check_model(ck, "grenade.glb", {"body", "glow_white", "glow"}, ("body", "glow_white"))
     check_avatars(ck)
     check_reload(ck)
+    check_model(ck, "powerups.glb", {"body", "accent", "hit_1", "hit_2", "hit_3", "muzzle"},
+                ("body", "accent", "hit_1", "hit_2", "hit_3", "muzzle"), nodes=("shotgun_muzzle",))
     if ck.errors:
         print("%d problem(s)" % len(ck.errors))
         sys.exit(1)
