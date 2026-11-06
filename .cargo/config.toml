@@ -1,0 +1,5 @@
+[alias]
+# The master server alone: no Bevy, audio or graphics dependencies.
+# `cargo metaserver` builds it, `cargo metaserver-run` runs it.
+metaserver = "build --release -p lt-master"
+metaserver-run = "run --release -p lt-master"
