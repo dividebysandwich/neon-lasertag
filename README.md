@@ -3,38 +3,7 @@
 Red vs Blue lasertag in procedurally generated neon arenas, for VR headsets (OpenXR) and the
 flat screen. Built with Bevy 0.19.
 
-## Playing
-
-```
-cargo run --release                         # VR if there's a headset, else the flat screen
-cargo run --release -- --flat               # the flat screen, start menu
-cargo run --release -- --seed 42 --bots 7   # straight into a match against bots
-cargo run --release -- --vr                 # any OpenXR headset (bevy_mod_openxr, wgpu, bloom)
-cargo run --release --features glvr -- --gl-vr   # foveated GL renderer (Steam Frame, Linux)
-```
-
-Without `--vr`, `--gl-vr` or `--flat` the game starts in VR on a Steam Frame (`--gl-vr`) or
-while a VR compositor runs (SteamVR's vrcompositor or Monado's service: `--vr`), and on the
-flat screen otherwise (or when the headset can't be used).
-
-Other flags: `--name NAME`, `--host [PORT]` (play and let others join), `--connect HOST[:PORT]`,
-`--difficulty easy|normal|hard` (the bots, also in the start menu), `--arena small|medium|large|random`
-(the arenas' size in local and hosted games, also in the start menu; random picks one for every
-match), `--mode classic|megatarget` (what local and hosted games are played for, also in the start
-menu), `--left-handed` (VR: the
-holster on the left hip; or `LT_LEFT_HANDED=1`), `--autopilot` (a bot plays you, for testing),
-`--match-time S` (local games), `--screenshot FILE --after 5,10`, `--quit-after S`.
-Testing: `LT_DEV="6:menu,8:leave,10:play-hard,14:hit,20:next"` scripts menu actions and hits (`options`
-opens the options screen, `arc` shows the throw arc, `target` hits a team target;
-`give-KIND` gives you a pickup's contents (`give-all-KIND` everyone) and `drop-KIND` lays one in front of you, KIND
-`grenade`, `rapid`, `shield`, `shotgun`, `cloak`, `speed`, `charge`, `barrier`; `fire=S` holds the trigger down for S s, `barrier` puts up a carried barrier; `blackout` and `overdrive` start those arena events, `double` jumps to the last minute's double points; `shields-up` switches everyone's shield on, `summon` (or `summon=M`) puts the
-nearest other player 4 m (M m) in front of you; Megatarget mode: `power` hits both secondary targets, `warp-door`, `warp-room`, `warp-turret` and `warp-pocket` move
-you there; `warp-mirror` puts you before the nearest mirror, `warp-pad` (or `warp-pad=M`) 1 m (M m) before
-the nearest jump pad, `warp-gate` before the nearest laser gate; `yaw=DEG` and `pitch=DEG` turn the flat screen's view),
-`LT_VR_MENU=1` opens the VR menu, `LT_VR_FAKE_HANDS=1` fakes controllers, `LT_HOLSTER=x,y,z`
-moves the holster (from the eyes; default `0.23,-0.58,-0.07`). `LT_GUN_TILT=DEG` turns the
-blaster nose down in the hand by that much from the controller's aim (default 15), for a more
-upright handle.
+## Playing the game
 
 **Rules.** Score by tagging out enemy players (100 points) and by hitting the enemy team's
 targets (100 points per hit). Hitting an enemy whom a team mate tags out within 10 s is an
@@ -151,124 +120,41 @@ it. You lose them all when you're tagged out.
 | barrier (powerup) | grip of the hand without the blaster, away from the holster | E |
 | menu | menu button (left Touch controller), or hold B / Y for a second without a grenade; point and pull the trigger | Esc |
 
-Stick and key movement has a little inertia (about a tenth of a second to get up to speed or
-to stop); walking in your room doesn't. On the flat screen the view bobs slightly as you walk,
-and the blaster sways with your steps and lags a little behind when you turn. In VR the wrist of your free hand shows the hits you have left, whether you carry a grenade,
-the powerups you have, the shots left and the respawn countdown. On the back wall of each base hang a score board (Red's score left, Blue's right) and, above it, a board with the time left.
-Hits glow red at the edge of the view on the side they came from (on the flat screen: a red
-arc around the crosshair), and the controllers vibrate: shots, empty clicks, hits (stronger on
-that side), being tagged out, grenades, drawing and holstering. The menu (Esc) leaves the match
-running underneath: Resume, Options, Leave to main menu, Quit; VR's offers Resume, New match
-(local games), Main menu and Quit. VR's start menu floats in an empty arena under colourful
-fireworks (`src/lobby.rs`): Play vs bots or Host game, with the bots' number and skill and the
-arenas' size, or Quit. Options (also in the start menu) sets the sound effects' and the music's volume, rebinds the
-flat screen's keys and mouse buttons (two per action), sets the mouse sensitivity and inverts
-the mouse; they are kept
-in `settings.ron` in the config directory (`~/.config/lasertag`, `%APPDATA%\lasertag`; VR uses
-the saved volumes too).
+## Command Parameters
 
-## Layout
+## Playing
 
-| path | what |
-|---|---|
-| `crates/lt-sim` | The game without a renderer: rules (`rules.rs`), arena generation (`level.rs`), modular kit dimensions (`kit.rs`), collision (`collide.rs`), the simulation (`sim.rs`, 60 Hz, authoritative), bots (`bots.rs`: the `Controller` trait and the placeholder `WanderBot`). |
-| `crates/lt-net` | UDP transport (reliable and unreliable channels; ported from stealth-mission-89), protocol (CBOR + LZ4), server and client sessions, master server reporting. |
-| `crates/lt-server` | Dedicated server: `lt-server --port 27420 --bots 8 --difficulty normal --name NAME [--arena small|medium|large|random] [--mode classic|megatarget] [--seed N] [--private] [--master URL]`. |
-| `crates/lt-master`, `lt-master-proto` | Master server list (REST/JSON): `lt-master --bind 0.0.0.0:27500`, with deploy files in `crates/lt-master/deploy`. |
-| `src/` | The Bevy client: `game.rs` (local sim or connection, stepped in `FixedUpdate`, client movement prediction), `arena.rs` (kit pieces merged into chunk meshes), `materials.rs` + `assets/shaders/neon.wgsl` (neon accents and glow halos), `actors.rs` (players, bolts, grenades, sparks), `desktop.rs`, `vr.rs` (shared VR input, holster, haptics), `vrui.rs` (VR menus, end panel, hit flash; text from `segtext.rs`), `lobby.rs` (VR start menu scene, fireworks), `xr.rs` (bevy_mod_openxr), `glvr/` (foveated GL renderer), `audio.rs`, `hud.rs`, `sevenseg.rs`, `targets.rs` (team targets), `mega.rs` (the Megatarget mode's pieces), `menu.rs`, `pause.rs` (in-game menu), `endscreen.rs` (results), `session.rs` (next match, leaving a game). |
-| `tools/models` | Blender build scripts for the kit, blaster, grenade, avatars and reload station (`build_all.sh`, conventions in its README). |
-| `tools/gen_sfx.py` | Sound synthesis (numpy + ffmpeg): `python3 tools/gen_sfx.py`. |
-| `tools/gen_spectrum.py` | The music's precomputed spectrum: `python3 tools/gen_spectrum.py`. |
-| `tools/frame.sh` | Cross-compile, deploy and run on a Steam Frame over ssh. |
+```
+cargo run --release                         # VR if there's a headset, else the flat screen
+cargo run --release -- --flat               # the flat screen, start menu
+cargo run --release -- --seed 42 --bots 7   # straight into a match against bots
+cargo run --release -- --vr                 # any OpenXR headset (bevy_mod_openxr, wgpu, bloom)
+cargo run --release --features glvr -- --gl-vr   # foveated GL renderer (Steam Frame, Linux)
+```
 
-### Arenas
+Without `--vr`, `--gl-vr` or `--flat` the game starts in VR on a Steam Frame (`--gl-vr`) or
+while a VR compositor runs (SteamVR's vrcompositor or Monado's service: `--vr`), and on the
+flat screen otherwise (or when the headset can't be used).
 
-The generator works on a 2 m grid, with two storeys of 3 m: 14 x 28 cells in a small arena,
-18 x 34 in a medium one (about 25 % bigger each way) and 21 x 42 in a large one (50 %). Bigger
-arenas get more of everything (cover, platforms, holes, doors, panels), in proportion to their
-floor; the size travels to clients in the `Rules` with the seed. It builds Red's
-half (+z) and turns it half way round the centre for Blue's (so the bases are in opposite
-corners). Each half has:
+Other flags: `--name NAME`, `--host [PORT]` (play and let others join), `--connect HOST[:PORT]`,
+`--difficulty easy|normal|hard` (the bots, also in the start menu), `--arena small|medium|large|random`
+(the arenas' size in local and hosted games, also in the start menu; random picks one for every
+match), `--mode classic|megatarget` (what local and hosted games are played for, also in the start
+menu), `--left-handed` (VR: the
+holster on the left hip; or `LT_LEFT_HANDED=1`), `--autopilot` (a bot plays you, for testing),
+`--match-time S` (local games), `--screenshot FILE --after 5,10`, `--quit-after S`.
+Testing: `LT_DEV="6:menu,8:leave,10:play-hard,14:hit,20:next"` scripts menu actions and hits (`options`
+opens the options screen, `arc` shows the throw arc, `target` hits a team target;
+`give-KIND` gives you a pickup's contents (`give-all-KIND` everyone) and `drop-KIND` lays one in front of you, KIND
+`grenade`, `rapid`, `shield`, `shotgun`, `cloak`, `speed`, `charge`, `barrier`; `fire=S` holds the trigger down for S s, `barrier` puts up a carried barrier; `blackout` and `overdrive` start those arena events, `double` jumps to the last minute's double points; `shields-up` switches everyone's shield on, `summon` (or `summon=M`) puts the
+nearest other player 4 m (M m) in front of you; Megatarget mode: `power` hits both secondary targets, `warp-door`, `warp-room`, `warp-turret` and `warp-pocket` move
+you there; `warp-mirror` puts you before the nearest mirror, `warp-pad` (or `warp-pad=M`) 1 m (M m) before
+the nearest jump pad, `warp-gate` before the nearest laser gate; `yaw=DEG` and `pitch=DEG` turn the flat screen's view),
+`LT_VR_MENU=1` opens the VR menu, `LT_VR_FAKE_HANDS=1` fakes controllers, `LT_HOLSTER=x,y,z`
+moves the holster (from the eyes; default `0.23,-0.58,-0.07`). `LT_GUN_TILT=DEG` turns the
+blaster nose down in the hand by that much from the controller's aim (default 15), for a more
+upright handle.
 
-- a small base in a rear corner: 3 x 2 spawn pads, walled off, with a gate on each open side;
-- one or two team targets in the rear quarter (`kit::target_box`), each hanging from a roof
-  over the upper level, in a cell walled on three sides on both floors and open to the rear;
-  neither that cell nor the one behind it has an upper floor, so the target is seen from the
-  ground under and behind it and from the upper floor around the opening (at least two places
-  on each floor, checked for every arena; drawn by `src/targets.rs`);
-- a reload station in the middle third, walled with windows on two sides;
-- an upper floor of connected platforms, with holes cut in to shoot up and down through, and
-  at least two ramps per half; the upper level always crosses the arena (a walkway joins the
-  targets' surroundings to the bridge over the centre line where the platforms don't);
-- cover: full walls, walls with windows, half walls, pillars and blocks;
-- mirrors (`Level::mirrors`): one to three faces of full walls (more in bigger arenas),
-  between the centre line and the targets' rows, each with open floor in front of it to shoot
-  from (drawn by `src/features.rs`);
-- jump pads (`Level::pads`): one or two (more in bigger arenas) on open ground with nothing
-  overhead, each throwing onto the upper floor one to three cells away; the flight is
-  simulated when the arena is made, with the doors and panels at both ends of their way, and
-  must be clear and land there (`level::pad_flight`). The bots' map has them as one-way links;
-- laser gates (`Level::gates`): one or two (more in bigger arenas) across gaps on the ground
-  shut off on both sides (by walls, pillars, blocks or the border), never where shutting
-  them would fail the arena's checks; on and off by the sim tick alone, like the doors.
-
-Long open lanes are broken up. Every arena is checked before it is used: every base reaches the
-centre, the upper floor and the rear of the enemy targets, the upper level leads from one
-team's target to the other's without coming down, and each target can be hit from at least
-two places on each floor. Each kit piece's numbers live only in
-`crates/lt-sim/src/kit.rs`. `tools/models/kit_dims.json` is generated from it
-(`LT_WRITE_KIT_DIMS=1 cargo test -p lt-sim kit`), and the Blender kit builder reads that file.
-
-Behind the targets the accents take the colour of the half they stand in (chosen per pixel
-by world z). The middle of the arena is split into zones of purple, yellow, green, cyan and
-orange, turned round like the arena, and the walls around the reload stations are white; white is
-used nowhere else. The zone colours are baked into the merged meshes as vertex colours,
-with the brightness: ordinary accents are dimmed and vary from piece to piece (a few are nearly
-dark), each places only some of its kit piece's accent shapes, and the floor grid is thin and
-faint. The bases, targets and stations glow fully. Slow drifting patches of light and dark move
-over the accents, and now and then a streak of light races along them. Inside the arena,
-faint shafts of light fall through the holes of the upper floor, low haze drifts over the
-floor, motes float in the air, and the reload stations shine a soft column of light onto
-their pads (`src/ambience.rs`). Waves of colour run from each base towards the centre, and
-target hits and tag-outs send ripples across the walls. The border walls around the arena turn slowly through the rainbow and pulse with the music's bass. Bloom makes them glow in the wgpu
-renderers. The GL renderer has no post-processing, because foveation needs a single pass into
-the swapchain, so the kit carries additive glow halos that work in every renderer.
-
-### Atmosphere
-
-The sound effects are synthesized by `tools/gen_sfx.py` and play in space around you, fading
-gently with distance (`src/audio.rs`); a team target being hit is heard across the whole arena.
-Hits throw out sparks and a flash of light; a hit team target lights up its surroundings,
-flickering for a second. Hitting an enemy or an enemy target bleeps (and a tag-out plays a little fanfare); Red's and
-Blue's blasters sound different.
-The music is picked at random from `assets/music`: `menu*.ogg` in the menus, `game*.ogg`
-during a match (one after another), and `won*.ogg` or `lost*.ogg` once when a match ends (a
-draw counts as lost). Each track's spectrum is worked out ahead
-of time by `tools/gen_spectrum.py` (`X.spectrum` beside `X.ogg`: six bands from 20 Hz to
-16 kHz and a bass pulse, 50 frames a second) and followed in step with playback
-(`src/music.rs`). It drives the two big bar-graph displays above the rear walls and the
-pulsing of some of the light cones over the arena. Around the arena stands a procedural city
-(`src/scenery.rs`): towers with lit windows, neon bands and halos, and searchlights. All of it
-is built from the neon materials so the foveated GL renderer draws it too.
-`LT_VIEW=x,y,z,tx,ty,tz` pins the camera (or the headset's rig) for aimed screenshots.
-
-### Bots and multiplayer
-
-The simulation takes the same `PlayerCmd` every tick from local players, network players and
-bots (`lt_sim::bots::Controller`). The bots build a graph of the arena when it starts (the
-level's walkable cells plus clear diagonals, A* with path smoothing) and rate every spot for
-cover from the enemy spawn, the enemy targets it can hit and the own targets it watches. Half
-of each team attacks, half defends. Every 10-20 s a bot picks a plan: hold a covered spot,
-hunt the nearest enemy it knows of, or (attackers) shoot an enemy target from cover / (defenders)
-take another spot covering its own targets. It breaks off to refill when low on shots and to
-pick up grenades it sees, and lobs grenades at groups of enemies. Each bot has its own aiming
-error and reaction time.
-
-The server is authoritative. Clients send their latest commands, redundantly (`ToServer::Input`).
-Each client predicts its own movement and sends the result, and the server accepts it within
-the speed limit and its own collision. The server sends snapshots every other tick and events
-reliably. A dedicated server lists itself on the master server; hosting from the client and
-joining by address or from the menu's list also work.
 
 ## Testing
 
