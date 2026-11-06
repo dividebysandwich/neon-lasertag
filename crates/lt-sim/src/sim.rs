@@ -2627,6 +2627,13 @@ mod tests {
             "back on a spawn pad: {}",
             p.feet
         );
+        // Back to the doorway at once: the forcefield shocks again.
+        sim.players[i].feet = m.shields[0].outside;
+        walk(&mut sim, a, m.shields[0].inside, 1.5);
+        assert!(
+            !sim.player(a).unwrap().alive(),
+            "both secondaries again first"
+        );
     }
 
     #[test]
