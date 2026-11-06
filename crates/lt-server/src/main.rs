@@ -36,7 +36,7 @@ fn args() -> Args {
         bots: 8,
         difficulty: Difficulty::default(),
         arena: SizeChoice::default(),
-        mode: GameMode::default(),
+        mode: GameMode::Megatarget,
         master: DEFAULT_MASTER.into(),
         private: false,
     };

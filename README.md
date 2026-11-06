@@ -139,7 +139,7 @@ flat screen otherwise (or when the headset can't be used).
 Other flags: `--name NAME`, `--host [PORT]` (play and let others join), `--connect HOST[:PORT]`,
 `--difficulty easy|normal|hard` (the bots, also in the start menu), `--arena small|medium|large|random`
 (the arenas' size in local and hosted games, also in the start menu; random picks one for every
-match), `--mode classic|megatarget` (what local and hosted games are played for, also in the start
+match), `--mode classic|megatarget` (what local and hosted games are played for, megatarget unless chosen, also in the start
 menu), `--left-handed` (VR: the
 holster on the left hip; or `LT_LEFT_HANDED=1`), `--autopilot` (a bot plays you, for testing),
 `--match-time S` (local games), `--screenshot FILE --after 5,10`, `--quit-after S`.

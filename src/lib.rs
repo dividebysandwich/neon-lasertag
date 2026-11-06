@@ -106,7 +106,7 @@ impl Args {
             autopilot: false,
             difficulty: Difficulty::default(),
             arena: lt_sim::level::SizeChoice::default(),
-            game_mode: lt_sim::level::GameMode::default(),
+            game_mode: lt_sim::level::GameMode::Megatarget,
             left_handed: std::env::var("LT_LEFT_HANDED").is_ok_and(|v| v == "1"),
             match_time: None,
             screenshot: None,
