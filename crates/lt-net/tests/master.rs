@@ -54,12 +54,14 @@ fn a_pushed_report_is_listed_and_removed_on_stop() {
     assert_eq!(list[0].report.map_seed, 0xdead_beef);
     assert_eq!(list[0].report.scores, [3, 5]);
     assert_eq!(list[0].report.players[0].team, "red");
-    assert!(
-        reporter
-            .take_log()
-            .iter()
-            .any(|l| l.starts_with("listed on"))
-    );
+    // The master lists the report before the reporter has read its answer: wait for the log.
+    let until = Instant::now() + Duration::from_secs(10);
+    let mut log = Vec::new();
+    while !log.iter().any(|l: &String| l.starts_with("listed on")) && Instant::now() < until {
+        log.extend(reporter.take_log());
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(log.iter().any(|l| l.starts_with("listed on")), "{log:?}");
     reporter.stop();
     assert!(fetch_list(&url).unwrap().is_empty(), "DELETE on stop");
 }
