@@ -19,7 +19,7 @@ rand = "0.9"
 anyhow = "1"
 
 [package]
-name = "lasertag"
+name = "neon-lasertag"
 version.workspace = true
 edition.workspace = true
 

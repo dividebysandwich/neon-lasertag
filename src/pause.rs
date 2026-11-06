@@ -121,7 +121,6 @@ fn show(
     let open = overlays.menu && game.is_some();
     match (open, root.single()) {
         (true, Err(_)) => {
-            let multiplayer = game.as_ref().is_some_and(|g| !g.is_local() || hosting(g));
             commands
                 .spawn((
                     PauseRoot,

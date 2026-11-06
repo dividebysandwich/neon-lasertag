@@ -3489,28 +3489,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lasertag"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bevy",
- "bevy_mod_openxr",
- "bevy_mod_xr",
- "glam",
- "glow 0.18.0",
- "gltf",
- "image",
- "khronos-egl",
- "libloading 0.8.9",
- "lt-net",
- "lt-sim",
- "openxr",
- "rand 0.9.5",
- "ron",
- "serde",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3831,6 +3809,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys 0.3.1",
+]
+
+[[package]]
+name = "neon-lasertag"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bevy",
+ "bevy_mod_openxr",
+ "bevy_mod_xr",
+ "glam",
+ "glow 0.18.0",
+ "gltf",
+ "image",
+ "khronos-egl",
+ "libloading 0.8.9",
+ "lt-net",
+ "lt-sim",
+ "openxr",
+ "rand 0.9.5",
+ "ron",
+ "serde",
 ]
 
 [[package]]
