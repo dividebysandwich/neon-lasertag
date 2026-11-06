@@ -1,41 +1,42 @@
 # Neon Lasertag
 
 Red vs Blue lasertag in procedurally generated neon arenas, for VR headsets (OpenXR) and the
-flat screen. Built with Bevy 0.19.
+flat screen. Built with Bevy.
+
+<img width="1916" height="1051" alt="image" src="https://github.com/user-attachments/assets/1a696844-08a1-4cbf-84e2-67545a2d226c" />
 
 ## Playing the game
 
 **Rules.** Score by tagging out enemy players (100 points) and by hitting the enemy team's
-targets (100 points per hit). Hitting an enemy whom a team mate tags out within 10 s is an
-assist (50 points), and tagging out an enemy within 12 m of your own team's targets (Megatarget
-mode: of your team's doorway into the megatarget's room) earns 25 points more for defending. A player is tagged out by the third hit; after every hit they
-can't shoot, and can't be hit, for 3 s (they can still move). Tagged-out players wait 5 s to
-15 s to respawn at their base, longer the further from it they were tagged. Stepping onto your
-own team's spawn pads heals all hits. The targets are small
-glowing cores hanging from a roof over the upper level, deep in each team's half, in a cell
-walled on three sides on both floors, with chevrons running in towards them: they can only be
-hit from the rear quarter of the arena behind them, from the upper level around them or from
+targets (100 points per hit). 
+
+Hitting an enemy whom a team mate tags out within 10 s is an assist (50 points), and tagging
+out an enemy within 12 m of your own team's targets (Megatarget
+mode: of your team's doorway into the megatarget's room) earns 25 points more for defending.
+
+A player is tagged out by the third hit; after every hit they can't shoot or be hit for 3s.
+Stepping onto your own team's spawn pads heals all hits
+.
+The targets are small glowing cores hanging from a roof over the upper level, deep in each team's half.
+They can only be hit from the rear quarter of the arena behind them, from the upper level around them or from
 the ground below and behind them.
-**Megatarget mode** (`--mode megatarget`). The arena is half as big again each way and has no
-team targets. Two secondary targets hang at the arena's left and right edges, across the centre
-line, on the back of a wall two storeys high: to hit one you have to get into the pocket behind
-that wall through a doorway at either end of it. Each is guarded by two turrets on the wall's
-outer face, above the doorways, which shoot at every player in front of them (16 m); hitting the
-yellow deactivation target above a turret switches it off for 15 s. In the middle stands a
-closed room two storeys high with a doorway on each team's side, each closed by a shimmering
+
+**Megatarget mode** (`--mode megatarget`). Two secondary targets hang at the arena's left and right edges near the 
+center line. Each is guarded by two turrets above the doorways, which shoot at every player in front of them.
+Hitting the yellow deactivation target above a turret switches it off for 15s.
+
+In the middle is a closed room with a doorway on each team's side, each closed by a shimmering
 forcefield that stops bolts and grenades and tags out anyone who walks into it. Hit both
 secondary targets (100 points each) and for 60 s you may pass through the forcefields (you tick
-like a clock meanwhile, faster in the last 10 s, and everyone hears it): inside, the megatarget
-hangs from the ceiling over a shaft of light, with chevrons climbing the walls towards it. Hitting
-it scores 1000 points and sends you straight back to your base with full health and shots. Tagged
-out, or out of time, you start over; out of time inside the room (or in its doorway), you are
-tagged out.
+like a clock meanwhile, faster in the last 10 s, and everyone hears it).
+Inside, the megatarget hangs from the ceiling over a shaft of light. Hitting
+it scores 1000 points and sends you straight back to your base with full health and ammo.
 
 **Arena events.** Two to three minutes into a match, and every two to three minutes after
 that (never in the last 75 s), something happens to the whole arena, announced with a banner
 (VR: floating in front of you) and a sound: a **Blackout** puts the arena's lights out for 20 s
 (the city around it too; bolts, players, pickups, targets, jump pads, laser gates and reload
-stations still glow, every shot lights up the walls' neon for a few metres around it as it
+stations still glow, every shot lights up the walls' neon for a few meters around it as it
 flies, where it's fired and where it strikes, and the bots only see 12 m), or an **Overdrive** brings back every
 grenade and powerup missing from the arena at once. In the last minute every point counts
 double (the clock shows 2x).
@@ -55,15 +56,15 @@ antlers don't count), the chest, the gloves and the blaster.
 **Mirrors.** Some wall faces in the middle of the arena are mirrors: dark glass in a lavender
 frame with glinting streaks across it. A bolt (any bolt: blasters', grenades', turrets')
 bounces off a mirror once, carrying on as if from there, so you can bank a shot round a corner;
-a second mirror stops it. The glints flash in the bolt's colour and the mirror pings.
+a second mirror stops it. The glints flash in the bolt's color and the mirror pings.
 
 **Jump pads.** Mint rings on the ground, with chevrons climbing the way they throw: step onto
-one and it throws you up onto the upper floor a few metres on, peaking a little over a metre
+one and it throws you up onto the upper floor a few meters on, peaking a little over a meter
 above it (you can steer a little in the air). Every pad's flight is checked when the arena is
 made; the bots take them too.
 
 **Laser gates.** Some gaps in the walls on the ground have three beams across them between
-glowing posts, in the colour of the zone they stand in. They switch on for 2 s and off for
+glowing posts, in the color of the zone they stand in. They switch on for 2 s and off for
 2.5 s, humming while on and flickering for half a second before they come on; walking into
 one while it's on is a hit (unless your shield is on, or you're still recovering from the last
 hit). Bolts and grenades fly through. The bots wait for a gate to go off.
@@ -76,12 +77,12 @@ arena (25 shots a second).
 at a time, two in each half; a taken one comes back somewhere else after 8 s to 16 s), and
 walking over one picks it up. You carry one at most. Thrown, it bounces around (in VR it flies three times as fast as your
 hand threw it, so a small swing in a small room carries across the arena). After 3 s it
-jumps about a metre up, then hovers and spins for 4 s, spraying white bolts in all
-directions, one in five of them aimed at a player it can see (within 20 m). They hit everyone, team mates and the thrower included, and can hit the same
+jumps up and spins for 4 s, shooting white bolts in all
+directions. They hit everyone, team mates and the thrower included, and can hit the same
 player twice. A grenade in flight trails white sparks inside a slowly pulsing white glow, which
 grows and pulses faster while it hovers and fires.
 
-**Powerups.** Each kind lies in the arena once in each half, turning over a ring of its colour
+**Powerups.** Each kind lies in the arena once in each half, turning over a ring of its color
 (a taken one comes back somewhere else in that half after 25 s to 45 s); walk over one to take
 it. You lose them all when you're tagged out.
 - **Rapid fire** (yellow, two chevrons): the blaster fires twice as fast.
@@ -101,7 +102,7 @@ it. You lose them all when you're tagged out.
   time: while you have the shotgun or the charge gun, the other stays where it lies.
 - **Barrier** (emerald, a panel between two posts): carried until you put it up (E; VR: grip
   with the hand without the blaster, away from the holster), then a wall of hard light in
-  your team's colour stands 1.5 m in front of you (nearer if a wall is closer) for 8 s. It
+  your team's color stands 1.5 m in front of you (nearer if a wall is closer) for 8 s. It
   stops every bolt but your team's (enemies', grenades', turrets'), which pass through as if
   it weren't there; anyone can walk through it, and grenades fly through. The bots put theirs
   up when they're hit in a fight, and don't shoot into enemy barriers.
