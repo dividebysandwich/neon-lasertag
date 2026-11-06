@@ -30,6 +30,9 @@ pub const PICKUP_HEIGHT: f32 = 0.6;
 pub const EYE: f32 = 1.65;
 /// Ticks of player history kept for lag compensation, and the most a bolt is compensated
 /// (250 ms).
+/// Seconds a turret waits before its first shot at a player it has just found, or after it
+/// comes back on.
+pub const TURRET_WARMUP: f32 = 0.5;
 pub const HISTORY: usize = 20;
 pub const MAX_LAG: u64 = 15;
 
@@ -122,6 +125,8 @@ pub struct TurretState {
     /// Seconds left switched off.
     pub off: f32,
     fire_t: f32,
+    /// Has a player in its sights.
+    engaged: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -311,6 +316,7 @@ impl Sim {
                         aim: t.facing,
                         off: 0.0,
                         fire_t: 1.0,
+                        engaged: false,
                     })
                     .collect()
             }),
@@ -1134,12 +1140,13 @@ impl Sim {
                 st.off -= TICK;
                 if st.off <= 0.0 {
                     st.off = 0.0;
-                    st.fire_t = 0.5;
+                    st.fire_t = TURRET_WARMUP;
                     self.events.push(SimEvent::TurretOn { turret: k as u8 });
                 }
                 // Drooping while off.
                 let rest = (def.facing - Vec3::Y * 0.6).normalize();
                 st.aim = st.aim.lerp(rest, 0.05).normalize_or(rest);
+                st.engaged = false;
                 continue;
             }
             st.fire_t -= TICK;
@@ -1167,6 +1174,12 @@ impl Sim {
                 }
             };
             let st = &mut self.turrets[k];
+            if target.is_some() && !st.engaged {
+                st.fire_t = st.fire_t.max(TURRET_WARMUP);
+                self.events
+                    .push(SimEvent::TurretEngaged { turret: k as u8 });
+            }
+            st.engaged = target.is_some();
             let angle = st.aim.angle_between(want);
             if angle > 1e-4 {
                 let step = (rules.turret_turn * TICK).min(angle);
@@ -2245,5 +2258,41 @@ mod tests {
             sim.step();
         }
         assert_eq!(sim.turrets[0].off, 0.0);
+    }
+
+    #[test]
+    fn turrets_wait_before_their_first_shot() {
+        let mut sim = mega_sim(true);
+        let m = sim.level.mega.clone().unwrap();
+        let a = sim.add_player("a", Some(Team::Red), false).unwrap();
+        let i = pi_of(&sim, a);
+        let t = m.turrets[0];
+        // Behind it until long past the turrets' start-up wait, then in front of it.
+        sim.players[i].feet = Vec3::new(t.pos.x, 0.0, t.pos.z) - t.facing * 3.0;
+        for _ in 0..(2.0 / TICK) as usize {
+            sim.step();
+        }
+        assert!(
+            !sim.drain_events()
+                .iter()
+                .any(|e| matches!(e, SimEvent::TurretEngaged { turret: 0 }))
+        );
+        sim.players[i].feet = Vec3::new(t.pos.x + 7.0, 0.0, t.pos.z);
+        let (mut engaged, mut fired) = (None, None);
+        for n in 0..(2.0 / TICK) as usize {
+            sim.step();
+            for e in sim.drain_events() {
+                match e {
+                    SimEvent::TurretEngaged { turret: 0 } => engaged = engaged.or(Some(n)),
+                    SimEvent::TurretFired { turret: 0, .. } => fired = fired.or(Some(n)),
+                    _ => {}
+                }
+            }
+        }
+        let (engaged, fired) = (engaged.unwrap(), fired.unwrap());
+        assert!(
+            (fired - engaged) as f32 * TICK >= TURRET_WARMUP - TICK,
+            "engaged at {engaged}, fired at {fired}"
+        );
     }
 }

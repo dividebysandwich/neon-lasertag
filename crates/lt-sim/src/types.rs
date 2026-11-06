@@ -229,6 +229,10 @@ pub enum SimEvent {
     TurretOn {
         turret: u8,
     },
+    /// A turret found a player to shoot at (its first shot comes `TURRET_WARMUP` later).
+    TurretEngaged {
+        turret: u8,
+    },
     /// A player walked into a forcefield (and is tagged out by it).
     Shocked {
         player: PlayerId,

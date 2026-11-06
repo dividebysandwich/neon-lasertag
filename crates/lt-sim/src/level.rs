@@ -2888,31 +2888,49 @@ mod tests {
 
     #[test]
     fn targets_hit_only_from_the_rear_quarter() {
-        for (seed, level) in levels(60) {
-            let dm = level.dims();
-            for world in [world_doors(&level, false), world_doors(&level, true)] {
-                for t in &level.targets {
-                    let side = t.team.side();
-                    for (n, p) in level.nav.pos.iter().enumerate() {
-                        // Out of the rear quarter of the target's half.
-                        if !level.nav.valid[n] || p.z * side >= dm.half_length() / 2.0 - 0.01 {
-                            continue;
-                        }
-                        for h in [0.5, 1.0, 1.7] {
-                            let eye = *p + Vec3::Y * h;
-                            for k in 0..9 {
-                                let f = Vec3::new(
-                                    (k % 3) as f32 / 2.0,
-                                    (k / 3) as f32 / 2.0,
-                                    ((k * 7) % 3) as f32 / 2.0,
-                                );
-                                let aim = t.min + (t.max - t.min) * (f * 0.9 + 0.05);
-                                assert!(
-                                    !target_seen(&world, eye, t, aim),
-                                    "seed {seed}: target {} hit from {eye}",
-                                    t.id
-                                );
-                            }
+        // Thousands of rays per arena: spread the arenas over the cores.
+        let levels: Vec<_> = levels(60).collect();
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+        std::thread::scope(|s| {
+            for _ in 0..threads {
+                s.spawn(|| {
+                    while let Some((seed, level)) =
+                        levels.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+                    {
+                        rear_quarter_only(*seed, level);
+                    }
+                });
+            }
+        });
+    }
+
+    fn rear_quarter_only(seed: u64, level: &Level) {
+        let dm = level.dims();
+        // The arena mirrors (checked above), so one team's targets will do.
+        let team = level.targets[0].team;
+        for world in [world_doors(level, false), world_doors(level, true)] {
+            for t in level.targets.iter().filter(|t| t.team == team) {
+                let side = t.team.side();
+                for (n, p) in level.nav.pos.iter().enumerate() {
+                    // Out of the rear quarter of the target's half.
+                    if !level.nav.valid[n] || p.z * side >= dm.half_length() / 2.0 - 0.01 {
+                        continue;
+                    }
+                    for h in [0.5, 1.0, 1.7] {
+                        let eye = *p + Vec3::Y * h;
+                        for k in 0..9 {
+                            let f = Vec3::new(
+                                (k % 3) as f32 / 2.0,
+                                (k / 3) as f32 / 2.0,
+                                ((k * 7) % 3) as f32 / 2.0,
+                            );
+                            let aim = t.min + (t.max - t.min) * (f * 0.9 + 0.05);
+                            assert!(
+                                !target_seen(&world, eye, t, aim),
+                                "seed {seed}: target {} hit from {eye}",
+                                t.id
+                            );
                         }
                     }
                 }

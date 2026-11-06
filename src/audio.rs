@@ -47,6 +47,7 @@ struct Sounds {
     power_up: Handle<AudioSource>,
     turret_fire: Handle<AudioSource>,
     turret_down: Handle<AudioSource>,
+    turret_active: Handle<AudioSource>,
     zap: Handle<AudioSource>,
 }
 
@@ -105,6 +106,7 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
         power_up: s("power_up"),
         turret_fire: s("turret_fire"),
         turret_down: s("turret_down"),
+        turret_active: s("turretactive"),
         zap: s("shield_zap"),
     });
 }
@@ -274,7 +276,7 @@ fn play_events(
                 1.2,
                 1.0,
             ),
-            SimEvent::TurretOn { turret } => {
+            SimEvent::TurretOn { turret } | SimEvent::TurretEngaged { turret } => {
                 if let Some(t) = game
                     .level
                     .mega
@@ -284,10 +286,10 @@ fn play_events(
                     play(
                         &mut commands,
                         gain,
-                        &sounds.reload_done,
+                        &sounds.turret_active,
                         Some(t.pos),
                         1.0,
-                        0.6,
+                        1.0,
                     )
                 }
             }

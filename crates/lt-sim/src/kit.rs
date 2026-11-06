@@ -343,7 +343,10 @@ mod tests {
         if std::env::var_os("LT_WRITE_KIT_DIMS").is_some() {
             std::fs::write(path, &json).unwrap();
         }
-        let on_disk = std::fs::read_to_string(path).unwrap_or_default();
+        // A Windows checkout may have turned the newlines into CRLF.
+        let on_disk = std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .replace("\r\n", "\n");
         assert_eq!(
             on_disk, json,
             "kit_dims.json is stale: LT_WRITE_KIT_DIMS=1 cargo test -p lt-sim kit"
