@@ -148,6 +148,8 @@ struct HitFrom {
 struct UiMats {
     white: Handle<AccentMaterial>,
     dim: Handle<AccentMaterial>,
+    /// The awards' titles.
+    gold: Handle<AccentMaterial>,
     frame: Handle<AccentMaterial>,
     laser: Handle<AccentMaterial>,
     laser_hot: Handle<AccentMaterial>,
@@ -194,6 +196,7 @@ fn make_mats(
     let mats = UiMats {
         white: fixed(&mut accents, Vec3::ONE, 3.0),
         dim: fixed(&mut accents, Vec3::new(0.6, 0.62, 0.75), 1.2),
+        gold: fixed(&mut accents, Vec3::new(1.0, 0.75, 0.2), 3.0),
         frame: fixed(&mut accents, purple, 2.5),
         laser: fixed(&mut accents, Vec3::new(0.7, 0.8, 1.0), 1.5),
         laser_hot: fixed(&mut accents, Vec3::new(1.0, 0.85, 0.3), 4.0),
@@ -472,6 +475,7 @@ fn build_lobby(b: &mut Builder, choices: &LobbyChoices) -> Vec<Button> {
 /// Column right edges (score, tags, out, accuracy, targets) on the end panel.
 const COLUMNS: [f32; 6] = [-0.06, 0.05, 0.15, 0.25, 0.36, 0.46];
 const ROW: f32 = 0.042;
+const AWARD_ROW: f32 = 0.038;
 
 fn team_block(b: &mut Builder, team: Team, score: u32, rows: &[Row], top: f32, width: f32) -> f32 {
     let k = team.index();
@@ -554,6 +558,7 @@ fn team_block(b: &mut Builder, team: Team, score: u32, rows: &[Row], top: f32, w
 /// The end panel; returns its buttons and where the countdown goes.
 fn build_end(b: &mut Builder, game: &Game) -> (Vec<Button>, Vec3) {
     let rows = standings(game);
+    let won = crate::endscreen::awards(&game.snap.players);
     let local = game.is_local();
     let width = 1.0;
     let n = rows[0].len() + rows[1].len();
@@ -562,6 +567,11 @@ fn build_end(b: &mut Builder, game: &Game) -> (Vec<Button>, Vec3) {
         + 0.09
         + 2.0 * (0.12 + 0.02)
         + n as f32 * ROW
+        + if won.is_empty() {
+            0.0
+        } else {
+            0.02 + won.len() as f32 * AWARD_ROW
+        }
         + 0.06
         + if local { 0.14 } else { 0.0 }
         + 0.03;
@@ -605,6 +615,34 @@ fn build_end(b: &mut Builder, game: &Game) -> (Vec<Button>, Vec3) {
     y -= 0.06;
     y = team_block(b, Team::Red, r, &rows[0], y, width);
     y = team_block(b, Team::Blue, bl, &rows[1], y, width);
+    // The awards: title, player (in their team's colour) and what for.
+    if !won.is_empty() {
+        y -= 0.02;
+        let gold = b.mats.gold.clone();
+        let dim = b.mats.dim.clone();
+        for a in &won {
+            let k = a.team.index();
+            let team = b.mats.team[k].clone();
+            b.text(a.title, 0.02, Vec2::new(-0.45, y), Align::Left, &gold, None);
+            b.text(
+                &short(game.name_of(a.id), 10),
+                0.022,
+                Vec2::new(-0.13, y),
+                Align::Left,
+                &team,
+                None,
+            );
+            b.text(
+                &a.detail,
+                0.016,
+                Vec2::new(0.46, y),
+                Align::Right,
+                &dim,
+                None,
+            );
+            y -= AWARD_ROW;
+        }
+    }
     let countdown_at = Vec3::new(0.0, y - 0.02, 0.004);
     let mut buttons = Vec::new();
     if local {

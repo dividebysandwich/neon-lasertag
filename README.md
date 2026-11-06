@@ -63,7 +63,11 @@ out, or out of time, you start over; out of time inside the room (or in its door
 tagged out.
 
 Matches last 10 minutes. Then the results show (each player's
-score, tags, times tagged out, assists, accuracy and target hits); a local game goes on to the next
+score, tags, times tagged out, assists, accuracy and target hits, and up to four awards:
+Sharpshooter for the best accuracy, Team player for the most assists, Defender, Grenadier and
+Ghost for the most defends, grenade tag-outs and tag-outs while cloaked, Target hunter for the
+most target hits and Untouchable for being tagged out least among those with three tag-outs or
+more); a local game goes on to the next
 match on a new arena after 30 s (or at once with Next match), a server opens its next arena
 itself.
 

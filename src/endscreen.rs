@@ -1,6 +1,6 @@
 //! The end of a match on the flat screen: the winner, the teams' scores and a table per team
 //! of its players by score (tags, times tagged out, assists, accuracy, target hits), one's own row
-//! highlighted. Local games go on to the next match after a while or when asked; remote ones
+//! highlighted, and a few awards (`awards`). Local games go on to the next match after a while or when asked; remote ones
 //! when the server sends the next arena. (VR's panel is in src/vrui.rs; both use
 //! `standings`.)
 
@@ -53,6 +53,101 @@ pub fn standings(game: &Game) -> [Vec<Row>; 2] {
         });
     }
     out
+}
+
+/// An award at the end of a match: what for, to whom, and the figure it was for.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Award {
+    pub title: &'static str,
+    pub id: PlayerId,
+    pub team: Team,
+    pub detail: String,
+}
+
+/// The most awards shown.
+pub const MAX_AWARDS: usize = 4;
+
+/// The match's awards, in this order, for whoever did best at each (by score on a tie), if
+/// anyone did enough: Sharpshooter (best accuracy, 20 shots at least), Team player (most
+/// assists, two at least), Defender (most defends), Grenadier (most tag-outs with grenades),
+/// Ghost (most tag-outs while cloaked), Target hunter (most target hits), Untouchable (tagged
+/// out least, among those with three tag-outs or more). At most `MAX_AWARDS`.
+pub fn awards(players: &[lt_sim::sim::PlayerSnap]) -> Vec<Award> {
+    type Pick = fn(&lt_sim::sim::PlayerSnap) -> Option<(f32, String)>;
+    let picks: [(&str, Pick); 7] = [
+        ("SHARPSHOOTER", |p| {
+            (p.shots >= 20).then(|| {
+                let acc = p.landed as f32 / p.shots as f32;
+                (acc, format!("{:.0}% accuracy", acc * 100.0))
+            })
+        }),
+        ("TEAM PLAYER", |p| {
+            (p.assists >= 2).then(|| (p.assists as f32, count(p.assists, "assist")))
+        }),
+        ("DEFENDER", |p| {
+            (p.defends >= 1).then(|| (p.defends as f32, count(p.defends, "defend")))
+        }),
+        ("GRENADIER", |p| {
+            (p.grenade_tags >= 1).then(|| {
+                (
+                    p.grenade_tags as f32,
+                    count(p.grenade_tags, "grenade tag-out"),
+                )
+            })
+        }),
+        ("GHOST", |p| {
+            (p.cloak_tags >= 1).then(|| {
+                (
+                    p.cloak_tags as f32,
+                    format!("{} while cloaked", count(p.cloak_tags, "tag-out")),
+                )
+            })
+        }),
+        ("TARGET HUNTER", |p| {
+            (p.target_hits >= 1).then(|| (p.target_hits as f32, count(p.target_hits, "target hit")))
+        }),
+        ("UNTOUCHABLE", |p| {
+            (p.tags >= 3).then(|| {
+                (
+                    -(p.tagged as f32),
+                    format!(
+                        "tagged out {} with {}",
+                        count(p.tagged, "time"),
+                        count(p.tags, "tag-out")
+                    ),
+                )
+            })
+        }),
+    ];
+    picks
+        .iter()
+        .filter_map(|&(title, pick)| {
+            players
+                .iter()
+                .filter_map(|p| pick(p).map(|(v, d)| (p, v, d)))
+                .max_by(|a, b| {
+                    a.1.total_cmp(&b.1)
+                        .then(a.0.score.cmp(&b.0.score))
+                        .then(b.0.id.cmp(&a.0.id))
+                })
+                .map(|(p, _, detail)| Award {
+                    title,
+                    id: p.id,
+                    team: p.team,
+                    detail,
+                })
+        })
+        .take(MAX_AWARDS)
+        .collect()
+}
+
+/// "1 assist", "2 assists".
+fn count(n: u32, what: &str) -> String {
+    if n == 1 {
+        format!("1 {what}")
+    } else {
+        format!("{n} {what}s")
+    }
 }
 
 /// "RED WINS", "BLUE WINS" or "DRAW", and the winner.
@@ -138,6 +233,26 @@ fn row(
                 c.spawn(label(text, size, color));
             });
         }
+    });
+}
+
+/// An award: its title in gold, the player in their team's colour, what for.
+fn award_card(p: &mut ChildSpawnerCommands, a: &Award, name: &str) {
+    p.spawn((
+        Node {
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            padding: UiRect::axes(Val::Px(14.0), Val::Px(6.0)),
+            border: UiRect::all(Val::Px(1.0)),
+            min_width: Val::Px(170.0),
+            ..default()
+        },
+        BorderColor::all(Color::srgb(0.9, 0.75, 0.2)),
+    ))
+    .with_children(|c| {
+        c.spawn(label(a.title, 16.0, Color::srgb(1.0, 0.82, 0.25)));
+        c.spawn(label(name.to_string(), 20.0, team_ui_color(Some(a.team))));
+        c.spawn(label(a.detail.clone(), 14.0, Color::srgb(0.65, 0.65, 0.75)));
     });
 }
 
@@ -291,6 +406,19 @@ fn show(
                         table(t, Team::Red, r, &rows[0]);
                         table(t, Team::Blue, b, &rows[1]);
                     });
+                    // The awards, side by side.
+                    let won = awards(&game.snap.players);
+                    if !won.is_empty() {
+                        p.spawn(Node {
+                            column_gap: Val::Px(16.0),
+                            ..default()
+                        })
+                        .with_children(|row| {
+                            for a in &won {
+                                award_card(row, a, game.name_of(a.id));
+                            }
+                        });
+                    }
                     p.spawn(Node {
                         height: Val::Px(6.0),
                         ..default()
@@ -363,5 +491,41 @@ fn buttons(
                 EndButton::Menu => SessionCmd::Leave,
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lt_sim::{Rules, Sim};
+
+    #[test]
+    fn awards_go_to_the_best_who_did_enough() {
+        let mut sim = Sim::new(3, Rules::default());
+        for (name, team) in [("a", Team::Red), ("b", Team::Red), ("c", Team::Blue)] {
+            sim.add_player(name, Some(team), false);
+        }
+        // a: 30 shots, 15 landed; b: 10 shots, all landed (too few); c: 40 shots, 12 landed.
+        for (i, (shots, landed)) in [(30, 15), (10, 10), (40, 12)].into_iter().enumerate() {
+            sim.players[i].shots = shots;
+            sim.players[i].landed = landed;
+        }
+        sim.players[1].assists = 3;
+        sim.players[2].assists = 1;
+        sim.players[2].grenade_tags = 1;
+        // Ties: the better score wins.
+        sim.players[0].target_hits = 2;
+        sim.players[1].target_hits = 2;
+        sim.players[1].score = 500;
+        let snap = sim.snapshot();
+        let won = awards(&snap.players);
+        let get = |t: &str| won.iter().find(|a| a.title == t).map(|a| a.id);
+        assert_eq!(get("SHARPSHOOTER"), Some(snap.players[0].id));
+        assert_eq!(get("TEAM PLAYER"), Some(snap.players[1].id));
+        assert_eq!(get("GRENADIER"), Some(snap.players[2].id));
+        assert_eq!(get("TARGET HUNTER"), Some(snap.players[1].id));
+        assert_eq!(get("DEFENDER"), None);
+        assert_eq!(won.len(), 4);
+        assert_eq!(won[0].detail, "50% accuracy");
     }
 }
