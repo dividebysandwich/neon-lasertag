@@ -74,10 +74,13 @@ impl Plugin for SessionPlugin {
             .add_message::<SessionCmd>()
             .add_systems(
                 Update,
-                (dev_script, run_commands, match_over, leave)
+                (dev_script, run_commands, match_over)
                     .chain()
                     .before(InputSet),
-            );
+            )
+            // Not in `Update`: a group's `run_if(resource_exists::<Game>)` is checked once, so
+            // removing the game between two of its systems would leave the later one without it.
+            .add_systems(Last, leave);
     }
 }
 
