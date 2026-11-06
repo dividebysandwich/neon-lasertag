@@ -134,8 +134,10 @@ gently with distance (`src/audio.rs`); a team target being hit is heard across t
 Hits throw out sparks and a flash of light; a hit team target lights up its surroundings,
 flickering for a second. Hitting an enemy or an enemy target bleeps (and a tag-out plays a little fanfare); Red's and
 Blue's blasters sound different.
-The music (`assets/music/menu01.ogg`) loops during play. Its spectrum is worked out ahead
-of time by `tools/gen_spectrum.py` (`assets/music/menu01.spectrum`: six bands from 20 Hz to
+The music is picked at random from `assets/music`: `menu*.ogg` in the menus, `game*.ogg`
+during a match (one after another), and `won*.ogg` or `lost*.ogg` once when a match ends (a
+draw counts as lost). Each track's spectrum is worked out ahead
+of time by `tools/gen_spectrum.py` (`X.spectrum` beside `X.ogg`: six bands from 20 Hz to
 16 kHz and a bass pulse, 50 frames a second) and followed in step with playback
 (`src/music.rs`). It drives the two big bar-graph displays above the rear walls and the
 pulsing of some of the light cones over the arena. Around the arena stands a procedural city

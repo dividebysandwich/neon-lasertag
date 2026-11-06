@@ -1,21 +1,26 @@
-//! Music during play (assets/music/menu01.ogg, looped while a `Game` runs, quietly enough for
-//! the sound effects) and its spectrum, `MusicSpectrum`, for the scenery's displays and lights.
+//! The music, chosen by what's on: `menu*.ogg` in the menus, `game*.ogg` during a match,
+//! `won*.ogg` or `lost*.ogg` once at the end of one (assets/music; a draw counts as lost). Each
+//! time a track is due, one of the mood's files is picked at random (not the one just played, if
+//! there are others); the menu's and the match's music go on with another when one ends. Quietly
+//! enough for the sound effects. Its spectrum, `MusicSpectrum`, drives the scenery's displays and
+//! lights and the border walls' pulse.
 //!
-//! The spectrum is precomputed by tools/gen_spectrum.py into assets/music/menu01.spectrum
+//! Each track's spectrum is precomputed by tools/gen_spectrum.py into X.spectrum beside X.ogg
 //! (little endian): b"LTSP", u16 version (1), u16 channels per frame C (7), f32 frames per
 //! second, u32 frames N, f32 duration (s), then N * C u8 values (value / 255 is 0..1). The
 //! channels are the 6 log-spaced bands (20-120, 120-350, 350-1000, 1k-2.8k, 2.8k-7k, 7k-16k Hz),
 //! each auto-gained to 0..1 on a dB scale, then the bass pulse (an onset envelope of the lowest
-//! band). It follows the sink's playback position, so it stays in step through the loops.
-//! Without the file the spectrum stays at zero.
+//! band). It follows the sink's playback position. Without the file the spectrum stays at zero.
 
 use bevy::audio::{AudioSinkPlayback, Volume};
 use bevy::prelude::*;
 
+use rand::Rng;
+
+use crate::endscreen::winner;
 use crate::game::Game;
 
-const MUSIC: &str = "music/menu01.ogg";
-const SPECTRUM: &str = "music/menu01.spectrum";
+/// The music's volume at the settings' full volume.
 const VOLUME: f32 = 0.22;
 pub const BANDS: usize = 6;
 
@@ -73,72 +78,180 @@ impl SpectrumData {
     }
 }
 
+/// What the music is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mood {
+    Menu,
+    Game,
+    Won,
+    Lost,
+}
+
+impl Mood {
+    const ALL: [Mood; 4] = [Mood::Menu, Mood::Game, Mood::Won, Mood::Lost];
+
+    /// The start of its files' names.
+    fn prefix(self) -> &'static str {
+        match self {
+            Mood::Menu => "menu",
+            Mood::Game => "game",
+            Mood::Won => "won",
+            Mood::Lost => "lost",
+        }
+    }
+
+    /// Whether another track follows when one ends (the end of a match plays once).
+    fn goes_on(self) -> bool {
+        matches!(self, Mood::Menu | Mood::Game)
+    }
+}
+
+/// The music files, by mood (asset paths, sorted), and their spectra.
+#[derive(Resource, Default)]
+struct Tracks {
+    files: Vec<(Mood, String, SpectrumData)>,
+}
+
+impl Tracks {
+    fn of(&self, mood: Mood) -> impl Iterator<Item = usize> + '_ {
+        self.files.iter().enumerate().filter(move |(_, f)| f.0 == mood).map(|(i, _)| i)
+    }
+}
+
+/// The track playing (an index into `Tracks::files`).
 #[derive(Component)]
-struct Music;
+struct Music(usize);
+
+/// The mood the music is in, whether its track for it has started, and the last track played.
+#[derive(Resource, Default)]
+struct Playing {
+    mood: Option<Mood>,
+    started: bool,
+    last: Option<usize>,
+}
 
 pub struct MusicPlugin;
 
 impl Plugin for MusicPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MusicSpectrum>()
+            .init_resource::<Playing>()
             .add_systems(Startup, load)
-            .add_systems(Update, (start_stop, follow).chain());
+            .add_systems(Update, (choose, follow).chain());
     }
+}
+
+/// The mood for the file called `name`, if it is music: `<prefix><anything>.ogg`.
+fn mood_of(name: &str) -> Option<Mood> {
+    let stem = name.strip_suffix(".ogg")?;
+    Mood::ALL.into_iter().find(|m| stem.starts_with(m.prefix()))
 }
 
 fn load(mut commands: Commands) {
-    let path = crate::assets::asset_dir().join(SPECTRUM);
-    let data = match std::fs::read(&path) {
-        Ok(b) => SpectrumData::parse(&b).unwrap_or_else(|| {
-            warn!("{}: not a spectrum file", path.display());
-            SpectrumData::default()
-        }),
+    let dir = crate::assets::asset_dir().join("music");
+    let mut names: Vec<String> = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries.flatten().filter_map(|e| e.file_name().into_string().ok()).collect(),
         Err(e) => {
-            warn!("{}: {e}; the spectrum displays stay dark", path.display());
-            SpectrumData::default()
+            warn!("{}: {e}; no music", dir.display());
+            Vec::new()
         }
     };
-    commands.insert_resource(data);
+    names.sort();
+    let mut tracks = Tracks::default();
+    for name in names {
+        let Some(mood) = mood_of(&name) else { continue };
+        let path = dir.join(&name).with_extension("spectrum");
+        let data = match std::fs::read(&path) {
+            Ok(b) => SpectrumData::parse(&b).unwrap_or_else(|| {
+                warn!("{}: not a spectrum file", path.display());
+                SpectrumData::default()
+            }),
+            Err(e) => {
+                warn!("{}: {e}; the spectrum displays stay dark for it", path.display());
+                SpectrumData::default()
+            }
+        };
+        tracks.files.push((mood, format!("music/{name}"), data));
+    }
+    for m in Mood::ALL {
+        if tracks.of(m).next().is_none() {
+            warn!("no music/{}*.ogg", m.prefix());
+        }
+    }
+    commands.insert_resource(tracks);
 }
 
-fn start_stop(
+/// The local player's team won (a draw isn't a win).
+fn won(game: &Game) -> bool {
+    let mine = game.me.and_then(|me| game.snap.players.iter().find(|p| p.id == me)).map(|p| p.team);
+    mine.is_some() && winner(game.snap.scores).1 == mine
+}
+
+/// Starts the music for what's on, and the next track when one ends.
+#[allow(clippy::too_many_arguments)]
+fn choose(
     mut commands: Commands,
     game: Option<Res<Game>>,
+    tracks: Res<Tracks>,
     music: Query<Entity, With<Music>>,
     assets: Res<AssetServer>,
+    mut playing: ResMut<Playing>,
     mut spectrum: ResMut<MusicSpectrum>,
 ) {
-    match (game.is_some(), music.iter().next()) {
-        (true, None) => {
-            commands.spawn((
-                Music,
-                AudioPlayer::new(assets.load(MUSIC)),
-                PlaybackSettings::LOOP.with_volume(Volume::Linear(VOLUME)),
-                Name::new("music"),
-            ));
+    let mood = match game.as_deref() {
+        None => Mood::Menu,
+        Some(g) if g.snap.over => {
+            if won(g) {
+                Mood::Won
+            } else {
+                Mood::Lost
+            }
         }
-        (false, Some(e)) => {
+        Some(_) => Mood::Game,
+    };
+    if playing.mood != Some(mood) {
+        for e in &music {
             commands.entity(e).despawn();
-            *spectrum = MusicSpectrum::default();
         }
-        _ => {}
+        *spectrum = MusicSpectrum::default();
+        playing.mood = Some(mood);
+        playing.started = false;
+    } else if !music.is_empty() || (playing.started && !mood.goes_on()) {
+        return;
     }
+    // A track (another than the last, if there are others) for the mood.
+    let choices: Vec<usize> = tracks.of(mood).collect();
+    let fresh: Vec<usize> = choices.iter().copied().filter(|&i| Some(i) != playing.last).collect();
+    let pool = if fresh.is_empty() { &choices } else { &fresh };
+    playing.started = true;
+    if pool.is_empty() {
+        return;
+    }
+    let i = pool[rand::rng().random_range(0..pool.len())];
+    playing.last = Some(i);
+    info!("music: {}", tracks.files[i].1);
+    commands.spawn((
+        Music(i),
+        AudioPlayer::new(assets.load(tracks.files[i].1.clone())),
+        PlaybackSettings::DESPAWN.with_volume(Volume::Linear(VOLUME)),
+        Name::new("music"),
+    ));
 }
 
-/// Follows the music's playback position through the spectrum.
+/// Follows the music's playback position through its spectrum.
 fn follow(
     time: Res<Time>,
-    data: Res<SpectrumData>,
-    sinks: Query<&AudioSink, With<Music>>,
+    tracks: Res<Tracks>,
+    sinks: Query<(&Music, &AudioSink)>,
     mut spectrum: ResMut<MusicSpectrum>,
 ) {
-    let Some(sink) = sinks.iter().next() else { return };
+    let Some((music, sink)) = sinks.iter().next() else { return };
+    let data = &tracks.files[music.0].2;
     if data.frames() == 0 || sink.is_paused() {
         return;
     }
     let duration = if data.duration > 0.0 { data.duration } else { data.frames() as f32 / data.fps };
-    // The position may or may not restart with each loop: wrap it either way.
-    let t = sink.position().as_secs_f32() % duration;
+    let t = sink.position().as_secs_f32().min(duration);
     let dt = time.delta_secs();
     for (b, level) in spectrum.bands.iter_mut().enumerate() {
         let target = data.sample(t, b);
@@ -148,4 +261,19 @@ fn follow(
     }
     let bass = data.sample(t, BANDS);
     spectrum.bass = if bass > spectrum.bass { bass } else { spectrum.bass + (bass - spectrum.bass) * (1.0 - (-12.0 * dt).exp()) };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn music_files_by_name() {
+        assert_eq!(mood_of("menu01.ogg"), Some(Mood::Menu));
+        assert_eq!(mood_of("game02.ogg"), Some(Mood::Game));
+        assert_eq!(mood_of("won01.ogg"), Some(Mood::Won));
+        assert_eq!(mood_of("lost01.ogg"), Some(Mood::Lost));
+        assert_eq!(mood_of("menu01.spectrum"), None);
+        assert_eq!(mood_of("other.ogg"), None);
+    }
 }
