@@ -2,15 +2,18 @@
 //!
 //! * [`transport`]: connections on UDP with a reliable and an unreliable channel.
 //! * [`master`]: the public server list (reporting to it, fetching it).
+//! * [`lan`]: finding games on the local network by broadcast.
 //!
 //! The game's messages, server and client sessions build on these.
 
 pub mod client;
+pub mod lan;
 pub mod master;
 pub mod protocol;
 pub mod server;
 pub mod transport;
 
+pub use lan::{LAN_PORT, LanAnnouncer, LanBrowser, LanServer};
 pub use lt_master_proto as master_proto;
 pub use lt_master_proto::{
     DEFAULT_MASTER, REPORT_EVERY, ReportPlayer, ServerEntry, ServerReport, TEAM_BLUE, TEAM_RED,
