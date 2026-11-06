@@ -1,0 +1,183 @@
+name: Build
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Tests and clippy on every desktop platform. Builds drop the default `dev` feature
+  # (bevy/dynamic_linking). Clippy reports warnings without failing the build.
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # glvr: OpenXR, plus our own OpenGL headset renderer (`--gl-vr`, Linux only).
+          - os: ubuntu-24.04
+            features: --features lasertag/glvr
+          # bevy_mod_openxr links the OpenXR loader statically on Windows.
+          - os: windows-latest
+            features: --features lasertag/xr
+          # No OpenXR on macOS (no runtime; bevy_mod_openxr doesn't build there).
+          - os: macos-latest
+            features: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev libx11-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test
+
+      - name: Clippy
+        shell: bash
+        run: cargo clippy --workspace --all-targets --no-default-features ${{ matrix.features }}
+
+      - name: Test
+        shell: bash
+        run: cargo test --workspace --no-default-features ${{ matrix.features }}
+
+  # The game per platform: an archive with the game and its assets folder (tools/package.sh),
+  # and on Linux an AppImage (tools/appimage.sh). The aarch64 Linux build is the Steam Frame's:
+  # its AppImage starts in VR (`--gl-vr`).
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            features: glvr
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            features: glvr
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            features: xr
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            features: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config cmake libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev \
+            libx11-dev  # the OpenXR-SDK's configure step wants the Xlib headers
+
+      # The Linux packages ship the OpenXR loader (Apache 2.0, with its licence) beside the game,
+      # for systems without one (SteamOS, the Steam Frame). Built from Khronos's OpenXR-SDK:
+      # Khronos publishes no Linux build. The game's RUNPATH ($ORIGIN, build.rs) finds it first.
+      - name: Build the OpenXR loader (Linux)
+        if: runner.os == 'Linux'
+        run: tools/openxr_loader.sh --out openxr
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        shell: bash
+        run: |
+          cargo build --release --target ${{ matrix.target }} -p lasertag --no-default-features \
+            ${{ matrix.features && format('--features lasertag/{0}', matrix.features) || '' }}
+
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME//\//-}"
+          loader=()
+          [[ -d openxr ]] && loader=(--loader openxr)
+          tools/package.sh game ${{ matrix.target }} --version "$version" "${loader[@]}"
+          echo "name=lasertag-$version-${{ matrix.target }}" >> "$GITHUB_OUTPUT"
+
+      - name: Package (AppImage)
+        if: runner.os == 'Linux'
+        run: |
+          tools/appimage.sh --binary target/${{ matrix.target }}/release/lasertag --loader openxr \
+            --version "${GITHUB_REF_NAME//\//-}"
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.AppImage
+            dist/*.AppImage.zsync
+          if-no-files-found: error
+
+  # The dedicated server and the server list's master server, for Linux hosts.
+  servers:
+    name: servers
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: servers
+      - name: Build
+        run: cargo build --release -p lt-server -p lt-master
+      - name: Package
+        id: package
+        run: |
+          version="${GITHUB_REF_NAME//\//-}"
+          tools/package.sh servers x86_64-unknown-linux-gnu --version "$version"
+          echo "name=lasertag-$version-servers" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, build, servers]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
