@@ -551,7 +551,7 @@ fn update(
         let gren = if p.grenades > 0 {
             "grenade ready (RMB/G)"
         } else {
-            "no grenade: pick one up"
+            "no grenade"
         };
         let team = if p.team == Team::Red { "RED" } else { "BLUE" };
         let reload = if p.reloading { "  refilling" } else { "" };
