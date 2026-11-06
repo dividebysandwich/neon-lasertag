@@ -415,6 +415,9 @@ fn read_controls(
         Hand::Left
     };
     local.cmd.shield = alive && !blocked && input.hands[free.index()].trigger > 0.75;
+    // The barrier: gripping with that hand away from the holster.
+    local.cmd.barrier =
+        alive && !blocked && !vr.near[free.index()] && input.hands[free.index()].squeeze > 0.75;
 
     // The menu: its button, or B / Y held without taking a grenade.
     for i in 0..2 {

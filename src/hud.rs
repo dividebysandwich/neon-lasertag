@@ -638,6 +638,9 @@ pub fn powerup_line(p: &lt_sim::sim::PlayerSnap, rules: &lt_sim::Rules) -> Strin
     if p.speed > 0.0 {
         parts.push(format!("SPEED {:.0}", p.speed.ceil()));
     }
+    if p.barriers > 0 {
+        parts.push("BARRIER READY (E)".to_string());
+    }
     if p.shield > 0.0 {
         parts.push(format!("SHIELD {:.0}", p.shield.ceil()));
     } else if p.shields > 0 {

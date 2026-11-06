@@ -47,6 +47,9 @@
 - charge_full: the charge gun fully charged: a quick rising two-note chime.
 - beam_fire: the charge gun's beam: a heavy crack, a long bright zap sweeping down from
   3 kHz, a sub-bass punch and a hissing tail.
+- barrier_up: a barrier going up: a deep electric swell rising into a glassy shimmer.
+- barrier_hit: a bolt stopped by a barrier: a dull electric thud with a short crackle.
+- barrier_down: a barrier going down: a falling fizzle.
 - shield_hum: a forcefield's hum (a seamless two-second loop): a mains-like drone with
   slowly beating partials and faint crackle.
 
@@ -643,6 +646,34 @@ def beam_fire():
     return echoes(zap + crack + punch + hiss, [0.09, 0.2], [0.3, 0.15], 5000)
 
 
+def barrier_up():
+    T = 0.7
+    x = seconds(T)
+    f = 90 * (1 + 3 * (1 - np.exp(-x / 0.15)))
+    swell = lowpass(saw(f) * env(T, 0.04, 0.3, hold=0.2), 2500) * 0.6
+    shimmer = ring(T, [2100, 3150, 4200], [0.25, 0.2, 0.15], [0.3, 0.2, 0.15]) * env(T, 0.15, 0.4)
+    return echoes(swell + shimmer * 0.6, [0.07], [0.2], 6000)
+
+
+def barrier_hit():
+    T = 0.3
+    x = seconds(T)
+    thud = thump(T, 110, 0.06) * 1.0
+    crackle = noise(T, 2000, 10000) * (rng.random(len(x)) < 0.04).astype(float)
+    crackle = lowpass(crackle, 8000) * env(T, 0.001, 0.08) * 2.0
+    buzz = lowpass(square(np.full(len(x), 160.0), 0.4), 2500) * env(T, 0.001, 0.07) * 0.4
+    return thud + crackle + buzz
+
+
+def barrier_down():
+    T = 0.6
+    x = seconds(T)
+    f = 900 * np.exp(-x / 0.2) + 80
+    fizz = lowpass(saw(f) * env(T, 0.005, 0.3), 3000) * 0.5
+    hiss = noise(T, 1500, 9000) * env(T, 0.005, 0.25) * 0.3
+    return fizz + hiss
+
+
 SOUNDS = {
     # name: (generator, RMS dBFS, seed)
     "footstep_1": (lambda: footstep(1), -27.0, 11),
@@ -679,6 +710,9 @@ SOUNDS = {
     "charge_loop": (charge_loop, -26.0, 271),
     "charge_full": (charge_full, -21.0, 281),
     "beam_fire": (beam_fire, -14.0, 291),
+    "barrier_up": (barrier_up, -19.0, 301),
+    "barrier_hit": (barrier_hit, -20.0, 311),
+    "barrier_down": (barrier_down, -22.0, 321),
 }
 
 # Sounds played as loops.

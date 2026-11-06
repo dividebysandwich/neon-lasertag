@@ -108,6 +108,9 @@ pub struct Player {
     /// trigger has been held (while it charges).
     pub charge: bool,
     pub charging: Option<f32>,
+    /// Barriers carried.
+    pub barriers: u8,
+    prev_barrier: bool,
 }
 
 impl Player {
@@ -156,6 +159,7 @@ impl Player {
             PickupKind::Charge => !self.shotgun && (!self.charge || self.ammo < rules.ammo),
             PickupKind::Cloak => self.cloak <= 0.0,
             PickupKind::Speed => self.speed <= 0.0,
+            PickupKind::Barrier => self.barriers == 0,
         }
     }
 
@@ -174,6 +178,7 @@ impl Player {
             }
             PickupKind::Cloak => self.cloak = rules.cloak_time,
             PickupKind::Speed => self.speed = rules.speed_time,
+            PickupKind::Barrier => self.barriers += 1,
         }
     }
 
@@ -188,6 +193,7 @@ impl Player {
         self.speed = 0.0;
         self.charge = false;
         self.charging = None;
+        self.barriers = 0;
     }
 
     pub fn eye(&self) -> Vec3 {
@@ -286,6 +292,36 @@ impl Default for BoltExtra {
     }
 }
 
+/// A barrier: a wall of hard light standing on the floor (`centre` at half its height),
+/// facing `normal` (the way its player looked from, horizontal).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Barrier {
+    pub id: u32,
+    pub team: Team,
+    pub centre: Vec3,
+    pub normal: Vec3,
+    /// Seconds left standing.
+    pub left: f32,
+}
+
+impl Barrier {
+    /// Where along `a`..`b` (0..1) it crosses this barrier of `w` x `h` metres, if it does.
+    pub fn crossed(&self, a: Vec3, b: Vec3, w: f32, h: f32) -> Option<f32> {
+        let d = b - a;
+        let denom = d.dot(self.normal);
+        if denom.abs() < 1e-6 {
+            return None;
+        }
+        let t = (self.centre - a).dot(self.normal) / denom;
+        if !(0.0..=1.0).contains(&t) {
+            return None;
+        }
+        let x = a + d * t - self.centre;
+        let along = Vec3::Y.cross(self.normal);
+        (x.dot(along).abs() <= w / 2.0 && x.y.abs() <= h / 2.0).then_some(t)
+    }
+}
+
 /// What a trigger pull fires.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Shot {
@@ -330,6 +366,8 @@ pub struct Snapshot {
     pub over: bool,
     /// Megatarget mode's turrets (as `Mega::turrets`).
     pub turrets: Vec<TurretSnap>,
+    /// Barriers standing.
+    pub barriers: Vec<Barrier>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -379,6 +417,8 @@ pub struct PlayerSnap {
     /// `Player::charge`, and `Player::charging` (0: not charging).
     pub charge: bool,
     pub charging: f32,
+    /// `Player::barriers`.
+    pub barriers: u8,
 }
 
 impl PlayerSnap {
@@ -392,6 +432,7 @@ impl PlayerSnap {
             PickupKind::Cloak => self.cloak > 0.0,
             PickupKind::Speed => self.speed > 0.0,
             PickupKind::Charge => self.charge,
+            PickupKind::Barrier => self.barriers > 0,
         }
     }
 
@@ -435,6 +476,8 @@ pub struct Sim {
     /// drained by the caller, so bots can't see them).
     pub last_target_hit: Vec<Option<(u64, PlayerId)>>,
     pub turrets: Vec<TurretState>,
+    /// Barriers standing.
+    pub barriers: Vec<Barrier>,
     /// Every player's hit-relevant state at the end of each of the last `HISTORY` ticks.
     history: std::collections::VecDeque<(u64, Vec<Ghost>)>,
     events: Vec<SimEvent>,
@@ -499,6 +542,7 @@ impl Sim {
                     })
                     .collect()
             }),
+            barriers: Vec::new(),
             history: std::collections::VecDeque::with_capacity(HISTORY + 1),
             events: Vec::new(),
             rng: ChaCha8Rng::seed_from_u64(level.seed ^ 0x5EED),
@@ -562,6 +606,8 @@ impl Sim {
             speed: 0.0,
             charge: false,
             charging: None,
+            barriers: 0,
+            prev_barrier: false,
         };
         let spawn = self.pick_spawn(team);
         p.feet = spawn.pos;
@@ -640,6 +686,7 @@ impl Sim {
         self.step_mega();
         self.step_bolts();
         self.step_grenades();
+        self.step_barriers();
         self.step_pickups();
         self.record();
     }
@@ -961,6 +1008,25 @@ impl Sim {
                 }
             }
 
+            // Putting up a carried barrier (on pressing).
+            let deploy = p.cmd.barrier && !p.prev_barrier && p.barriers > 0;
+            p.prev_barrier = p.cmd.barrier;
+            if deploy {
+                p.barriers -= 1;
+                let id = self.id();
+                let b = Barrier {
+                    id,
+                    ..self.barrier_for(i)
+                };
+                self.barriers.push(b);
+                self.events.push(SimEvent::BarrierUp {
+                    id,
+                    player: self.players[i].id,
+                    pos: b.centre,
+                });
+            }
+            let p = &mut self.players[i];
+
             // The speed boost running out.
             if p.speed > 0.0 {
                 p.speed -= TICK;
@@ -1192,6 +1258,20 @@ impl Sim {
             t_best = t;
             hit = Some((q, n));
         }
+        // A barrier in the way (but its own team's bolts pass).
+        let mut barrier: Option<usize> = None;
+        let (bw, bh) = (self.rules.barrier_w, self.rules.barrier_h);
+        for (k, br) in self.barriers.iter().enumerate() {
+            if b.team == Some(br.team) {
+                continue;
+            }
+            if let Some(t) = br.crossed(b.pos, to, bw, bh)
+                && t < t_best
+            {
+                t_best = t;
+                barrier = Some(k);
+            }
+        }
         // Team bolts pass through team mates (and their shooter); grenade bolts hit everyone.
         let struck = b.extra.struck;
         let passes = |p: &Player| {
@@ -1233,6 +1313,16 @@ impl Sim {
             }
         }
         let mut remove = false;
+        if victim.is_none()
+            && let Some(k) = barrier
+        {
+            let at = b.pos + (to - b.pos) * t_best;
+            self.events.push(SimEvent::BarrierHit {
+                id: self.barriers[k].id,
+                pos: at,
+            });
+            return true;
+        }
         if let Some(pi) = victim {
             let at = b.pos + (to - b.pos) * t_best;
             self.hit_player(pi, b, at);
@@ -1469,6 +1559,57 @@ impl Sim {
                 i += 1;
             }
         }
+    }
+
+    /// Barriers running out.
+    fn step_barriers(&mut self) {
+        for b in &mut self.barriers {
+            b.left -= TICK;
+        }
+        let events = &mut self.events;
+        self.barriers.retain(|b| {
+            let keep = b.left > 0.0;
+            if !keep {
+                events.push(SimEvent::BarrierDown {
+                    id: b.id,
+                    pos: b.centre,
+                });
+            }
+            keep
+        });
+    }
+
+    /// Where a barrier for player `pi` goes up: `Rules::barrier_dist` in front of them (nearer
+    /// with a wall in the way), standing on the floor there, facing them.
+    fn barrier_for(&self, pi: usize) -> Barrier {
+        let p = &self.players[pi];
+        let ahead = Quat::from_rotation_y(p.cmd.yaw) * Vec3::NEG_Z;
+        let chest = p.feet + Vec3::Y * 1.0;
+        let reach = self.rules.barrier_dist;
+        let dist = match self.world.ray(chest, chest + ahead * (reach + 0.3)) {
+            Some((t, _, _)) => (t * (reach + 0.3) - 0.3).max(0.4),
+            None => reach,
+        };
+        let spot = p.feet + ahead * dist;
+        let floor = self
+            .world
+            .ground(spot.x, spot.z, p.feet.y + 0.5)
+            .unwrap_or(p.feet.y);
+        Barrier {
+            id: 0,
+            team: p.team,
+            centre: Vec3::new(spot.x, floor + self.rules.barrier_h / 2.0, spot.z),
+            normal: -ahead,
+            left: self.rules.barrier_time,
+        }
+    }
+
+    /// Whether a barrier stops a bolt of `team` (`None`: anyone's) from `a` to `b`.
+    pub fn barrier_blocks(&self, a: Vec3, b: Vec3, team: Option<Team>) -> bool {
+        let (w, h) = (self.rules.barrier_w, self.rules.barrier_h);
+        self.barriers
+            .iter()
+            .any(|br| Some(br.team) != team && br.crossed(a, b, w, h).is_some())
     }
 
     /// Laser gates: whoever touches one while it's on takes a hit (unless shielded or still
@@ -1838,6 +1979,7 @@ impl Sim {
                     speed: p.speed,
                     charge: p.charge,
                     charging: p.charging.unwrap_or(0.0),
+                    barriers: p.barriers,
                 })
                 .collect(),
             bolts: self
@@ -1877,6 +2019,7 @@ impl Sim {
                     off: t.off,
                 })
                 .collect(),
+            barriers: self.barriers.clone(),
         }
     }
 }
@@ -2246,6 +2389,75 @@ mod tests {
         sim.give(a, PickupKind::Shotgun);
         let p = sim.player(a).unwrap();
         assert!(!p.shotgun && p.charge);
+    }
+
+    #[test]
+    fn barriers_stop_enemy_bolts_only() {
+        let (mut sim, a, b) = duel();
+        sim.give(a, PickupKind::Barrier);
+        assert_eq!(sim.player(a).unwrap().barriers, 1);
+        // Facing b (3 m away along -z): up between them.
+        sim.set_cmd(
+            a,
+            PlayerCmd {
+                yaw: 0.0,
+                barrier: true,
+                ..Default::default()
+            },
+        );
+        sim.step();
+        sim.step();
+        assert_eq!(sim.barriers.len(), 1, "one barrier for one press");
+        assert_eq!(sim.player(a).unwrap().barriers, 0);
+        let br = sim.barriers[0];
+        let fa = sim.player(a).unwrap().feet;
+        assert!(((br.centre - fa).with_y(0.0).length() - sim.rules.barrier_dist).abs() < 0.05);
+        assert_eq!(br.team, Team::Red);
+        // b's bolt at a stops on it.
+        let bolt = |owner, team, from: Vec3, to: Vec3| Bolt {
+            id: 7,
+            owner,
+            owner_team: team,
+            team: Some(team),
+            pos: from,
+            vel: (to - from).normalize() * 40.0,
+            life: 1.0,
+            extra: BoltExtra::default(),
+        };
+        let (ca, cb) = (
+            sim.player(a).unwrap().chest(),
+            sim.player(b).unwrap().chest(),
+        );
+        sim.bolts.push(bolt(b, Team::Blue, cb, ca));
+        for _ in 0..10 {
+            sim.step();
+        }
+        let evs = sim.drain_events();
+        assert!(evs.iter().any(|e| matches!(e, SimEvent::BarrierHit { .. })));
+        assert_eq!(sim.player(a).unwrap().hits, 0);
+        // a's goes through it at b.
+        sim.bolts.push(bolt(a, Team::Red, ca, cb));
+        for _ in 0..10 {
+            sim.step();
+        }
+        assert_eq!(sim.player(b).unwrap().hits, 1);
+        for _ in 0..(sim.rules.barrier_time / TICK) as usize {
+            sim.step();
+        }
+        assert!(sim.barriers.is_empty());
+        assert!(
+            sim.drain_events()
+                .iter()
+                .any(|e| matches!(e, SimEvent::BarrierDown { .. }))
+        );
+        // Facing a wall a metre off: nearer.
+        let (m, n, _) = a_mirror(&sim);
+        let floor = m.min.y - 0.2;
+        let c = m.centre();
+        sim.players[0].feet = Vec3::new(c.x, floor, c.z) + n * 1.0;
+        sim.players[0].cmd.yaw = yaw_of(-n);
+        let near = sim.barrier_for(0);
+        assert!((near.centre - sim.players[0].feet).with_y(0.0).length() < 0.8);
     }
 
     #[test]

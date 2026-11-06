@@ -5,7 +5,7 @@ use lt_sim::{PlayerCmd, PlayerId, Rules, SimEvent, Team};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL: u16 = 10;
+pub const PROTOCOL: u16 = 11;
 pub const DEFAULT_PORT: u16 = 27420;
 /// How many of its latest commands a client sends with each input (a lost packet loses
 /// nothing).

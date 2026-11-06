@@ -11,6 +11,8 @@ Meshes (game frame, Y up, metres):
   ~0.32 m tall, origin near the centre.
 - `charge`: a lightning bolt (the charge gun), ~0.26 m wide, ~0.46 m tall, origin near the
   centre.
+- `barrier`: a wall of hard light between two posts: a tall panel with a glowing face and a
+  band across it, ~0.4 m wide, ~0.34 m tall, origin at the centre.
 - `shotgun`: the pump shotgun a player holds, in the blaster's frame (barrel along -Z, up +Y,
   origin at the middle of the grip hold), with `hit_1`/`hit_2`/`hit_3` lights on top of the
   receiver (hit_1 nearest the player) and a `muzzle` disc; the empty `shotgun_muzzle` marks the
@@ -197,6 +199,19 @@ def build_charge():
     return g
 
 
+def build_barrier():
+    g = L.Geo()
+    # The panel: a body slab with an accent face front and back, between two posts.
+    slab(g, [(-0.16, -0.15), (0.16, -0.15), (0.16, 0.15), (-0.16, 0.15)], -0.015, 0.015, "body",
+         front_mat="accent", back_mat="accent")
+    for s in (-1, 1):
+        box(g, (s * 0.2 - 0.03, -0.17, -0.03), (s * 0.2 + 0.03, 0.17, 0.03), mat="body")
+        box(g, (s * 0.2 - 0.032, 0.12, -0.032), (s * 0.2 + 0.032, 0.15, 0.032), mat="accent")
+    # A band across the middle (body, standing out of the glow).
+    box(g, (-0.17, -0.02, -0.022), (0.17, 0.02, 0.022), mat="body")
+    return g
+
+
 def build_shotgun():
     g = L.Geo()
 
@@ -268,7 +283,7 @@ def main():
     L.material("muzzle", base=(1, 1, 1), emit=(1, 1, 1), strength=5.0)
     for name, build in (("rapid", build_rapid), ("shield", build_shield), ("cloak", build_cloak),
                         ("shotgun", build_shotgun), ("speed", build_speed),
-                        ("charge", build_charge)):
+                        ("charge", build_charge), ("barrier", build_barrier)):
         g = build()
         L.make_object(name, g)
         print("powerup %s %d tris" % (name, g.tris()))

@@ -1977,10 +1977,15 @@ impl Bot {
     /// The enemy to shoot: the current one while in sight, else the nearest; one that can't be
     /// hit right now (recovering from a hit) only if there's nobody else. With the aim point and
     /// whether a shot would count.
-    fn pick_target(&self, sim: &Sim) -> Option<(PlayerId, f32, Vec3, bool)> {
+    fn pick_target(&self, sim: &Sim, p: &Player) -> Option<(PlayerId, f32, Vec3, bool)> {
+        // (Not behind an enemy barrier either: it would stop the bolt.)
+        let eye = p.eye();
         let hittable = |id: PlayerId| {
-            sim.player(id)
-                .is_some_and(|o| o.cooldown < 0.5 && o.shield <= 0.0)
+            sim.player(id).is_some_and(|o| {
+                o.cooldown < 0.5
+                    && o.shield <= 0.0
+                    && !sim.barrier_blocks(eye, o.chest(), Some(p.team))
+            })
         };
         let mut cands: Vec<(PlayerId, f32, Vec3)> = self.visible.clone();
         cands.sort_by(|a, b| {
@@ -2247,7 +2252,7 @@ impl Controller for Bot {
         }
 
         // Fighting: strafe while moving, or around the spot held.
-        let target = self.pick_target(sim);
+        let target = self.pick_target(sim, p);
         if target.map(|t| t.0) != self.enemy {
             self.enemy = target.map(|t| t.0);
             self.seen_for = 0.0;
@@ -2369,11 +2374,15 @@ impl Controller for Bot {
         let throw = self.try_grenade(sim, p, now);
         // A carried shield goes on in a fight.
         let shield = p.shields > 0 && p.shield <= 0.0 && target.is_some();
+        // A carried barrier goes up when hit in a fight, towards the enemy (the bot faces its
+        // aim).
+        let barrier = p.barriers > 0 && p.cooldown > 0.0 && target.is_some();
         self.pose(PlayerCmd {
             stick: move_dir.clamp_length_max(1.0),
             fire,
             throw,
             shield,
+            barrier,
             ..Default::default()
         })
     }

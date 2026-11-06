@@ -41,6 +41,7 @@ pub fn pickup_color(kind: PickupKind) -> Vec3 {
         PickupKind::Cloak => Vec3::new(0.6, 0.15, 1.0),
         PickupKind::Speed => Vec3::new(0.6, 1.0, 0.05),
         PickupKind::Charge => Vec3::new(1.0, 0.1, 0.6),
+        PickupKind::Barrier => Vec3::new(0.0, 1.0, 0.45),
     }
 }
 

@@ -316,6 +316,7 @@ fn read_input(
     };
     cmd.fire = grabbed && !overlays.hold_fire && on(Action::Fire);
     cmd.shield = grabbed && on(Action::Shield);
+    cmd.barrier = grabbed && on(Action::Barrier);
     if grabbed && !overlays.hold_fire && settings.just_pressed(Action::Fire, &input) {
         local.fire_latch = true;
     }

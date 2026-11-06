@@ -1,5 +1,5 @@
 //! The arena's special features (lt_sim::level::Level): mirror panels on walls that bolts
-//! bounce off, jump pads and laser gates. Built from the neon materials and lit StandardMaterial, so every renderer draws
+//! bounce off, jump pads and laser gates; and the barriers players put up. Built from the neon materials and lit StandardMaterial, so every renderer draws
 //! them.
 //!
 //! - Mirrors: dark polished glass on the wall's face with a faint lavender tint, glinting
@@ -11,6 +11,9 @@
 //! - Laser gates: three beams in the colour of the zone they stand in between glowing emitter
 //!   posts, humming while on, flickering just before they switch on, a faint trace while off;
 //!   they flash when they zap someone.
+//! - Barriers (`Snapshot::barriers`): a sheet of hard light in the team's colour (the neon
+//!   shader's forcefield halo) between two glowing posts, flashing where a bolt stops on it,
+//!   flickering out in its last second.
 
 use std::f32::consts::FRAC_PI_2;
 
@@ -38,9 +41,11 @@ pub struct FeaturesPlugin;
 
 impl Plugin for FeaturesPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
+        app.init_resource::<BarrierViews>().add_systems(
             Update,
-            (on_events, animate).chain().run_if(resource_exists::<Game>),
+            (on_events, animate, sync_barriers)
+                .chain()
+                .run_if(resource_exists::<Game>),
         );
     }
 }
@@ -56,6 +61,13 @@ struct PadView {
 /// A chevron climbing a jump pad's flight path: the path (feet positions), and its phase.
 #[derive(Component)]
 struct PadChevron(std::sync::Arc<Vec<Vec3>>, f32);
+
+/// The barriers on screen, by id: the root, the sheet's and posts' materials, and the flash
+/// of the last bolt stopped.
+#[derive(Resource, Default)]
+struct BarrierViews(
+    std::collections::HashMap<u32, (Entity, Handle<GlowMaterial>, Handle<AccentMaterial>, f32)>,
+);
 
 #[derive(Component)]
 struct GateView {
@@ -387,13 +399,121 @@ fn spawn_gates(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn sync_barriers(
+    mut commands: Commands,
+    game: Res<Game>,
+    time: Res<Time>,
+    mut views: ResMut<BarrierViews>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut accents: ResMut<Assets<AccentMaterial>>,
+    mut glows: ResMut<Assets<GlowMaterial>>,
+    mut unit: Local<Option<Handle<Mesh>>>,
+) {
+    let unit = unit
+        .get_or_insert_with(|| meshes.add(Cuboid::new(1.0, 1.0, 1.0)))
+        .clone();
+    let (w, h) = (game.rules.barrier_w, game.rules.barrier_h);
+    views.0.retain(|id, v| {
+        let keep = game.snap.barriers.iter().any(|b| b.id == *id);
+        // (Gone with the arena already, when it was taken down.)
+        if !keep && let Ok(mut e) = commands.get_entity(v.0) {
+            e.despawn();
+        }
+        keep
+    });
+    let t = time.elapsed_secs();
+    let dt = time.delta_secs();
+    for b in &game.snap.barriers {
+        let v = views.0.entry(b.id).or_insert_with(|| {
+            let color = team_color(Some(b.team));
+            let sheet_mat = glows.add(GlowMaterial {
+                neon: NeonUniform::fixed(color, 2.0).shield(),
+            });
+            let posts = accents.add(AccentMaterial {
+                neon: NeonUniform::fixed(color, 4.0),
+            });
+            let rot = Quat::from_rotation_arc(Vec3::Z, b.normal);
+            let root = commands
+                .spawn((
+                    ArenaPart,
+                    Transform::from_translation(b.centre).with_rotation(rot),
+                    Visibility::default(),
+                    Name::new("barrier"),
+                ))
+                .id();
+            // The sheet: uv 0..1 across and up, seen from both sides.
+            let mut sheet = MeshData::default();
+            for (x, y, u, v) in [
+                (-w / 2.0, -h / 2.0, 0.0, 0.0),
+                (w / 2.0, -h / 2.0, 1.0, 0.0),
+                (w / 2.0, h / 2.0, 1.0, 1.0),
+                (-w / 2.0, h / 2.0, 0.0, 1.0),
+            ] {
+                sheet.pos.push([x, y, 0.0]);
+                sheet.nrm.push([0.0, 0.0, 1.0]);
+                sheet.uv.push([u, v]);
+            }
+            sheet.idx.extend([0, 1, 2, 0, 2, 3]);
+            commands.spawn((
+                Mesh3d(meshes.add(sheet.to_mesh())),
+                MeshMaterial3d(sheet_mat.clone()),
+                Transform::IDENTITY,
+                ChildOf(root),
+            ));
+            for x in [-w / 2.0, w / 2.0] {
+                commands.spawn((
+                    Mesh3d(unit.clone()),
+                    MeshMaterial3d(posts.clone()),
+                    Transform::from_xyz(x, 0.0, 0.0).with_scale(Vec3::new(0.06, h, 0.06)),
+                    ChildOf(root),
+                ));
+            }
+            for y in [-h / 2.0, h / 2.0] {
+                commands.spawn((
+                    Mesh3d(unit.clone()),
+                    MeshMaterial3d(posts.clone()),
+                    Transform::from_xyz(0.0, y, 0.0).with_scale(Vec3::new(w, 0.03, 0.03)),
+                    ChildOf(root),
+                ));
+            }
+            (root, sheet_mat, posts, 0.0)
+        });
+        v.3 = (v.3 - dt * 3.0).max(0.0);
+        // Going up: swelling in; the last second: flickering out.
+        let rise = ((game.rules.barrier_time - b.left) / 0.25).clamp(0.0, 1.0);
+        let fade = if b.left < 1.0 {
+            if (t * 12.0).fract() < 0.5 {
+                b.left
+            } else {
+                b.left * 0.3
+            }
+        } else {
+            1.0
+        };
+        let k = rise * fade;
+        if let Some(mut m) = glows.get_mut(&v.1) {
+            m.neon.color.w = (2.0 + 6.0 * v.3) * k;
+        }
+        if let Some(mut m) = accents.get_mut(&v.2) {
+            m.neon.color.w = (4.0 + 6.0 * v.3) * k.max(0.2);
+        }
+    }
+}
+
 fn on_events(
     mut events: MessageReader<GameEvent>,
     mut mirrors: Query<&mut MirrorView>,
     mut pads: Query<&mut PadView>,
     mut gates: Query<&mut GateView>,
+    mut barriers: ResMut<BarrierViews>,
 ) {
     for GameEvent(e) in events.read() {
+        if let SimEvent::BarrierHit { id, .. } = *e
+            && let Some(v) = barriers.0.get_mut(&id)
+        {
+            v.3 = 1.0;
+        }
         if let SimEvent::GateZap { gate, .. } = *e {
             for mut g in gates.iter_mut().filter(|g| g.k == gate as usize) {
                 g.flash = 1.0;

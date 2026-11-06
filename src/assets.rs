@@ -235,6 +235,7 @@ fn powerup_mesh(kind: lt_sim::PickupKind) -> &'static str {
         lt_sim::PickupKind::Cloak => "cloak",
         lt_sim::PickupKind::Speed => "speed",
         lt_sim::PickupKind::Charge => "charge",
+        lt_sim::PickupKind::Barrier => "barrier",
     }
 }
 

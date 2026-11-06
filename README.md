@@ -27,7 +27,7 @@ holster on the left hip; or `LT_LEFT_HANDED=1`), `--autopilot` (a bot plays you,
 Testing: `LT_DEV="6:menu,8:leave,10:play-hard,14:hit,20:next"` scripts menu actions and hits (`options`
 opens the options screen, `arc` shows the throw arc, `target` hits a team target;
 `give-KIND` gives you a pickup's contents (`give-all-KIND` everyone) and `drop-KIND` lays one in front of you, KIND
-`grenade`, `rapid`, `shield`, `shotgun`, `cloak`, `speed`, `charge`; `fire=S` holds the trigger down for S s; `shields-up` switches everyone's shield on, `summon` (or `summon=M`) puts the
+`grenade`, `rapid`, `shield`, `shotgun`, `cloak`, `speed`, `charge`, `barrier`; `fire=S` holds the trigger down for S s, `barrier` puts up a carried barrier; `shields-up` switches everyone's shield on, `summon` (or `summon=M`) puts the
 nearest other player 4 m (M m) in front of you; Megatarget mode: `power` hits both secondary targets, `warp-door`, `warp-room`, `warp-turret` and `warp-pocket` move
 you there; `warp-mirror` puts you before the nearest mirror, `warp-pad` (or `warp-pad=M`) 1 m (M m) before
 the nearest jump pad, `warp-gate` before the nearest laser gate; `yaw=DEG` and `pitch=DEG` turn the flat screen's view),
@@ -114,6 +114,12 @@ it. You lose them all when you're tagged out.
   once, flies through every player in its way and is two hits on each, for 5 shots. Getting
   hit while charging stops it. Taking one also fills it up. You carry one special gun at a
   time: while you have the shotgun or the charge gun, the other stays where it lies.
+- **Barrier** (emerald, a panel between two posts): carried until you put it up (E; VR: grip
+  with the hand without the blaster, away from the holster), then a wall of hard light in
+  your team's colour stands 1.5 m in front of you (nearer if a wall is closer) for 8 s. It
+  stops every bolt but your team's (enemies', grenades', turrets'), which pass through as if
+  it weren't there; anyone can walk through it, and grenades fly through. The bots put theirs
+  up when they're hit in a fight, and don't shoot into enemy barriers.
 - **Speed boost** (lime, an arrow with speed lines): for 15 s you run half as fast again
   (stick and keys; walking in your room is as it was), leaving a short trail of lime motes.
 
@@ -126,6 +132,7 @@ it. You lose them all when you're tagged out.
 | fire | trigger | left mouse button |
 | grenade | hold B (or Y), throw, let go | hold G or the right mouse button (shows the throw's arc and where it goes off), let go |
 | shield (powerup) | trigger of the hand without the blaster | Q |
+| barrier (powerup) | grip of the hand without the blaster, away from the holster | E |
 | menu | menu button (left Touch controller), or hold B / Y for a second without a grenade; point and pull the trigger | Esc |
 
 Stick and key movement has a little inertia (about a tenth of a second to get up to speed or

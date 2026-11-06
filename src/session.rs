@@ -14,7 +14,7 @@
 //! (`power`), and going to Red's doorway into the megatarget's room (`warp-door`), into the
 //! room (`warp-room`), in front of the first turret (`warp-turret`) or into the first pocket
 //! (`warp-pocket`); in front of the nearest mirror (`warp-mirror`) jump pad (`warp-pad`) or laser gate (`warp-gate`); turning the flat screen's view (`yaw=90`, `pitch=-20`, in degrees); holding the trigger
-//! down for S seconds (`fire=S`).
+//! down for S seconds (`fire=S`); putting up a carried barrier (`barrier`).
 
 use bevy::prelude::*;
 use lt_sim::bots::Difficulty;
@@ -397,6 +397,12 @@ fn dev_script(
             let t = sim.rules.shield_time;
             for p in sim.players.iter_mut().filter(|p| p.alive()) {
                 p.shield = t;
+            }
+        }),
+        // Put up a carried barrier (`barrier`).
+        "barrier" => commands.queue(|w: &mut World| {
+            if let Some(mut local) = w.get_resource_mut::<LocalCmd>() {
+                local.dev_barrier = true;
             }
         }),
         // Hold the trigger down for S seconds (`fire=S`).

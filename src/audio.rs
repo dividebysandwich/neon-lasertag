@@ -48,6 +48,9 @@ struct Sounds {
     charge_loop: Handle<AudioSource>,
     charge_full: Handle<AudioSource>,
     beam_fire: Handle<AudioSource>,
+    barrier_up: Handle<AudioSource>,
+    barrier_hit: Handle<AudioSource>,
+    barrier_down: Handle<AudioSource>,
     tick: Handle<AudioSource>,
     power_up: Handle<AudioSource>,
     turret_fire: Handle<AudioSource>,
@@ -124,6 +127,9 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
         charge_loop: s("charge_loop"),
         charge_full: s("charge_full"),
         beam_fire: s("beam_fire"),
+        barrier_up: s("barrier_up"),
+        barrier_hit: s("barrier_hit"),
+        barrier_down: s("barrier_down"),
         tick: s("power_tick"),
         power_up: s("power_up"),
         turret_fire: s("turret_fire"),
@@ -314,6 +320,25 @@ fn play_events(
                     1.0,
                 )
             }
+            SimEvent::BarrierUp { pos, .. } => {
+                play(&mut commands, gain, &sounds.barrier_up, Some(pos), 1.0, 1.0)
+            }
+            SimEvent::BarrierHit { pos, .. } => play(
+                &mut commands,
+                gain,
+                &sounds.barrier_hit,
+                Some(pos),
+                0.9,
+                1.0,
+            ),
+            SimEvent::BarrierDown { pos, .. } => play(
+                &mut commands,
+                gain,
+                &sounds.barrier_down,
+                Some(pos),
+                0.8,
+                1.0,
+            ),
             SimEvent::GateZap { pos, .. } => {
                 play(&mut commands, gain, &sounds.zap, Some(pos), 0.8, 1.3)
             }
