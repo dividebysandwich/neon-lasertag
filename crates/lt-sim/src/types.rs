@@ -223,6 +223,10 @@ pub struct PlayerCmd {
     /// compensation). The server flies a bolt fired with it through the other players as they
     /// were at the ticks the shooter saw (up to `sim::MAX_LAG` ticks back).
     pub view_tick: u64,
+    /// The shots a remote client has fired so far by its own reckoning (`shot::Gun`), counting
+    /// the one fired with this command: its hit claims name shots by this.
+    #[serde(default)]
+    pub shot: u32,
 }
 
 /// What happened during a tick: drives sounds, haptics, effects and the score display.

@@ -8,6 +8,7 @@ pub mod hitbox;
 pub mod kit;
 pub mod level;
 pub mod rules;
+pub mod shot;
 pub mod sim;
 pub mod types;
 

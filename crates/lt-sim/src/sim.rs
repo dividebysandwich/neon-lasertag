@@ -18,6 +18,7 @@ use crate::collide::{BODY_HEIGHT, BODY_RADIUS, GRAVITY, World};
 use crate::hitbox::first_hit;
 use crate::level::{Ground, Level, MoverKind, Panel};
 use crate::rules::Rules;
+use crate::shot::{BoltTarget, Contact, Gun, HitClaim, Shot, Trigger, bolt_contact, on_box};
 use crate::types::*;
 
 pub const TICK: f32 = 1.0 / 60.0;
@@ -28,17 +29,18 @@ pub const PICKUP_REACH: f32 = 0.9;
 pub const PICKUP_HEIGHT: f32 = 0.6;
 /// Default standing eye height.
 pub const EYE: f32 = 1.65;
-/// Ticks of player history kept for lag compensation, and the most a bolt is compensated
-/// (250 ms).
 /// Seconds a turret waits before its first shot at a player it has just found, or after it
 /// comes back on.
 pub const TURRET_WARMUP: f32 = 0.5;
-pub const HISTORY: usize = 20;
+/// Ticks of player history kept for lag compensation (1 s), and the most a bolt is
+/// compensated.
+pub const HISTORY: usize = 60;
 /// A cloaked player can't be seen from further than `CLOAK_FAR` (m), and is see-through, fading
 /// in to `CLOAK_NEAR` (the bots and turrets see one closer than `CLOAK_NEAR`).
 pub const CLOAK_NEAR: f32 = 3.0;
 pub const CLOAK_FAR: f32 = 7.0;
-pub const MAX_LAG: u64 = 15;
+/// (600 ms: also the oldest moment a client's hit claim may be about.)
+pub const MAX_LAG: u64 = 36;
 
 /// A player as a bolt could hit them at a past tick.
 #[derive(Clone, Copy, Debug)]
@@ -121,6 +123,34 @@ pub struct Player {
     /// Barriers carried.
     pub barriers: u8,
     prev_barrier: bool,
+    /// A remote client judges this player's hits on others (`shot::HitClaim`), and the shots
+    /// it fired lately to check them against.
+    pub client_hits: bool,
+    shot_log: std::collections::VecDeque<ShotRecord>,
+}
+
+/// A shot whose hits a client judges, as the sim fired it.
+#[derive(Clone, Debug)]
+struct ShotRecord {
+    seq: u32,
+    /// The command's `view_tick`.
+    view_tick: u64,
+    team: Team,
+    from: Vec3,
+    /// Each bolt: velocity, life, extras, the sim's bolt id, and the players it struck.
+    pellets: Vec<(Vec3, f32, BoltExtra, u32, u64)>,
+}
+
+/// Shots kept per player for checking claims.
+const SHOT_LOG: usize = 24;
+
+/// What became of a hit claim.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Claim {
+    Accepted,
+    /// The shot hasn't been fired here yet (its command still on the way): ask again.
+    Early,
+    Rejected(&'static str),
 }
 
 impl Player {
@@ -140,10 +170,39 @@ impl Player {
 
     /// Least time between this player's shots.
     pub fn fire_interval(&self, rules: &Rules) -> f32 {
-        if self.rapid {
-            rules.fire_cooldown * 0.5
-        } else {
-            rules.fire_cooldown
+        self.gun().interval(rules)
+    }
+
+    /// The trigger's state.
+    pub fn gun(&self) -> Gun {
+        Gun {
+            prev_fire: self.prev_fire,
+            fire_cd: self.fire_cd,
+            charging: self.charging,
+            ammo: self.ammo,
+            rapid: self.rapid,
+            shotgun: self.shotgun,
+            charge: self.charge,
+            cooldown: self.cooldown,
+        }
+    }
+
+    fn set_gun(&mut self, g: Gun) {
+        self.prev_fire = g.prev_fire;
+        self.fire_cd = g.fire_cd;
+        self.charging = g.charging;
+        self.ammo = g.ammo;
+    }
+
+    /// As a bolt can meet them now.
+    pub fn target(&self) -> BoltTarget<'_> {
+        BoltTarget {
+            id: self.id,
+            team: self.team,
+            alive: self.alive(),
+            feet: self.feet,
+            eye: self.eye(),
+            cmd: &self.cmd,
         }
     }
 
@@ -211,12 +270,7 @@ impl Player {
     }
 
     fn head_offset(&self) -> Vec3 {
-        let h = self.cmd.head.pos;
-        if h == Vec3::ZERO {
-            Vec3::Y * EYE
-        } else {
-            h.clamp(Vec3::new(-0.6, 0.4, -0.6), Vec3::new(0.6, 2.2, 0.6))
-        }
+        crate::shot::head_offset(self.cmd.head.pos)
     }
 
     /// The middle of the floating chest (bots aim here).
@@ -289,6 +343,11 @@ pub struct BoltExtra {
     /// Flies on through the players it hits (each hit once: `struck`, by player id bit).
     pub pierce: bool,
     pub struck: u64,
+    /// A remote client judges this bolt's hits on players (`shot::HitClaim`); the sim's copy
+    /// stops at them without hitting. Its shot (`PlayerCmd::shot`) and pellet.
+    pub client: bool,
+    pub shot: u32,
+    pub pellet: u8,
 }
 
 impl Default for BoltExtra {
@@ -298,6 +357,9 @@ impl Default for BoltExtra {
             damage: 1,
             pierce: false,
             struck: 0,
+            client: false,
+            shot: 0,
+            pellet: 0,
         }
     }
 }
@@ -330,14 +392,6 @@ impl Barrier {
         let along = Vec3::Y.cross(self.normal);
         (x.dot(along).abs() <= w / 2.0 && x.y.abs() <= h / 2.0).then_some(t)
     }
-}
-
-/// What a trigger pull fires.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Shot {
-    Bolt,
-    Spread,
-    Beam,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -437,6 +491,9 @@ pub struct PlayerSnap {
     pub charging: f32,
     /// `Player::barriers`.
     pub barriers: u8,
+    /// The command's `PlayerCmd::shot` (the client's shots this state includes).
+    #[serde(default)]
+    pub shot: u32,
 }
 
 impl PlayerSnap {
@@ -468,6 +525,7 @@ pub struct BoltSnap {
     pub team: Option<Team>,
     /// A charge gun's beam.
     pub beam: bool,
+    pub owner: PlayerId,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -642,6 +700,8 @@ impl Sim {
             charging: None,
             barriers: 0,
             prev_barrier: false,
+            client_hits: false,
+            shot_log: std::collections::VecDeque::new(),
         };
         let spawn = self.pick_spawn(team);
         p.feet = spawn.pos;
@@ -923,13 +983,9 @@ impl Sim {
             let respawn_now = {
                 let p = &mut self.players[i];
                 p.cooldown = (p.cooldown - TICK).max(0.0);
-                // (Snapped to 0 within a rounding error of the last tick, so an interval of
-                // whole ticks is just that.)
-                p.fire_cd = if p.fire_cd > TICK + 1e-5 {
-                    p.fire_cd - TICK
-                } else {
-                    0.0
-                };
+                let mut gun = p.gun();
+                gun.tick();
+                p.set_gun(gun);
                 match p.respawn.as_mut() {
                     Some(t) => {
                         *t -= TICK;
@@ -1082,48 +1138,17 @@ impl Sim {
                 }
             }
 
-            // Firing: one shot per trigger pull; the charge gun fires on letting go (a beam once
-            // held for `Rules::charge_time`), and a hit or holstering stops its charging.
-            let pull = p.cmd.fire && !p.prev_fire;
-            p.prev_fire = p.cmd.fire;
-            if p.cmd.gun_hand.is_none() || p.cooldown > 0.0 {
-                p.charging = None;
-            }
-            let mut shot = None;
-            if pull && p.cmd.gun_hand.is_some() {
-                if p.cooldown > 0.0 {
-                    self.events.push(SimEvent::Denied { player: p.id });
-                } else if p.fire_cd > 0.0 {
-                    // Faster than the blaster's rate: ignored.
-                } else if p.ammo == 0 {
-                    p.fire_cd = p.fire_interval(&rules);
-                    self.events.push(SimEvent::Empty { player: p.id });
-                } else if p.charge {
-                    p.charging = Some(0.0);
-                } else if p.shotgun {
-                    shot = Some(Shot::Spread);
-                } else {
-                    shot = Some(Shot::Bolt);
-                }
-            }
-            if let Some(t) = p.charging {
-                if p.cmd.fire {
-                    let held = t + TICK;
-                    p.charging = Some(held);
-                    if t < rules.charge_time && held >= rules.charge_time {
-                        self.events.push(SimEvent::ChargeFull { player: p.id });
-                    }
-                } else {
-                    p.charging = None;
-                    shot = Some(if t >= rules.charge_time && p.ammo >= rules.beam_cost {
-                        Shot::Beam
-                    } else {
-                        Shot::Bolt
-                    });
-                }
-            }
-            if let Some(shot) = shot {
-                self.fire(i, shot, &rules);
+            // Firing (`Gun::trigger`).
+            let mut gun = p.gun();
+            let trigger = gun.trigger(p.cmd.fire, p.cmd.gun_hand.is_some(), &rules);
+            p.set_gun(gun);
+            let player = p.id;
+            match trigger {
+                Some(Trigger::Denied) => self.events.push(SimEvent::Denied { player }),
+                Some(Trigger::Empty) => self.events.push(SimEvent::Empty { player }),
+                Some(Trigger::ChargeFull) => self.events.push(SimEvent::ChargeFull { player }),
+                Some(Trigger::Fire(shot)) => self.fire(i, shot, &rules),
+                None => {}
             }
 
             // Throwing.
@@ -1166,28 +1191,23 @@ impl Sim {
     /// Player `pi` fires (it may: see `step_players`): a blaster bolt, the shotgun's spread of
     /// short-lived bolts or the charge gun's beam.
     fn fire(&mut self, pi: usize, shot: Shot, rules: &Rules) {
+        let seed = self.rng.random::<u64>();
         let p = &mut self.players[pi];
-        p.fire_cd = p.fire_interval(rules);
+        let mut gun = p.gun();
+        gun.fired(shot, rules);
+        p.set_gun(gun);
         p.decloak = rules.cloak_flash;
-        let cost = if shot == Shot::Beam {
-            rules.beam_cost
-        } else {
-            1
-        };
-        p.ammo = p.ammo.saturating_sub(cost);
         p.shots += 1;
         let eye = p.eye();
-        let mut from = p.feet + p.cmd.muzzle.pos;
-        // A muzzle far from its player, or through a wall, fires from the eye.
-        if !from.is_finite() || (from - eye).length() > 1.5 {
-            from = eye;
-        }
-        let mut dir = p.cmd.muzzle.forward();
-        if !dir.is_finite() || dir.length_squared() < 0.5 {
-            dir = Quat::from_rotation_y(p.cmd.yaw) * Vec3::NEG_Z;
-        }
-        let dir = dir.normalize();
+        let (from, dir) = crate::shot::muzzle(p.feet, eye, &p.cmd);
         let (id, team, view) = (p.id, p.team, p.cmd.view_tick);
+        let (client, seq) = (p.client_hits, p.cmd.shot);
+        // A client judging its hits made the same spread.
+        let seed = if client {
+            crate::shot::shot_seed(id, seq)
+        } else {
+            seed
+        };
         let blocked = self.world.ray(eye, from);
         // Fired first, so its event comes before any hit it makes straight away.
         self.events.push(SimEvent::Fired {
@@ -1210,56 +1230,44 @@ impl Sim {
             });
             return;
         }
-        let (dirs, speed, life, extra) = match shot {
-            Shot::Bolt => (
-                vec![dir],
-                rules.blaster_bolt_speed,
-                rules.bolt_life,
-                BoltExtra::default(),
-            ),
-            Shot::Spread => {
-                let side = dir.any_orthonormal_vector();
-                let up = dir.cross(side);
-                let dirs: Vec<Vec3> = (0..rules.shotgun_bolts)
-                    .map(|_| {
-                        // Evenly over the cone's disc.
-                        let r = self.rng.random::<f32>().sqrt() * rules.shotgun_spread.tan();
-                        let a = self.rng.random_range(0.0..std::f32::consts::TAU);
-                        (dir + (side * a.cos() + up * a.sin()) * r).normalize()
-                    })
-                    .collect();
-                (
-                    dirs,
-                    rules.blaster_bolt_speed,
-                    rules.shotgun_range / rules.blaster_bolt_speed,
-                    BoltExtra::default(),
-                )
-            }
-            Shot::Beam => (
-                vec![dir],
-                rules.beam_speed,
-                rules.beam_range / rules.beam_speed,
-                BoltExtra {
-                    damage: rules.beam_damage,
-                    pierce: true,
-                    ..BoltExtra::default()
-                },
-            ),
-        };
-        for d in dirs {
+        let mut pellets = Vec::new();
+        for (k, (vel, life, extra)) in crate::shot::shot_bolts(shot, dir, rules, seed)
+            .into_iter()
+            .enumerate()
+        {
+            let extra = BoltExtra {
+                client,
+                shot: seq,
+                pellet: k as u8,
+                ..extra
+            };
             let mut bolt = Bolt {
                 id: self.id(),
                 owner: id,
                 owner_team: team,
                 team: Some(team),
                 pos: from,
-                vel: d * speed,
+                vel,
                 life,
                 extra,
             };
+            pellets.push((vel, life, extra, bolt.id, 0));
             if self.compensate(&mut bolt, view) {
                 self.bolts.push(bolt);
             }
+        }
+        if client {
+            let log = &mut self.players[pi].shot_log;
+            if log.len() >= SHOT_LOG {
+                log.pop_front();
+            }
+            log.push_back(ShotRecord {
+                seq,
+                view_tick: view,
+                team,
+                from,
+                pellets,
+            });
         }
     }
 
@@ -1289,141 +1297,211 @@ impl Sim {
     /// panels) and the players it meets, the players as they are now or as they were at the
     /// end of the recorded tick `past`. Applies the hit; true if the bolt is used up.
     fn bolt_tick(&mut self, b: &mut Bolt, past: Option<usize>) -> bool {
-        let to = b.pos + b.vel * TICK;
-        let mut t_best = 1.0f32;
-        let mut hit: Option<(Vec3, Vec3)> = None;
-        if let Some((t, q, n)) = self.world.ray(b.pos, to) {
-            t_best = t;
-            hit = Some((q, n));
-        }
-        // A barrier in the way (but its own team's bolts pass).
-        let mut barrier: Option<usize> = None;
-        let (bw, bh) = (self.rules.barrier_w, self.rules.barrier_h);
-        for (k, br) in self.barriers.iter().enumerate() {
-            if b.team == Some(br.team) {
-                continue;
-            }
-            if let Some(t) = br.crossed(b.pos, to, bw, bh)
-                && t < t_best
-            {
-                t_best = t;
-                barrier = Some(k);
-            }
-        }
-        // Team bolts pass through team mates (and their shooter); grenade bolts hit everyone.
-        let struck = b.extra.struck;
-        let passes = |p: &Player| {
-            !p.alive()
-                || b.team.is_some() && (p.id == b.owner || b.team == Some(p.team))
-                || struck & (1u64 << (p.id % 64)) != 0
-        };
-        let mut victim: Option<usize> = None;
-        match past {
-            None => {
-                for (pi, p) in self.players.iter().enumerate() {
-                    if passes(p) {
-                        continue;
-                    }
-                    if let Some((s, _)) = p.hit_by(b.pos, to)
-                        && s <= t_best
-                    {
-                        t_best = s;
-                        victim = Some(pi);
-                    }
-                }
-            }
+        let contact = match past {
+            None => bolt_contact(
+                &self.world,
+                &self.barriers,
+                &self.rules,
+                b,
+                self.players.iter().map(|p| p.target()).enumerate(),
+            ),
             Some(h) => {
-                for g in &self.history[h].1 {
-                    // Where they were, if they were there then and are still in the game now.
-                    let Some(pi) = self.players.iter().position(|p| p.id == g.id) else {
-                        continue;
-                    };
-                    if !g.alive || passes(&self.players[pi]) {
-                        continue;
-                    }
-                    if let Some((s, _)) = first_hit(g.feet, g.eye, &g.cmd, b.pos, to)
-                        && s <= t_best
-                    {
-                        t_best = s;
-                        victim = Some(pi);
-                    }
-                }
-            }
-        }
-        let mut remove = false;
-        if victim.is_none()
-            && let Some(k) = barrier
-        {
-            let at = b.pos + (to - b.pos) * t_best;
-            self.events.push(SimEvent::BarrierHit {
-                id: self.barriers[k].id,
-                pos: at,
-            });
-            return true;
-        }
-        if let Some(pi) = victim {
-            let at = b.pos + (to - b.pos) * t_best;
-            self.hit_player(pi, b, at);
-            if !b.extra.pierce {
-                return true;
-            }
-            // A beam: on through them (and whoever else is in its way this tick).
-            b.extra.struck |= 1u64 << (self.players[pi].id % 64);
-            return self.bolt_tick(b, past);
-        } else if let Some((q, n)) = hit {
-            // Where the bolt struck, on the box (however oblique the shot).
-            let struck =
-                |min: Vec3, max: Vec3| q.cmpge(min - 0.01).all() && q.cmple(max + 0.01).all();
-            // A mirror: off it again (as many times as the rules allow), from where it struck.
-            if b.extra.bounces < self.rules.mirror_bounces
-                && let Some(m) = self.level.mirrors.iter().find(|m| struck(m.min, m.max))
-            {
-                let n = m.normal;
-                b.vel -= 2.0 * b.vel.dot(n) * n;
-                // (The flight moves it on by a tick's worth after this.)
-                b.pos = q + n * 0.02 - b.vel * TICK;
-                b.extra.bounces += 1;
-                self.events.push(SimEvent::Reflected {
-                    pos: q,
-                    normal: n,
-                    team: b.team,
+                let players = &self.players;
+                // Where they were, if they were there then and are still in the game now.
+                let ghosts = self.history[h].1.iter().filter_map(|g| {
+                    let pi = players.iter().position(|p| p.id == g.id)?;
+                    let p = &players[pi];
+                    Some((
+                        pi,
+                        BoltTarget {
+                            id: g.id,
+                            team: p.team,
+                            alive: g.alive && p.alive(),
+                            feet: g.feet,
+                            eye: g.eye,
+                            cmd: &g.cmd,
+                        },
+                    ))
                 });
-                return false;
+                bolt_contact(&self.world, &self.barriers, &self.rules, b, ghosts)
             }
-            if self.mega_bolt(b, q, &struck) {
-                return true;
+        };
+        match contact {
+            Contact::Clear => false,
+            Contact::Barrier { index, at } => {
+                self.events.push(SimEvent::BarrierHit {
+                    id: self.barriers[index].id,
+                    pos: at,
+                });
+                true
             }
-            // A target panel?
-            let target = self
-                .level
-                .targets
-                .iter()
-                .find(|t| struck(t.min, t.max))
-                .copied();
-            match target {
-                Some(t) if t.team != b.owner_team => {
-                    self.award(b.owner_team, Some(b.owner), self.rules.target_points);
-                    if let Some(p) = self.player_mut(b.owner) {
-                        p.target_hits += 1;
-                    }
-                    if let Some(h) = self.last_target_hit.get_mut(t.id as usize) {
-                        *h = Some((self.tick, b.owner));
-                    }
-                    self.events.push(SimEvent::TargetHit {
-                        target: t.id,
-                        by: b.owner,
-                        pos: q,
-                    });
+            Contact::Player { index, at } => {
+                // A client judges this one's hits (`claim_hit`): it just stops (a beam flies
+                // on).
+                if !b.extra.client {
+                    self.hit_player(index, b, at);
                 }
-                _ => self.events.push(SimEvent::BoltImpact {
-                    pos: q,
-                    normal: n,
-                    team: b.team,
-                }),
+                if !b.extra.pierce {
+                    return true;
+                }
+                // A beam: on through them (and whoever else is in its way this tick).
+                b.extra.struck |= 1u64 << (self.players[index].id % 64);
+                self.bolt_tick(b, past)
             }
-            remove = true;
+            Contact::Arena { q, n } => {
+                // A mirror: off it again (as many times as the rules allow), from where it
+                // struck.
+                if let Some(n) = crate::shot::bounce(&self.level, &self.rules, b, q) {
+                    self.events.push(SimEvent::Reflected {
+                        pos: q,
+                        normal: n,
+                        team: b.team,
+                    });
+                    return false;
+                }
+                // Where the bolt struck, on the box (however oblique the shot).
+                let struck = |min: Vec3, max: Vec3| on_box(q, min, max);
+                if self.mega_bolt(b, q, &struck) {
+                    return true;
+                }
+                // A target panel?
+                let target = self
+                    .level
+                    .targets
+                    .iter()
+                    .find(|t| struck(t.min, t.max))
+                    .copied();
+                match target {
+                    Some(t) if t.team != b.owner_team => {
+                        self.award(b.owner_team, Some(b.owner), self.rules.target_points);
+                        if let Some(p) = self.player_mut(b.owner) {
+                            p.target_hits += 1;
+                        }
+                        if let Some(h) = self.last_target_hit.get_mut(t.id as usize) {
+                            *h = Some((self.tick, b.owner));
+                        }
+                        self.events.push(SimEvent::TargetHit {
+                            target: t.id,
+                            by: b.owner,
+                            pos: q,
+                        });
+                    }
+                    _ => self.events.push(SimEvent::BoltImpact {
+                        pos: q,
+                        normal: n,
+                        team: b.team,
+                    }),
+                }
+                true
+            }
         }
-        remove
+    }
+
+    /// A remote client (playing `shooter`, `Player::client_hits`) says one of its bolts hit a
+    /// player. Checked against the shot as fired here (re-flown through the arena: the claimed
+    /// spot must be on its way) and the victim as they were at the claimed moment; then the hit
+    /// counts as any other (a shield blocks it, the hit cooldown lets it fizzle).
+    pub fn claim_hit(&mut self, shooter: PlayerId, c: HitClaim) -> Claim {
+        /// How far the claimed spot may be from the shot's way, and from the victim's body.
+        const OFF_PATH: f32 = 0.6;
+        const OFF_BODY: f32 = 1.0;
+        let Some(si) = self.players.iter().position(|p| p.id == shooter) else {
+            return Claim::Rejected("no shooter");
+        };
+        let s = &self.players[si];
+        if !s.client_hits {
+            return Claim::Rejected("not judged by the client");
+        }
+        let Some(ri) = s.shot_log.iter().rposition(|r| r.seq == c.shot) else {
+            return if c.shot > s.cmd.shot {
+                Claim::Early
+            } else {
+                Claim::Rejected("no such shot")
+            };
+        };
+        let rec = &s.shot_log[ri];
+        let Some(&(vel, life, extra, bolt_id, struck)) = rec.pellets.get(c.pellet as usize) else {
+            return Claim::Rejected("no such bolt");
+        };
+        let bit = 1u64 << (c.victim % 64);
+        if struck & bit != 0 || (!extra.pierce && struck != 0) {
+            return Claim::Rejected("already hit");
+        }
+        let Some(vi) = self.players.iter().position(|p| p.id == c.victim) else {
+            return Claim::Rejected("no victim");
+        };
+        let v = &self.players[vi];
+        if vi == si || v.team == rec.team || !v.alive() {
+            return Claim::Rejected("not a living enemy");
+        }
+        if !c.view.is_finite() || !c.at.is_finite() || c.view < 0.0 {
+            return Claim::Rejected("nonsense");
+        }
+        let view = c.view.floor() as u64;
+        if self.tick.saturating_sub(view) > MAX_LAG || view > self.tick {
+            return Claim::Rejected("too old");
+        }
+        // The victim there then (either tick around the view), near the spot.
+        let near_body = [view, view + 1].iter().any(|&t| {
+            self.past(t).is_some_and(|h| {
+                self.history[h].1.iter().any(|g| {
+                    g.id == c.victim && g.alive && {
+                        let lo = g.feet + Vec3::Y * 0.3;
+                        let hi = g.eye + Vec3::Y * 0.2;
+                        dist_to_segment(c.at, lo, hi) <= OFF_BODY
+                    }
+                })
+            })
+        });
+        if !near_body {
+            return Claim::Rejected("not where the victim was");
+        }
+        // The shot's way through the arena (mirrors and all), tick by tick: the spot on it, at
+        // about the tick of the bolt's flight the claimed moment comes to.
+        let flown = (rec.view_tick != 0).then_some(c.view - rec.view_tick as f32);
+        let mut b = Bolt {
+            id: bolt_id,
+            owner: shooter,
+            owner_team: rec.team,
+            team: Some(rec.team),
+            pos: rec.from,
+            vel,
+            life,
+            extra,
+        };
+        let mut on_path = false;
+        let mut k = 0u32;
+        while b.life > 0.0 && k < 600 {
+            let to = b.pos + b.vel * TICK;
+            let near = dist_to_segment(c.at, b.pos, to) <= OFF_PATH;
+            let timely = flown.is_none_or(|f| (k as f32 - f).abs() <= 6.0 + 0.2 * k as f32);
+            if near && timely {
+                on_path = true;
+                break;
+            }
+            // A wall ends the way (a mirror turns it).
+            if let Some((_, q, _)) = self.world.ray(b.pos, to)
+                && crate::shot::bounce(&self.level, &self.rules, &mut b, q).is_none()
+            {
+                break;
+            }
+            b.pos += b.vel * TICK;
+            b.life -= TICK;
+            k += 1;
+        }
+        if !on_path {
+            return Claim::Rejected("not on the shot's way");
+        }
+        // It counts.
+        if let Some(r) = self.players[si].shot_log.get_mut(ri) {
+            r.pellets[c.pellet as usize].4 |= bit;
+        }
+        if !extra.pierce {
+            self.bolts.retain(|x| x.id != bolt_id);
+        }
+        b.pos = c.at - b.vel.normalize_or_zero() * 0.1;
+        self.hit_player(vi, &b, c.at);
+        Claim::Accepted
     }
 
     fn step_bolts(&mut self) {
@@ -2091,7 +2169,20 @@ impl Sim {
         }
         true
     }
+}
 
+/// Distance from `p` to the segment `a`..`b`.
+fn dist_to_segment(p: Vec3, a: Vec3, b: Vec3) -> f32 {
+    let d = b - a;
+    let t = if d.length_squared() > 1e-12 {
+        ((p - a).dot(d) / d.length_squared()).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    (a + d * t).distance(p)
+}
+
+impl Sim {
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
             tick: self.tick,
@@ -2141,6 +2232,7 @@ impl Sim {
                     charge: p.charge,
                     charging: p.charging.unwrap_or(0.0),
                     barriers: p.barriers,
+                    shot: p.cmd.shot,
                 })
                 .collect(),
             bolts: self
@@ -2152,6 +2244,7 @@ impl Sim {
                     vel: b.vel,
                     team: b.team,
                     beam: b.extra.pierce,
+                    owner: b.owner,
                 })
                 .collect(),
             grenades: self
@@ -3262,10 +3355,8 @@ mod tests {
         assert!(checked >= 5, "{checked}");
     }
 
-    /// A Blue player strafing across Red's base, a Red shooter 3.5 m away aiming where the
-    /// target was `lag` ticks ago (leading it as it then moved); the command made at
-    /// `view_tick` = now - `lag` if `compensated`, else 0. Returns the target's hits.
-    fn lagged_shot(lag: u64, compensated: bool) -> u8 {
+    /// `lagged_shot`'s scene: a Red shooter, and a Blue player 3.5 m away walking along x.
+    fn strafing() -> (Sim, PlayerId, PlayerId) {
         let mut sim = Sim::new(
             7,
             Rules {
@@ -3305,6 +3396,14 @@ mod tests {
         for _ in 0..30 {
             sim.step();
         }
+        (sim, a, b)
+    }
+
+    /// A Blue player strafing across Red's base, a Red shooter 3.5 m away aiming where the
+    /// target was `lag` ticks ago (leading it as it then moved); the command made at
+    /// `view_tick` = now - `lag` if `compensated`, else 0. Returns the target's hits.
+    fn lagged_shot(lag: u64, compensated: bool) -> u8 {
+        let (mut sim, a, b) = strafing();
         // The next step fires; the shooter's client showed the world `lag` ticks before it.
         let view = sim.tick + 1 - lag;
         let me = sim.player(a).unwrap();
@@ -3363,6 +3462,117 @@ mod tests {
         }
         // Beyond the history only `MAX_LAG` is made up: still nothing breaks.
         let _ = lagged_shot(19, true);
+    }
+
+    #[test]
+    fn client_hit_claims_are_checked() {
+        let (mut sim, a, b) = strafing();
+        sim.players[0].client_hits = true;
+        for _ in 0..40 {
+            sim.step();
+        }
+        let lag = 20;
+        let view = sim.tick + 1 - lag;
+        let me = sim.player(a).unwrap();
+        let muzzle = me.eye() - Vec3::Y * 0.2;
+        let ghost = |sim: &Sim, t: u64| {
+            let h = sim.past(t).unwrap();
+            *sim.history[h].1.iter().find(|g| g.id == b).unwrap()
+        };
+        let chest =
+            |g: &Ghost| g.eye - Vec3::Y * (crate::hitbox::CHEST_DROP + crate::hitbox::CHEST_HALF.y);
+        // Aimed at where the target was shown two ticks of flight after the view.
+        let dir = (chest(&ghost(&sim, view + 2)) - muzzle).normalize();
+        let cmd = PlayerCmd {
+            gun_hand: Some(Hand::Right),
+            muzzle: Pose {
+                pos: muzzle - me.feet,
+                rot: look_rot(dir),
+            },
+            fire: true,
+            view_tick: view,
+            shot: 1,
+            ..Default::default()
+        };
+        sim.set_cmd(a, cmd);
+        // What the client saw its bolt do: the k-th tick of flight against the view + k.
+        let speed = sim.rules.blaster_bolt_speed;
+        let (k, at) = (0..lag)
+            .find_map(|k| {
+                let g = ghost(&sim, view + k);
+                let from = muzzle + dir * speed * TICK * k as f32;
+                let to = from + dir * speed * TICK;
+                first_hit(g.feet, g.eye, &g.cmd, from, to).map(|(t, _)| (k, from.lerp(to, t)))
+            })
+            .expect("the client's bolt hits");
+        sim.step();
+        sim.set_cmd(a, PlayerCmd { fire: false, ..cmd });
+        for _ in 0..3 {
+            sim.step();
+        }
+        assert_eq!(
+            sim.player(b).unwrap().hits,
+            0,
+            "the sim's own bolt doesn't hit"
+        );
+        let claim = HitClaim {
+            shot: 1,
+            pellet: 0,
+            victim: b,
+            view: (view + k) as f32 + 0.3,
+            at,
+        };
+        let bad = [
+            HitClaim {
+                at: at + Vec3::Y * 2.5,
+                ..claim
+            },
+            HitClaim {
+                at: at + dir * 6.0,
+                ..claim
+            },
+            HitClaim { victim: a, ..claim },
+            HitClaim { pellet: 1, ..claim },
+            HitClaim {
+                view: (sim.tick - MAX_LAG - 2) as f32,
+                ..claim
+            },
+        ];
+        for c in bad {
+            assert!(
+                matches!(sim.claim_hit(a, c), Claim::Rejected(_)),
+                "rejected: {c:?}"
+            );
+        }
+        assert_eq!(
+            sim.claim_hit(a, HitClaim { shot: 2, ..claim }),
+            Claim::Early
+        );
+        assert_eq!(sim.claim_hit(a, claim), Claim::Accepted);
+        assert_eq!(sim.player(b).unwrap().hits, 1);
+        assert!(
+            matches!(sim.claim_hit(a, claim), Claim::Rejected(_)),
+            "once only"
+        );
+        // A player the sim judges can't claim.
+        assert!(matches!(sim.claim_hit(b, claim), Claim::Rejected(_)));
+    }
+
+    #[test]
+    fn shotgun_spread_is_the_same_from_the_seed() {
+        let rules = Rules::default();
+        let seed = crate::shot::shot_seed(3, 17);
+        let a = crate::shot::shot_bolts(Shot::Spread, Vec3::NEG_Z, &rules, seed);
+        let b = crate::shot::shot_bolts(Shot::Spread, Vec3::NEG_Z, &rules, seed);
+        assert_eq!(a.len(), rules.shotgun_bolts as usize);
+        assert_eq!(a, b);
+        let c = crate::shot::shot_bolts(
+            Shot::Spread,
+            Vec3::NEG_Z,
+            &rules,
+            crate::shot::shot_seed(3, 18),
+        );
+        assert_ne!(a, c);
     }
 
     #[test]
