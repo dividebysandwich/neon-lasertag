@@ -24,6 +24,7 @@ pub mod assets;
 pub mod audio;
 pub mod desktop;
 pub mod endscreen;
+pub mod features;
 pub mod game;
 #[cfg(all(feature = "glvr", target_os = "linux"))]
 pub mod glvr;
@@ -315,6 +316,7 @@ pub fn run() {
         session::SessionPlugin,
         targets::TargetsPlugin,
         mega::MegaPlugin,
+        features::FeaturesPlugin,
     ))
     .insert_resource(ClearColor(Color::linear_rgb(0.002, 0.002, 0.006)))
     .insert_resource(GlobalAmbientLight {
@@ -509,6 +511,7 @@ fn build_arena(
     mut glows: ResMut<Assets<materials::GlowMaterial>>,
     mut accents: ResMut<Assets<materials::AccentMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut std: ResMut<Assets<StandardMaterial>>,
     assets: Res<AssetServer>,
     old: Query<Entity, With<ArenaPart>>,
 ) {
@@ -543,6 +546,15 @@ fn build_arena(
         &mut accents,
         &mut glows,
         &assets,
+    );
+    features::spawn(
+        &mut commands,
+        &game.level,
+        &palette,
+        &mut meshes,
+        &mut std,
+        &mut accents,
+        &mut glows,
     );
     ambience::spawn(
         &mut commands,

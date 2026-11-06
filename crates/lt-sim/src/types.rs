@@ -254,6 +254,12 @@ pub enum SimEvent {
         by: PlayerId,
         pos: Vec3,
     },
+    /// A bolt bounced off a mirror.
+    Reflected {
+        pos: Vec3,
+        normal: Vec3,
+        team: Option<Team>,
+    },
     /// A bolt hit a wall (spark).
     BoltImpact {
         pos: Vec3,

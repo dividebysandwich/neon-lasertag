@@ -36,6 +36,8 @@
 - turret_down: a turret switched off: a falling power-down whine with sputtering crackle.
 - shield_zap: a player walking into a forcefield: a violent electric crackle and a buzzing
   discharge.
+- mirror_ping: a bolt bouncing off a mirror: a bright glassy ping bending up, a tiny
+  zap and a short shimmering ring.
 - shield_hum: a forcefield's hum (a seamless two-second loop): a mains-like drone with
   slowly beating partials and faint crackle.
 
@@ -573,6 +575,16 @@ def shield_hum():
     return drone * 0.5 + hiss
 
 
+def mirror_ping():
+    T = 0.45
+    x = seconds(T)
+    f = 2600 * (1 + 0.25 * (1 - np.exp(-x / 0.03)))
+    ping = np.sin(2 * np.pi * phase(f)) * env(T, 0.001, 0.12) * 0.6
+    glass = ring(T, [3900, 5230, 7110], [0.09, 0.06, 0.04], [0.5, 0.35, 0.25]) * 0.5
+    zap = lowpass(square(1800 * np.exp(-x / 0.02) + 400, 0.3) * env(T, 0.0005, 0.02), 6000) * 0.3
+    return echoes(ping + glass + zap, [0.05], [0.25], 7000)
+
+
 SOUNDS = {
     # name: (generator, RMS dBFS, seed)
     "footstep_1": (lambda: footstep(1), -27.0, 11),
@@ -603,6 +615,7 @@ SOUNDS = {
     "turret_down": (turret_down, -19.0, 211),
     "shield_zap": (shield_zap, -15.0, 221),
     "shield_hum": (shield_hum, -24.0, 231),
+    "mirror_ping": (mirror_ping, -21.0, 241),
 }
 
 # Sounds played as loops.

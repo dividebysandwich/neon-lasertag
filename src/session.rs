@@ -13,7 +13,7 @@
 //! team target (`target`). Megatarget mode in local games: both secondary targets hit at once
 //! (`power`), and going to Red's doorway into the megatarget's room (`warp-door`), into the
 //! room (`warp-room`), in front of the first turret (`warp-turret`) or into the first pocket
-//! (`warp-pocket`); turning the flat screen's view (`yaw=90`, `pitch=-20`, in degrees).
+//! (`warp-pocket`); in front of the nearest mirror (`warp-mirror`); turning the flat screen's view (`yaw=90`, `pitch=-20`, in degrees).
 
 use bevy::prelude::*;
 use lt_sim::bots::Difficulty;
@@ -89,6 +89,14 @@ pub fn autopilot(game: &mut Game, seed: u64) {
 
 /// `LT_DEV`: scripted actions for testing.
 #[allow(clippy::too_many_arguments)]
+/// Turns the flat screen's view to `yaw` (after moving the local player for testing).
+fn face(w: &mut World, yaw: f32) {
+    if let Some(mut look) = w.get_resource_mut::<crate::desktop::Look>() {
+        look.yaw = yaw;
+        look.pitch = 0.0;
+    }
+}
+
 fn dev_script(
     mut commands: Commands,
     time: Res<Time>,
@@ -192,26 +200,57 @@ fn dev_script(
                     return;
                 };
                 let (s, t, p) = (m.shields[0], m.turrets[0], m.secondaries[0]);
-                match action.as_str() {
+                let yaw = match action.as_str() {
                     "power" => {
                         if let Some(p) = sim.players.iter_mut().find(|p| p.id == me) {
                             p.mega_hits = 3;
                             p.power = Some(sim.rules.power_time);
                         }
+                        return;
                     }
-                    "warp-door" => sim.teleport(me, s.outside + Vec3::Z * 3.0, 0.0),
-                    "warp-room" => sim.teleport(me, s.inside + Vec3::new(1.5, 0.0, -0.2), 0.6),
-                    "warp-turret" => sim.teleport(
-                        me,
+                    "warp-door" => (s.outside + Vec3::Z * 3.0, 0.0),
+                    "warp-room" => (s.inside + Vec3::new(1.5, 0.0, -0.2), 0.6),
+                    "warp-turret" => (
                         Vec3::new(t.pos.x + 4.5, 0.0, t.pos.z + 1.5),
                         std::f32::consts::FRAC_PI_2 - 0.2,
                     ),
-                    _ => sim.teleport(
-                        me,
-                        Vec3::new(p.centre().x - 1.6, 0.0, p.centre().z + 3.2),
-                        -0.5,
-                    ),
-                }
+                    _ => (Vec3::new(p.centre().x - 1.6, 0.0, p.centre().z + 3.2), -0.5),
+                };
+                sim.teleport(me, yaw.0, yaw.1);
+                face(w, yaw.1);
+            });
+        }
+        // Local games: in front of the nearest mirror, facing it at an angle (`warp-mirror`).
+        "warp-mirror" => {
+            commands.queue(move |w: &mut World| {
+                let yaw = {
+                    let Some(mut game) = w.get_resource_mut::<Game>() else {
+                        return;
+                    };
+                    let Some(me) = game.me else { return };
+                    let Source::Local { sim, .. } = &mut game.source else {
+                        return;
+                    };
+                    let Some(at) = sim.player(me).map(|p| p.feet) else {
+                        return;
+                    };
+                    let Some(m) = sim
+                        .level
+                        .mirrors
+                        .iter()
+                        .min_by(|a, b| a.centre().distance(at).total_cmp(&b.centre().distance(at)))
+                        .copied()
+                    else {
+                        return;
+                    };
+                    let along = Vec3::Y.cross(m.normal);
+                    let c = m.centre();
+                    let feet = Vec3::new(c.x, m.min.y - 0.2, c.z) + m.normal * 1.8 + along * 0.6;
+                    let yaw = lt_sim::sim::yaw_of(c - feet);
+                    sim.teleport(me, feet, yaw);
+                    yaw
+                };
+                face(w, yaw);
             });
         }
         // Local games: `give-KIND` hands the local player a pickup's contents (`give-all-KIND`:

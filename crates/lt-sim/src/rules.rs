@@ -27,6 +27,8 @@ pub struct Rules {
     /// Blaster bolts' speed (players' and bots').
     pub blaster_bolt_speed: f32,
     pub bolt_life: f32,
+    /// Times a bolt bounces off mirrors (the next one stops it).
+    pub mirror_bounces: u8,
     pub move_speed: f32,
     /// Most physical (room-scale) walking accepted per second.
     pub walk_speed_max: f32,
@@ -96,6 +98,7 @@ impl Default for Rules {
             bolt_speed: 48.0,
             blaster_bolt_speed: 96.0,
             bolt_life: 2.0,
+            mirror_bounces: 1,
             move_speed: 4.0,
             walk_speed_max: 4.0,
             grenade_max: 1,

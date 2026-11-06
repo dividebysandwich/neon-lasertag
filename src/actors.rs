@@ -967,6 +967,29 @@ fn effects(
                     seed,
                 );
             }
+            SimEvent::Reflected { pos, team, normal } => {
+                burst(
+                    &mut commands,
+                    &meshes,
+                    palette.bolt_for(team),
+                    pos,
+                    8,
+                    2.5,
+                    0.022,
+                    seed,
+                );
+                commands.spawn((
+                    Ring {
+                        life: 0.3,
+                        max: 0.3,
+                        size: 0.5,
+                    },
+                    Mesh3d(meshes.ring.clone()),
+                    MeshMaterial3d(palette.bolt_for(team)),
+                    Transform::from_translation(pos + normal * 0.03)
+                        .with_rotation(Quat::from_rotation_arc(Vec3::Y, normal)),
+                ));
+            }
             SimEvent::Blocked { pos, .. } => {
                 burst(
                     &mut commands,

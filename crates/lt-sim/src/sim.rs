@@ -232,6 +232,14 @@ pub struct Bolt {
     pub pos: Vec3,
     pub vel: Vec3,
     pub life: f32,
+    pub extra: BoltExtra,
+}
+
+/// What some bolts do besides one hit: bounce off mirrors, hit harder, fly through players.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct BoltExtra {
+    /// Mirrors bounced off so far.
+    pub bounces: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -952,6 +960,7 @@ impl Sim {
                                     pos: from,
                                     vel: d * rules.blaster_bolt_speed,
                                     life,
+                                    extra: BoltExtra::default(),
                                 };
                                 if self.compensate(&mut bolt, view) {
                                     self.bolts.push(bolt);
@@ -1022,7 +1031,7 @@ impl Sim {
     /// One tick of a bolt's flight from `b.pos`: the first of the arena (including the target
     /// panels) and the players it meets, the players as they are now or as they were at the
     /// end of the recorded tick `past`. Applies the hit; true if the bolt is used up.
-    fn bolt_tick(&mut self, b: &Bolt, past: Option<usize>) -> bool {
+    fn bolt_tick(&mut self, b: &mut Bolt, past: Option<usize>) -> bool {
         let to = b.pos + b.vel * TICK;
         let mut t_best = 1.0f32;
         let mut hit: Option<(Vec3, Vec3)> = None;
@@ -1076,6 +1085,22 @@ impl Sim {
             // Where the bolt struck, on the box (however oblique the shot).
             let struck =
                 |min: Vec3, max: Vec3| q.cmpge(min - 0.01).all() && q.cmple(max + 0.01).all();
+            // A mirror: off it again (as many times as the rules allow), from where it struck.
+            if b.extra.bounces < self.rules.mirror_bounces
+                && let Some(m) = self.level.mirrors.iter().find(|m| struck(m.min, m.max))
+            {
+                let n = m.normal;
+                b.vel -= 2.0 * b.vel.dot(n) * n;
+                // (The flight moves it on by a tick's worth after this.)
+                b.pos = q + n * 0.02 - b.vel * TICK;
+                b.extra.bounces += 1;
+                self.events.push(SimEvent::Reflected {
+                    pos: q,
+                    normal: n,
+                    team: b.team,
+                });
+                return false;
+            }
             if self.mega_bolt(b, q, &struck) {
                 return true;
             }
@@ -1117,9 +1142,10 @@ impl Sim {
     fn step_bolts(&mut self) {
         let mut i = 0;
         while i < self.bolts.len() {
-            let bolt = self.bolts[i];
-            let remove = self.bolt_tick(&bolt, None);
+            let mut bolt = self.bolts[i];
+            let remove = self.bolt_tick(&mut bolt, None);
             let b = &mut self.bolts[i];
+            *b = bolt;
             b.pos += b.vel * TICK;
             b.life -= TICK;
             if remove || b.life <= 0.0 {
@@ -1264,6 +1290,7 @@ impl Sim {
                                 pos: g.pos + dir * 0.1,
                                 vel: dir * rules.bolt_speed,
                                 life: rules.bolt_life,
+                                extra: BoltExtra::default(),
                             });
                         }
                         self.events.push(SimEvent::GrenadeBurst { pos: g.pos });
@@ -1396,6 +1423,7 @@ impl Sim {
                     pos: from,
                     vel: dir * rules.bolt_speed,
                     life: rules.bolt_life,
+                    extra: BoltExtra::default(),
                 });
                 self.events.push(SimEvent::TurretFired {
                     turret: k as u8,
@@ -1755,6 +1783,77 @@ mod tests {
         }
     }
 
+    /// A ground-floor mirror of the arena for `seed` and the directions along and out of it.
+    fn a_mirror(sim: &Sim) -> (crate::level::Panel, Vec3, Vec3) {
+        let m = *sim
+            .level
+            .mirrors
+            .iter()
+            .find(|m| m.max.y < 3.0)
+            .expect("a mirror on the ground");
+        let n = m.normal;
+        (m, n, Vec3::Y.cross(n))
+    }
+
+    #[test]
+    fn mirrors_bounce_bolts_once() {
+        let mut sim = Sim::new(7, Rules::default());
+        let a = sim.add_player("a", Some(Team::Red), false).unwrap();
+        let b = sim.add_player("b", Some(Team::Blue), false).unwrap();
+        let (m, n, along) = a_mirror(&sim);
+        let c = m.centre();
+        // The victim off to one side in front of the mirror, the bolt coming in from the
+        // other side at 45 degrees, at the victim's chest height.
+        let floor = sim.world.ground(c.x, c.z, c.y).unwrap_or(0.0);
+        let spot = c + n * 1.2 - along * 0.6;
+        sim.players[1].feet = Vec3::new(spot.x, floor, spot.z);
+        sim.players[0].feet = sim.level.base_centre(Team::Red);
+        let chest = sim.players[1].chest();
+        let from = Vec3::new(c.x, chest.y, c.z) + n * 1.2 + along * 0.6;
+        let at = Vec3::new(c.x, chest.y, c.z);
+        sim.bolts.push(Bolt {
+            id: 1,
+            owner: a,
+            owner_team: Team::Red,
+            team: Some(Team::Red),
+            pos: from,
+            vel: (at - from).normalize() * 40.0,
+            life: 2.0,
+            extra: BoltExtra::default(),
+        });
+        for _ in 0..10 {
+            sim.step();
+        }
+        let evs = sim.drain_events();
+        assert!(
+            evs.iter().any(|e| matches!(e, SimEvent::Reflected { .. })),
+            "bounced: {evs:?}"
+        );
+        assert_eq!(sim.player(b).unwrap().hits, 1, "and hit: {evs:?}");
+
+        // A bolt that has bounced already stops at the mirror.
+        sim.bolts.push(Bolt {
+            id: 2,
+            owner: a,
+            owner_team: Team::Red,
+            team: Some(Team::Red),
+            pos: c + n * 1.5,
+            vel: -n * 40.0,
+            life: 2.0,
+            extra: BoltExtra {
+                bounces: 1,
+                ..BoltExtra::default()
+            },
+        });
+        for _ in 0..10 {
+            sim.step();
+        }
+        let evs = sim.drain_events();
+        assert!(!evs.iter().any(|e| matches!(e, SimEvent::Reflected { .. })));
+        assert!(evs.iter().any(|e| matches!(e, SimEvent::BoltImpact { .. })));
+        assert!(sim.bolts.is_empty());
+    }
+
     #[test]
     fn three_hits_tag_out_with_cooldowns() {
         let (mut sim, a, b) = duel();
@@ -1960,6 +2059,7 @@ mod tests {
             pos: eye + Vec3::X * 2.0,
             vel: Vec3::NEG_X * 40.0,
             life: 1.0,
+            extra: BoltExtra::default(),
         });
         for _ in 0..10 {
             sim.step();
@@ -2151,6 +2251,7 @@ mod tests {
                     pos: from,
                     vel: across * 40.0,
                     life: 2.0,
+                    extra: BoltExtra::default(),
                 });
                 for _ in 0..4 {
                     sim.step();
@@ -2384,6 +2485,7 @@ mod tests {
             pos: Vec3::ZERO,
             vel: Vec3::ZERO,
             life: 1.0,
+            extra: BoltExtra::default(),
         };
         sim.players[0].hits = 2;
         sim.hit_player(0, &bolt, Vec3::ZERO);
@@ -2513,6 +2615,7 @@ mod tests {
             pos: Vec3::ZERO,
             vel: Vec3::ZERO,
             life: 1.0,
+            extra: BoltExtra::default(),
         };
         sim.hit_player(0, &bolt, Vec3::ZERO);
         assert!(!sim.player(a).unwrap().cloaked());

@@ -494,8 +494,11 @@ fn on_events(
         if let SimEvent::Respawned { player, pos } = e
             && Some(*player) == game.me
         {
-            look.yaw = spawn_yaw(&game, *pos);
-            look.pitch = 0.0;
+            // (Moved off the spawn pads for testing: the warp turned the view itself.)
+            if game.level.spawn_at(*pos).is_some() {
+                look.yaw = spawn_yaw(&game, *pos);
+                look.pitch = 0.0;
+            }
         }
     }
 }

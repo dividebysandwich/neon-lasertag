@@ -990,6 +990,8 @@ pub struct Level {
     pub mode: GameMode,
     /// Megatarget mode: its targets, turrets, room and forcefields.
     pub mega: Option<Mega>,
+    /// Mirror panels on wall faces (bolts bounce off them; the wall still collides).
+    pub mirrors: Vec<Panel>,
 }
 
 impl Level {
@@ -1010,13 +1012,18 @@ impl Level {
                     // Movers only turn existing walls into doors and use open cells, so the
                     // validated arena is the one with every door closed.
                     let movers = place_movers(&mut grid, &nav, &mut rng);
+                    let mirrors = place_mirrors(&grid, mode, &mut rng);
+                    if mirrors.is_empty() {
+                        continue;
+                    }
                     let mut nav = build_nav(&grid);
                     for (i, m) in movers.iter().enumerate() {
                         if let Some((a, b)) = m.link {
                             nav.doors.push((a, b, i));
                         }
                     }
-                    let level = build_level(seed, grid, nav, movers, mode);
+                    let mut level = build_level(seed, grid, nav, movers, mode);
+                    level.mirrors = mirrors;
                     if level
                         .targets
                         .iter()
@@ -2454,6 +2461,83 @@ fn place_movers(g: &mut Grid, nav: &Nav, rng: &mut ChaCha8Rng) -> Vec<Mover> {
     movers
 }
 
+/// Mirror panels: faces of full walls (either floor) in the middle of Red's half and their
+/// mirror images, each facing an open cell with room in front of it to shoot from, away from
+/// the bases, the targets and the Megatarget mode's pieces.
+fn place_mirrors(g: &Grid, mode: GameMode, rng: &mut ChaCha8Rng) -> Vec<Panel> {
+    let dm = g.dims;
+    let walkable = |floor: usize, ix: usize, iz: usize| {
+        let i = dm.idx(ix, iz);
+        if floor == 0 {
+            g.ground[i] == Ground::Open
+        } else {
+            g.upper_walkable(i)
+        }
+    };
+    // (In Megatarget mode, clear of the pockets' and the room's rows and the row in front.)
+    let first = match mode {
+        GameMode::Classic => dm.half() + 1,
+        GameMode::Megatarget => mega_row(dm) + 6,
+    };
+    let rows = first..dm.target_row() - 1;
+    let mut cands: Vec<(f32, Panel, (usize, usize))> = Vec::new();
+    for iz in rows.clone() {
+        for ix in 0..dm.w {
+            for floor in 0..2 {
+                for d in 0..4u8 {
+                    // The wall on side `d` of this cell, seen from the cell (facing back).
+                    let e = edge(ix, iz, d);
+                    if g.edge_wall(floor, e) != Wall::Full || !walkable(floor, ix, iz) {
+                        continue;
+                    }
+                    // Room to shoot from: two more cells straight back out.
+                    let back = (d + 2) % 4;
+                    let room = (1..=1).all(|k| {
+                        dm.step(ix, iz, back, k).is_some_and(|(x, z)| {
+                            rows.contains(&z) && walkable(floor, x, z) && {
+                                let (px, pz) = dm.step(ix, iz, back, k - 1).unwrap();
+                                g.wall(floor, px, pz, back) == Wall::None
+                            }
+                        })
+                    });
+                    if !room {
+                        continue;
+                    }
+                    let (dx, dz) = DIRS[d as usize];
+                    let n = -Vec3::new(dx as f32, 0.0, dz as f32);
+                    let c = dm.cell_centre(ix, iz);
+                    let face = c
+                        + Vec3::new(dx as f32, 0.0, dz as f32) * (CELL / 2.0)
+                        + n * kit::WALL_T / 2.0;
+                    let y0 = floor as f32 * STOREY;
+                    let along = Vec3::new(dz.abs() as f32, 0.0, dx.abs() as f32);
+                    let half = along * 0.8 + Vec3::Y * 1.3 + n.abs() * 0.015;
+                    let centre = face + Vec3::Y * (y0 + 1.5) + n * 0.005;
+                    cands.push((rng.random::<f32>(), Panel::at(centre, half, n), (ix, iz)));
+                }
+            }
+        }
+    }
+    cands.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let want = rng.random_range(dm.scaled(1)..=dm.scaled(3));
+    let mut chosen: Vec<(Panel, (usize, usize))> = Vec::new();
+    for (_, p, c) in cands {
+        if chosen.len() >= want {
+            break;
+        }
+        if chosen
+            .iter()
+            .all(|(_, o)| o.0.abs_diff(c.0) + o.1.abs_diff(c.1) >= 4)
+        {
+            chosen.push((p, c));
+        }
+    }
+    chosen
+        .into_iter()
+        .flat_map(|(p, _)| [p, p.mirrored()])
+        .collect()
+}
+
 fn build_level(seed: u64, g: Grid, nav: Nav, movers: Vec<Mover>, mode: GameMode) -> Level {
     let dm = g.dims;
     let mut pieces = Vec::new();
@@ -2693,6 +2777,7 @@ fn build_level(seed: u64, g: Grid, nav: Nav, movers: Vec<Mover>, mode: GameMode)
         movers,
         mode,
         mega,
+        mirrors: Vec::new(),
     }
 }
 
@@ -3151,6 +3236,36 @@ mod tests {
                 && level.spawns.iter().all(|s| s.is_empty())
                 && level.movers.is_empty()
         );
+    }
+
+    #[test]
+    fn mirrors_are_mirrored_and_in_the_middle() {
+        for (seed, level) in seeds() {
+            let dm = level.dims();
+            assert!(!level.mirrors.is_empty(), "seed {seed}: no mirrors");
+            assert_eq!(level.mirrors.len() % 2, 0);
+            for m in &level.mirrors {
+                let c = m.centre();
+                let twin = mirror_point(c);
+                assert!(
+                    level
+                        .mirrors
+                        .iter()
+                        .any(|o| o.centre().distance(twin) < 1e-3),
+                    "seed {seed}: mirror at {c} has no twin"
+                );
+                // Outside the rear quarters (targets) and on a wall face.
+                assert!(c.z.abs() < dm.half_length() / 2.0, "seed {seed}: {c}");
+                assert!(!level.world().clear(c + m.normal * 0.3, c - m.normal * 0.3));
+            }
+        }
+        for mode in [GameMode::Classic, GameMode::Megatarget] {
+            for size in ArenaSize::ALL {
+                let a = Level::generate_for(5, size, mode);
+                let b = Level::generate_for(5, size, mode);
+                assert_eq!(a.mirrors, b.mirrors);
+            }
+        }
     }
 
     #[test]
