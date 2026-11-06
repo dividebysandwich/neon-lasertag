@@ -112,9 +112,17 @@ fn split_shapes(parts: &HashMap<String, MeshData>) -> Vec<Shape3> {
         for g in islands(glow) {
             let (lo, hi) = g.bounds();
             let gap = |(a, b): &(Vec3, Vec3)| (lo - *b).max(*a - hi).max(Vec3::ZERO).length();
-            if let Some(i) =
-                (0..boxes.len()).min_by(|&i, &j| gap(&boxes[i]).total_cmp(&gap(&boxes[j])))
-            {
+            // The nearest shape; of several around it (an outline round an emblem), the
+            // smallest.
+            let size = |(a, b): &(Vec3, Vec3)| (*b - *a).length();
+            if let Some(i) = (0..boxes.len()).min_by(|&i, &j| {
+                let (gi, gj) = (gap(&boxes[i]), gap(&boxes[j]));
+                if (gi - gj).abs() < 0.02 {
+                    size(&boxes[i]).total_cmp(&size(&boxes[j]))
+                } else {
+                    gi.total_cmp(&gj)
+                }
+            }) {
                 shapes[i].glow.append(&g, Quat::IDENTITY, Vec3::ZERO);
             }
         }
@@ -359,6 +367,20 @@ fn piece_random(level: &Level, kind: PieceKind, pos: Vec3, salt: u64) -> f32 {
 
 /// The share of an ordinary piece's accent shapes it keeps (its outline always stays).
 const KEEP: f32 = 0.6;
+/// The shares of ordinary walls showing only their outline, and their outline and one motif.
+const SIMPLE_OUTLINE: f32 = 0.3;
+const SIMPLE_MOTIF: f32 = 0.25;
+
+/// How much of its accents a piece shows.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Detail {
+    /// The outline only (accents spanning most of the piece).
+    Outline,
+    /// The outline and its biggest motif.
+    Motif,
+    /// Everything (ordinary pieces: thinned out at random).
+    Full,
+}
 
 /// Spawns the doors and sliding panels: their kit piece in full colour (moving parts stand
 /// out), as entities of their own.
@@ -432,10 +454,29 @@ pub fn spawn_arena(
         if let Some(body) = parts.get("body") {
             chunk.entry("body").or_default().append(body, rot, p.pos);
         }
-        // Megatarget mode: the walls targets and turrets hang on, plain.
-        if level.mega.as_ref().is_some_and(|m| m.plain(p.kind, p.pos)) {
-            continue;
-        }
+        // How much of its decoration a piece shows: the Megatarget mode's walls that targets and
+        // turrets hang on only their outline (so those stand out), and some ordinary walls only
+        // their outline, or their outline and one motif, so not every wall is busy.
+        let wall = matches!(
+            p.kind,
+            PieceKind::WallFull | PieceKind::WallWindow | PieceKind::WallHalf
+        );
+        let plain = level.mega.as_ref().is_some_and(|m| m.plain(p.kind, p.pos));
+        let simple = piece_random(level, p.kind, p.pos, 3);
+        let detail = if plain || wall && !important && simple < SIMPLE_OUTLINE {
+            Detail::Outline
+        } else if wall && !important && simple < SIMPLE_OUTLINE + SIMPLE_MOTIF {
+            Detail::Motif
+        } else {
+            Detail::Full
+        };
+        let (bmin, bmax) = p.kind.bounds();
+        let longest = (bmax - bmin).max_element();
+        let outline = |shape: &Shape3| {
+            let (a, b) = shape.accent.bounds();
+            (b - a).max_element() >= 0.8 * longest
+        };
+        let mut motifs = 0;
         // Fewer accents on ordinary pieces: a random share of their shapes, the outline kept.
         let thin = !important
             && !matches!(
@@ -453,8 +494,30 @@ pub fn spawn_arena(
             ("accent", "glow")
         };
         for (i, shape) in kit.shapes.get(&p.kind).into_iter().flatten().enumerate() {
-            if thin && i > 0 && piece_random(level, p.kind, p.pos, 10 + i as u64) > KEEP {
-                continue;
+            match detail {
+                Detail::Outline if !outline(shape) => continue,
+                // The biggest emblem (not a thin bar), on both faces (shapes come in pairs,
+                // biggest first).
+                Detail::Motif if !outline(shape) => {
+                    let (a, b) = shape.accent.bounds();
+                    let mut e = (b - a).to_array();
+                    e.sort_by(|x, y| y.total_cmp(x));
+                    if e[1] < 0.4 * e[0] {
+                        continue;
+                    }
+                    motifs += 1;
+                    if motifs > 2 {
+                        continue;
+                    }
+                }
+                Detail::Full
+                    if thin
+                        && i > 0
+                        && piece_random(level, p.kind, p.pos, 10 + i as u64) > KEEP =>
+                {
+                    continue;
+                }
+                _ => {}
             }
             chunk
                 .entry(accent_slot)
