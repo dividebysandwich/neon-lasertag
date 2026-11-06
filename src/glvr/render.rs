@@ -53,6 +53,7 @@ struct Program {
     pulse_pos: Option<glow::UniformLocation>,
     pulse_colour: Option<glow::UniformLocation>,
     extra: Option<glow::UniformLocation>,
+    shots: Option<glow::UniformLocation>,
     point_pos: Option<glow::UniformLocation>,
     point_colour: Option<glow::UniformLocation>,
     point_count: Option<glow::UniformLocation>,
@@ -181,6 +182,7 @@ fn compile(gl: &glow::Context, shader: &str, defines: &str) -> Result<Program, S
             pulse_pos: at("u_pulse_pos"),
             pulse_colour: at("u_pulse_colour"),
             extra: at("u_extra"),
+            shots: at("u_shots"),
             point_pos: at("u_point_pos"),
             point_colour: at("u_point_colour"),
             point_count: at("u_point_count"),
@@ -513,6 +515,7 @@ impl Renderer {
             let n = &list.neon;
             let pulse_pos: Vec<f32> = n.pulse_pos.iter().flat_map(|v| v.to_array()).collect();
             let pulse_colour: Vec<f32> = n.pulse_colour.iter().flat_map(|v| v.to_array()).collect();
+            let shots: Vec<f32> = n.shots.iter().flat_map(|v| v.to_array()).collect();
             for p in [&self.lit, &self.accent, &self.glow] {
                 gl.use_program(Some(p.program));
                 gl.uniform_matrix_4_f32_slice(p.view_proj.as_ref(), false, &view_proj);
@@ -525,6 +528,7 @@ impl Renderer {
                 gl.uniform_3_f32_slice(p.blue.as_ref(), &n.blue.to_array());
                 gl.uniform_4_f32_slice(p.pulse_pos.as_ref(), &pulse_pos);
                 gl.uniform_4_f32_slice(p.pulse_colour.as_ref(), &pulse_colour);
+                gl.uniform_4_f32_slice(p.shots.as_ref(), &shots);
             }
 
             gl.use_program(Some(self.lit.program));

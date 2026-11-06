@@ -66,7 +66,8 @@ tagged out.
 that (never in the last 75 s), something happens to the whole arena, announced with a banner
 (VR: floating in front of you) and a sound: a **Blackout** puts the arena's lights out for 20 s
 (the city around it too; bolts, players, pickups, targets, jump pads, laser gates and reload
-stations still glow, and the bots only see 12 m), or an **Overdrive** brings back every
+stations still glow, every shot lights up the walls' neon for a few metres around it as it
+flies, where it's fired and where it strikes, and the bots only see 12 m), or an **Overdrive** brings back every
 grenade and powerup missing from the arena at once. In the last minute every point counts
 double (the clock shows 2x).
 

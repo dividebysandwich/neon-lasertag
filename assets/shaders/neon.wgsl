@@ -27,9 +27,25 @@ struct Neon {
     // rgb colour of each pulse.
     pulse_color: array<vec4<f32>, 8>,
     // x: halo shape (0 strip, 1 volume, 2 haze, 3 forcefield, 4 cloak), y: flow speed (m/s,
-    // mode 2).
+    // mode 2), z: 1 for the arena's own lights (dimmed in a blackout), w: how bright those are.
     extra: vec4<f32>,
+    // Shots near the eye: xyz, w strength (0: none). They light up the dimmed lights near them.
+    shots: array<vec4<f32>, 8>,
 };
+
+// How much the shots light up a point (0..1): each within SHOT_REACH metres, more nearer.
+const SHOT_REACH: f32 = 4.5;
+fn shot_light(p: vec3<f32>) -> f32 {
+    var l = 0.0;
+    for (var i = 0; i < 8; i++) {
+        let s = neon.shots[i];
+        if (s.w > 0.0) {
+            let k = max(1.0 - distance(p, s.xyz) / SHOT_REACH, 0.0);
+            l += s.w * k * k;
+        }
+    }
+    return min(l, 1.0);
+}
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> neon: Neon;
 
@@ -189,7 +205,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     tint = in.color;
 #endif
     // (The arena's own lights dim in a blackout: extra.z marks them, extra.w is how bright.)
-    let col = neon_color(in.world_position.xyz, uv, tint) * mix(1.0, neon.extra.w, neon.extra.z);
+    // (Shots light them up again around them.)
+    var lit = neon.extra.w;
+    if (neon.extra.z > 0.5 && lit < 0.99) {
+        lit = max(lit, shot_light(in.world_position.xyz));
+    }
+    let col = neon_color(in.world_position.xyz, uv, tint) * mix(1.0, lit, neon.extra.z);
     if (neon.params.y > 0.5 && neon.extra.x > 3.5) {
         let to_eye = normalize(view.world_position - in.world_position.xyz);
         let a = cloak(in.world_position.xyz, in.world_normal, to_eye, neon.params.z);

@@ -16,6 +16,8 @@ use lt_sim::{PickupKind, Team};
 
 const SHADER: &str = "shaders/neon.wgsl";
 pub const PULSES: usize = 8;
+/// Shots lighting up the arena's dimmed lights around them (`NeonGlobals::shots`).
+pub const SHOT_LIGHTS: usize = 8;
 
 /// Team colours (linear, HDR multipliers come from the material's intensity).
 pub const RED: Vec3 = Vec3::new(1.0, 0.06, 0.08);
@@ -65,6 +67,8 @@ pub struct NeonUniform {
     /// cloak), y: flow speed (m/s, mode 2), z: 1 for the arena's own lights (dimmed in a
     /// blackout), w: how bright those are now (`NeonGlobals::dim`).
     pub extra: Vec4,
+    /// Shots near the eye (xyz, w strength; 0: none): the dimmed lights brighten around them.
+    pub shots: [Vec4; SHOT_LIGHTS],
 }
 
 impl NeonUniform {
@@ -129,6 +133,7 @@ impl NeonUniform {
             pulse_pos: [Vec4::new(0.0, 0.0, 0.0, -1.0); PULSES],
             pulse_color: [Vec4::ZERO; PULSES],
             extra: Vec4::ZERO,
+            shots: [Vec4::ZERO; SHOT_LIGHTS],
         }
     }
 
@@ -143,6 +148,7 @@ impl NeonUniform {
         self.red = RED.extend(1.0);
         self.blue = BLUE.extend(1.0);
         self.extra.w = g.dim;
+        self.shots = g.shots;
         for (i, p) in g.pulses.iter().enumerate() {
             self.pulse_pos[i] = p.0.extend(p.1);
             self.pulse_color[i] = p.2.extend(1.0);
@@ -223,6 +229,9 @@ pub struct NeonGlobals {
     pub half_length: f32,
     /// How bright the arena's own lights are (1; less in a blackout).
     pub dim: f32,
+    /// Shots lighting up those around them (xyz, w strength): set every frame by
+    /// src/actors.rs (`shot_lights`).
+    pub shots: [Vec4; SHOT_LIGHTS],
 }
 
 impl Default for NeonGlobals {
@@ -233,6 +242,7 @@ impl Default for NeonGlobals {
             next: 0,
             half_length: lt_sim::level::ArenaSize::Small.dims().half_length(),
             dim: 1.0,
+            shots: [Vec4::ZERO; SHOT_LIGHTS],
         }
     }
 }

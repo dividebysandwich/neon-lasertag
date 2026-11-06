@@ -116,6 +116,7 @@ impl Plugin for ActorsPlugin {
                     sync_bolts,
                     speed_trails,
                     fade_tracers,
+                    shot_lights,
                     sync_grenades,
                     sync_pickups,
                     effects,
@@ -599,6 +600,54 @@ fn sync_players(
         // (Not one's own: from inside, it would tint everything one looks at; the HUD and the
         // VR hand's powerup icons tell.)
         set_vis(&mut vis, v.beam, alive && !me && p.shield > 0.0 && flicker);
+    }
+}
+
+/// The shots nearest the eye for `NeonGlobals::shots` (in a blackout they light up the arena's
+/// lights around them): the bolts in flight, and for a moment where one was fired or struck.
+fn shot_lights(
+    game: Res<Game>,
+    time: Res<Time>,
+    fixed: Res<Time<Fixed>>,
+    mut events: MessageReader<GameEvent>,
+    cams: Query<&GlobalTransform, With<Camera3d>>,
+    mut neon: ResMut<NeonGlobals>,
+    mut flashes: Local<Vec<(Vec3, f32)>>,
+) {
+    const FLASH: f32 = 0.3;
+    for GameEvent(e) in events.read() {
+        match *e {
+            SimEvent::Fired { pos, .. } | SimEvent::BoltImpact { pos, .. } => {
+                flashes.push((pos, FLASH))
+            }
+            SimEvent::Hit { pos, .. } | SimEvent::Reflected { pos, .. } => {
+                flashes.push((pos, FLASH))
+            }
+            _ => {}
+        }
+    }
+    let dt = time.delta_secs();
+    for f in flashes.iter_mut() {
+        f.1 -= dt;
+    }
+    flashes.retain(|f| f.1 > 0.0);
+    let a = alpha(&fixed);
+    let mut lights: Vec<Vec4> = game
+        .snap
+        .bolts
+        .iter()
+        .map(|b| (b.pos + b.vel * a * TICK).extend(if b.beam { 1.5 } else { 1.0 }))
+        .chain(flashes.iter().map(|f| f.0.extend(1.2 * f.1 / FLASH)))
+        .collect();
+    let eye = cams.iter().next().map_or(Vec3::ZERO, |c| c.translation());
+    lights.sort_by(|a, b| {
+        a.truncate()
+            .distance_squared(eye)
+            .total_cmp(&b.truncate().distance_squared(eye))
+    });
+    neon.shots = [Vec4::ZERO; crate::materials::SHOT_LIGHTS];
+    for (slot, l) in neon.shots.iter_mut().zip(lights) {
+        *slot = l;
     }
 }
 

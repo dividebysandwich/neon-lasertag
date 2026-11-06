@@ -23,6 +23,8 @@ uniform vec4 u_pulse_colour[8];
 // mode 2).
 uniform vec4 u_extra;
 uniform vec3 u_eye[2];
+// Shots near the eye: xyz, w strength (0: none). They light up the dimmed lights near them.
+uniform vec4 u_shots[8];
 
 #ifdef VERTEX
 layout(num_views = 2) in;
@@ -205,9 +207,28 @@ vec3 tone(vec3 c) {
     return mix(hue, vec3(mapped), white);
 }
 
+// How much the shots light up a point (0..1): each within SHOT_REACH metres, more nearer.
+const float SHOT_REACH = 4.5;
+float shot_light(vec3 p) {
+    float l = 0.0;
+    for (int i = 0; i < 8; i++) {
+        vec4 s = u_shots[i];
+        if (s.w > 0.0) {
+            float k = max(1.0 - distance(p, s.xyz) / SHOT_REACH, 0.0);
+            l += s.w * k * k;
+        }
+    }
+    return min(l, 1.0);
+}
+
 void main() {
     // (The arena's own lights dim in a blackout: extra.z marks them, extra.w is how bright.)
-    vec3 col = neon_colour(v_world) * mix(1.0, u_extra.w, u_extra.z);
+    // (Shots light them up again around them.)
+    float lit = u_extra.w;
+    if (u_extra.z > 0.5 && lit < 0.99) {
+        lit = max(lit, shot_light(v_world));
+    }
+    vec3 col = neon_colour(v_world) * mix(1.0, lit, u_extra.z);
 #ifdef GLOW
     if (u_extra.x > 3.5) {
         float a = cloak(v_world, v_normal, normalize(v_eye - v_world), u_time);

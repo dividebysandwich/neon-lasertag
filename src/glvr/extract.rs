@@ -6,7 +6,7 @@
 //! so a draw list replaced before it was drawn loses none.
 
 use super::render::{AssetMsg, MeshData, eye_views, inside, planes};
-use crate::materials::{AccentMaterial, BLUE, GlowMaterial, NeonGlobals, PULSES, RED};
+use crate::materials::{AccentMaterial, BLUE, GlowMaterial, NeonGlobals, PULSES, RED, SHOT_LIGHTS};
 use crate::vr::{HandInput, XrRig};
 use bevy::asset::AssetId;
 use bevy::camera::primitives::Aabb;
@@ -54,6 +54,8 @@ pub struct NeonFrame {
     pub blue: Vec3,
     pub pulse_pos: [Vec4; PULSES],
     pub pulse_colour: [Vec4; PULSES],
+    /// `NeonGlobals::shots`.
+    pub shots: [Vec4; SHOT_LIGHTS],
 }
 
 /// One update's picture.
@@ -272,6 +274,7 @@ impl Extractor {
                 n.pulse_pos[i] = p.0.extend(p.1);
                 n.pulse_colour[i] = p.2.extend(1.0);
             }
+            n.shots = g.shots;
             list.neon = n;
         }
         let meshes = world.resource::<Assets<Mesh>>();
