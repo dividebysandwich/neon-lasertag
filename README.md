@@ -36,7 +36,8 @@ upright handle.
 **Rules.** Score by tagging out enemy players (100 points) and by hitting the enemy team's
 targets (100 points per hit). A player is tagged out by the third hit; after every hit they
 can't shoot, and can't be hit, for 3 s (they can still move). Tagged-out players wait 5 s to
-15 s to respawn at their base, longer the further from it they were tagged. The targets are small
+15 s to respawn at their base, longer the further from it they were tagged. Stepping onto your
+own team's spawn pads heals all hits. The targets are small
 glowing cores hanging from a roof over the upper level, deep in each team's half, in a cell
 walled on three sides on both floors, with chevrons running in towards them: they can only be
 hit from the rear quarter of the arena behind them, from the upper level around them or from

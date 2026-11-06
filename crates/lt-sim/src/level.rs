@@ -1153,6 +1153,17 @@ impl Level {
     }
 
     /// Whether a player standing at `feet` is refilling: on a reload station or a spawn pad.
+    /// Whose spawn pads `feet` stand on, if any.
+    pub fn spawn_at(&self, feet: Vec3) -> Option<Team> {
+        let dm = self.grid.dims;
+        if feet.y > 0.5 {
+            return None;
+        }
+        dm.cell_at(feet)
+            .filter(|&(ix, iz)| self.grid.ground[dm.idx(ix, iz)] == Ground::Spawn)
+            .map(|_| Team::of_z(feet.z))
+    }
+
     pub fn reloads_at(&self, feet: Vec3) -> bool {
         let dm = self.grid.dims;
         if feet.y > 0.5 {

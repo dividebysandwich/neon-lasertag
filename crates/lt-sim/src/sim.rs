@@ -698,9 +698,16 @@ impl Sim {
                 self.world.move_body(p.feet, d, p.vy, TICK)
             };
             let reload_here = self.level.reloads_at(feet);
+            let home = self.level.spawn_at(feet);
             let p = &mut self.players[i];
             p.feet = feet;
             p.vy = vy;
+
+            // Healed on the team's own spawn pads.
+            if p.hits > 0 && home == Some(p.team) {
+                p.hits = 0;
+                self.events.push(SimEvent::Healed { player: p.id });
+            }
 
             // Refilling the blaster at a reload station or a spawn pad.
             if reload_here && p.ammo < rules.ammo {
@@ -1723,7 +1730,8 @@ mod tests {
         let mate = sim.add_player("m", Some(Team::Red), false).unwrap();
         let base = sim.level.base_centre(Team::Red);
         sim.players[0].feet = base + Vec3::new(0.0, 0.0, 30.0); // out of the way
-        sim.players[1].feet = base;
+        // Off the spawn pads (which would heal the hit).
+        sim.players[1].feet = Vec3::new(0.0, 0.0, 6.0);
         let mi = 1;
         // A bolt from a grenade straight at the team mate.
         let eye = sim.players[mi].eye();
@@ -1800,6 +1808,27 @@ mod tests {
         assert!(ev.iter().any(|e| matches!(e, SimEvent::Reloaded { .. })));
         // And so does a reload station.
         assert!(sim.level.reloads.iter().all(|r| sim.level.reloads_at(*r)));
+    }
+
+    #[test]
+    fn own_spawn_pads_heal() {
+        let (mut sim, a, b) = duel();
+        sim.players[0].feet = Vec3::new(0.0, 0.0, 6.0);
+        sim.players[0].hits = 2;
+        sim.players[1].hits = 1;
+        // Blue on red's pads: still hurt.
+        sim.players[1].feet = sim.level.spawns[Team::Red.index()][0].pos;
+        sim.step();
+        assert_eq!(sim.player(a).unwrap().hits, 2);
+        assert_eq!(sim.player(b).unwrap().hits, 1);
+        sim.players[0].feet = sim.level.spawns[Team::Red.index()][1].pos;
+        sim.step();
+        assert_eq!(sim.player(a).unwrap().hits, 0);
+        assert!(
+            sim.drain_events()
+                .iter()
+                .any(|e| matches!(e, SimEvent::Healed { player } if *player == a))
+        );
     }
 
     /// Whether a body at `feet` is inside anything solid (beyond a little slack).

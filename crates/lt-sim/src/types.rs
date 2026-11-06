@@ -140,6 +140,10 @@ pub enum SimEvent {
     Reloaded {
         player: PlayerId,
     },
+    /// A hit player stepped onto its team's spawn pads and is unhurt again.
+    Healed {
+        player: PlayerId,
+    },
     /// A grenade pickup appeared, and was taken.
     PickupSpawned {
         id: u32,
