@@ -324,6 +324,7 @@ pub fn run() {
     app.add_plugins((
         materials::MaterialsPlugin,
         game::GamePlugin,
+        menu::MenuModelPlugin,
         actors::ActorsPlugin,
         audio::SoundPlugin,
         sevenseg::ScoreboardPlugin,

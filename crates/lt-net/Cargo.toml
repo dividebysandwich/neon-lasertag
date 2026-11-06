@@ -19,6 +19,7 @@ igd-next = "0.18.0"
 natpmp = { version = "0.5.0", default-features = false }
 
 [dev-dependencies]
+igd-next = "0.18.0"
 glam.workspace = true
 # The reporter test: a real master server on an ephemeral port.
 lt-master = { path = "../lt-master" }

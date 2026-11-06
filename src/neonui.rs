@@ -13,7 +13,7 @@ pub const FONT: Handle<Font> = uuid_handle!("6d0c1c55-34a8-4c4e-9b0e-2f6b8a8e5a1
 /// A dark, translucent backdrop: the empty arena (src/lobby.rs) or the match shows behind.
 pub const BACKDROP: Color = Color::srgba(0.01, 0.0, 0.04, 0.55);
 pub const BACKDROP_DEEP: Color = Color::srgba(0.01, 0.0, 0.03, 0.82);
-pub const PANEL: Color = Color::srgba(0.03, 0.02, 0.09, 0.86);
+pub const PANEL: Color = Color::srgba(0.02, 0.01, 0.06, 0.92);
 pub const MAGENTA: Color = Color::srgb(1.0, 0.18, 0.72);
 pub const CYAN: Color = Color::srgb(0.1, 0.9, 1.0);
 pub const PINK: Color = Color::srgb(1.0, 0.32, 0.5);
@@ -87,10 +87,10 @@ fn look(b: &NeonButton, i: Interaction) -> (BorderColor, BackgroundColor, BoxSha
     let c = b.color;
     let (border, fill, shadow, blur) = match (i, b.selected) {
         (Interaction::Pressed, _) => (1.0, 0.45, 0.9, 26.0),
-        (Interaction::Hovered, true) => (1.0, 0.4, 0.85, 24.0),
-        (Interaction::Hovered, false) => (1.0, 0.18, 0.7, 20.0),
-        (Interaction::None, true) => (1.0, 0.32, 0.6, 18.0),
-        (Interaction::None, false) => (0.55, 0.06, 0.25, 10.0),
+        (Interaction::Hovered, true) => (1.0, 0.6, 0.9, 24.0),
+        (Interaction::Hovered, false) => (1.0, 0.2, 0.7, 20.0),
+        (Interaction::None, true) => (1.0, 0.5, 0.75, 18.0),
+        (Interaction::None, false) => (0.5, 0.04, 0.18, 8.0),
     };
     (
         BorderColor::all(c.with_alpha(border)),
@@ -192,6 +192,7 @@ pub fn panel(color: Color, width: Option<f32>) -> impl Bundle {
     (
         Node {
             width: width.map_or(Val::Auto, Val::Px),
+            max_width: Val::Percent(96.0),
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Center,
             padding: UiRect::axes(Val::Px(36.0), Val::Px(26.0)),

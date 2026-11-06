@@ -20,3 +20,24 @@ fn opens_a_port_on_the_router() {
         m.status()
     );
 }
+
+/// Lists the router's UDP port mappings (to see that the game's are gone after it quits):
+/// `cargo test -p lt-net --test portmap list -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn list_router_mappings() {
+    let gw = igd_next::search_gateway(Default::default()).expect("no UPnP router");
+    for i in 0.. {
+        match gw.get_generic_port_mapping_entry(i) {
+            Ok(e) => println!(
+                "{:?} {} -> {}:{} {}",
+                e.protocol,
+                e.external_port,
+                e.internal_client,
+                e.internal_port,
+                e.port_mapping_description
+            ),
+            Err(_) => break,
+        }
+    }
+}
