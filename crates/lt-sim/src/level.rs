@@ -7,8 +7,9 @@
 //! open side), one or two team targets in the rear quarter (each hanging from a roof over the
 //! upper level, in a cell walled on three sides on both floors and open to the rear, with no
 //! upper floor in it or behind it: hit only from the rear quarter, from at least two places on
-//! each floor), an upper floor of connected platforms with holes cut in (at least two ramps up
-//! per half, and always a way across the arena on the upper level alone), and cover on the
+//! each floor), an upper floor of broad, open decks with a few holes cut in (at least two ramps
+//! up per half, gaps in the railings to jump down from, chest-high and full-height walls for
+//! cover, and always a way across the arena on the upper level alone), and cover on the
 //! ground: walls, walls with windows, half walls, pillars and blocks. Long open lanes are
 //! broken up, and every attempt is checked for connectivity (and the targets for being
 //! hittable) before it's accepted.
@@ -1356,7 +1357,9 @@ fn try_grid(rng: &mut ChaCha8Rng, dm: Dims, mode: GameMode) -> Option<Grid> {
         }
     }
 
-    // 3. The upper floor: a bridge over the centre line, side galleries, a few more platforms.
+    // 3. The upper floor: open decks rather than a maze of walkways. A broad bridge over the
+    //    centre line, side galleries and a few big platforms, then the narrow gaps between
+    //    them filled in.
     let rect = |g: &mut Grid, res: &Reserve, x0: usize, z0: usize, w: usize, l: usize| {
         for iz in z0..(z0 + l).min(dm.upper_max() + 1) {
             for ix in x0..(x0 + w).min(dm.w) {
@@ -1366,9 +1369,9 @@ fn try_grid(rng: &mut ChaCha8Rng, dm: Dims, mode: GameMode) -> Option<Grid> {
             }
         }
     };
-    let bw = rng.random_range(2..=4usize);
+    let bw = rng.random_range(3..=5usize);
     let bx = rng.random_range(2..=dm.w - 2 - bw);
-    rect(&mut g, &res, bx, dm.half(), bw, rng.random_range(2..=4));
+    rect(&mut g, &res, bx, dm.half(), bw, rng.random_range(3..=5));
     // Its other end over the centre line (Blue's half is turned round: this joins the two).
     for ix in bx..bx + bw {
         if !res.has(ix, dm.half() - 1) {
@@ -1377,20 +1380,21 @@ fn try_grid(rng: &mut ChaCha8Rng, dm: Dims, mode: GameMode) -> Option<Grid> {
     }
     for left in [true, false] {
         if rng.random_bool(0.7) {
-            let x0 = if left { 0 } else { dm.w - 2 };
+            let gw = rng.random_range(2..=3usize);
+            let x0 = if left { 0 } else { dm.w - gw };
             let z0 = dm.half() + rng.random_range(1..=dm.along(4));
             rect(
                 &mut g,
                 &res,
                 x0,
                 z0,
-                2,
+                gw,
                 rng.random_range(dm.along(4)..=dm.along(7)),
             );
         }
     }
-    for _ in 0..rng.random_range(dm.scaled(1)..=dm.scaled(3)) {
-        let (w, l) = (rng.random_range(2..=4usize), rng.random_range(2..=4usize));
+    for _ in 0..rng.random_range(dm.scaled(1)..=dm.scaled(2)) {
+        let (w, l) = (rng.random_range(4..=6usize), rng.random_range(3..=5usize));
         let x0 = rng.random_range(0..=dm.w - w);
         let z0 = rng.random_range(dm.half() + 1..=dm.upper_max() + 1 - l);
         rect(&mut g, &res, x0, z0, w, l);
@@ -1404,14 +1408,15 @@ fn try_grid(rng: &mut ChaCha8Rng, dm: Dims, mode: GameMode) -> Option<Grid> {
             / red_cells as f32
     };
     let mut tries = 0;
-    while coverage(&g) < 0.40 && tries < dm.scaled(8) {
-        let (w, l) = (rng.random_range(2..=4usize), rng.random_range(2..=4usize));
+    while coverage(&g) < 0.42 && tries < dm.scaled(8) {
+        let (w, l) = (rng.random_range(4..=6usize), rng.random_range(3..=5usize));
         let x0 = rng.random_range(0..=dm.w - w);
         let z0 = rng.random_range(dm.half()..=dm.upper_max() + 1 - l);
         rect(&mut g, &res, x0, z0, w, l);
         tries += 1;
     }
-    if !(0.38..=0.58).contains(&coverage(&g)) {
+    fill_gaps(&mut g, &res);
+    if !(0.40..=0.66).contains(&coverage(&g)) {
         return None;
     }
     // A walkway on the upper level from each target's surroundings to the bridge, where the
@@ -1450,7 +1455,7 @@ fn try_grid(rng: &mut ChaCha8Rng, dm: Dims, mode: GameMode) -> Option<Grid> {
                 })
         })
         .collect();
-    let holes = rng.random_range(dm.scaled(2)..=dm.scaled(4));
+    let holes = rng.random_range(dm.scaled(1)..=dm.scaled(3));
     for _ in 0..holes {
         if interior.is_empty() {
             break;
@@ -1499,7 +1504,48 @@ fn try_grid(rng: &mut ChaCha8Rng, dm: Dims, mode: GameMode) -> Option<Grid> {
         return None;
     }
 
-    // 5. Railings around the upper floor (except where ramps arrive).
+    // 5. Railings around the upper floor, except where ramps arrive and at a few drop points:
+    //    short gaps in the railing over clear ground (kept clear), to jump down from.
+    let mut drop_cands = Vec::new();
+    for iz in dm.half()..=dm.upper_max() {
+        for ix in 0..dm.w {
+            for d in 0..4u8 {
+                if drop_spot(&g, &res, ix, iz, d) {
+                    drop_cands.push((ix, iz, d));
+                }
+            }
+        }
+    }
+    let mut drops: Vec<Edge> = Vec::new();
+    let mut drop_cells: Vec<(usize, usize)> = Vec::new();
+    for _ in 0..rng.random_range(dm.scaled(3)..=dm.scaled(5)) {
+        if drop_cands.is_empty() {
+            break;
+        }
+        let (ix, iz, d) = drop_cands.swap_remove(rng.random_range(0..drop_cands.len()));
+        // One or two cells wide, along the platform's edge.
+        let side = (d + 1) % 4;
+        let len = rng.random_range(1..=2);
+        for k in 0..len {
+            let Some((x, z)) = dm.step(ix, iz, side, k) else {
+                break;
+            };
+            if !drop_spot(&g, &res, x, z, d) {
+                break;
+            }
+            drops.push(edge(x, z, d));
+            drop_cells.push((x, z));
+            if let Some((lx, lz)) = dm.step(x, z, d, 1) {
+                res.cell(lx, lz);
+            }
+        }
+        // Not right next to another drop point.
+        drop_cands.retain(|&(x, z, _)| {
+            drop_cells
+                .iter()
+                .all(|c| x.abs_diff(c.0) + z.abs_diff(c.1) > 2)
+        });
+    }
     for iz in dm.half()..=dm.upper_max() {
         for ix in 0..dm.w {
             if !g.upper[dm.idx(ix, iz)] {
@@ -1510,7 +1556,10 @@ fn try_grid(rng: &mut ChaCha8Rng, dm: Dims, mode: GameMode) -> Option<Grid> {
                     continue;
                 };
                 let e = edge(ix, iz, d);
-                if g.upper[dm.idx(nx, nz)] || res.has_edge(e) && is_ramp_top(&g, ix, iz, d) {
+                if g.upper[dm.idx(nx, nz)]
+                    || res.has_edge(e) && is_ramp_top(&g, ix, iz, d)
+                    || drops.contains(&e)
+                {
                     continue;
                 }
                 g.set_wall(1, e, Wall::Rail);
@@ -1527,42 +1576,65 @@ fn try_grid(rng: &mut ChaCha8Rng, dm: Dims, mode: GameMode) -> Option<Grid> {
         }
     }
 
-    // 6. Cover on the upper floor.
+    // 6. Cover on the upper floor, out in its open parts (not in narrow walkways): short runs
+    //    of chest-high and full-height walls, a few with windows, and some blocks.
+    let open_upper = |g: &Grid, ix: usize, iz: usize| {
+        g.upper[dm.idx(ix, iz)]
+            && (0..4)
+                .filter(|&d| {
+                    dm.step(ix, iz, d, 1)
+                        .is_some_and(|(x, z)| g.upper[dm.idx(x, z)])
+                })
+                .count()
+                >= 3
+    };
+    // (cell, direction) of edges between two open upper cells in Red's half.
     let mut upper_edges = Vec::new();
     for iz in dm.half()..=dm.upper_max() {
         for ix in 0..dm.w {
             for d in [0u8, 1] {
                 if let Some((nx, nz)) = dm.step(ix, iz, d, 1)
-                    && g.upper[dm.idx(ix, iz)]
-                    && g.upper[dm.idx(nx, nz)]
                     && nz <= dm.upper_max()
-                    && !(d == 0 && iz == dm.half() - 1)
+                    && open_upper(&g, ix, iz)
+                    && open_upper(&g, nx, nz)
                 {
-                    upper_edges.push(edge(ix, iz, d));
+                    upper_edges.push((ix, iz, d));
                 }
             }
         }
     }
-    for _ in 0..rng.random_range(dm.scaled(2)..=dm.scaled(4)) {
+    for _ in 0..rng.random_range(dm.scaled(7)..=dm.scaled(10)) {
         if upper_edges.is_empty() {
             break;
         }
-        let e = upper_edges.swap_remove(rng.random_range(0..upper_edges.len()));
-        if res.has_edge(e) {
-            continue;
-        }
-        let w = match rng.random_range(0..10) {
-            0..=4 => Wall::Window,
-            5..=8 => Wall::Half,
-            _ => Wall::Full,
+        let (ix, iz, d) = upper_edges.swap_remove(rng.random_range(0..upper_edges.len()));
+        let (w, len) = match rng.random_range(0..20) {
+            0..=8 => (Wall::Half, rng.random_range(1..=3)),
+            9..=16 => (Wall::Full, rng.random_range(1..=2)),
+            _ => (Wall::Window, rng.random_range(1..=2)),
         };
-        g.set_wall(1, e, w);
+        // Along the edge's line: an edge on a line of constant z runs along x, and so on.
+        let along = (d + 1) % 4;
+        for k in 0..len {
+            let Some((x, z)) = dm.step(ix, iz, along, k) else {
+                break;
+            };
+            let e = edge(x, z, d);
+            let ok = dm.step(x, z, d, 1).is_some_and(|(nx, nz)| {
+                nz <= dm.upper_max() && open_upper(&g, x, z) && open_upper(&g, nx, nz)
+            });
+            if !ok || res.has_edge(e) || g.edge_wall(1, e) != Wall::None {
+                break;
+            }
+            g.set_wall(1, e, w);
+        }
     }
-    for _ in 0..rng.random_range(0..=dm.scaled(2)) {
+    for _ in 0..rng.random_range(1..=dm.scaled(2)) {
         let ix = rng.random_range(0..dm.w);
         let iz = rng.random_range(dm.half() + 1..=dm.upper_max());
         if g.upper[dm.idx(ix, iz)]
             && !res.has(ix, iz)
+            && !drop_cells.contains(&(ix, iz))
             && (0..4).all(|d| !is_ramp_top(&g, ix, iz, d))
         {
             g.set_upper_block(ix, iz, true);
@@ -1760,6 +1832,55 @@ fn mega_walls(g: &mut Grid) {
             }
         }
     }
+}
+
+/// Fills the narrow gaps in Red's upper floor (and their mirror images): open cells with
+/// floor on three sides, or across a gap of one or two cells, until there are none.
+fn fill_gaps(g: &mut Grid, res: &Reserve) {
+    let dm = g.dims;
+    loop {
+        let mut changed = false;
+        for iz in dm.half()..=dm.upper_max() {
+            for ix in 0..dm.w {
+                if g.upper[dm.idx(ix, iz)] || res.has(ix, iz) {
+                    continue;
+                }
+                let floor = |d: u8, k: i32| {
+                    dm.step(ix, iz, d, k)
+                        .is_some_and(|(x, z)| g.upper[dm.idx(x, z)])
+                };
+                let up: [bool; 4] = std::array::from_fn(|d| floor(d as u8, 1));
+                let near = |d: u8| up[d as usize] || floor(d, 2);
+                let n = up.iter().filter(|u| **u).count();
+                let across = (0..2u8)
+                    .any(|d| up[d as usize] && near(d + 2) || up[d as usize + 2] && near(d));
+                if n >= 3 || across {
+                    g.set_upper(ix, iz, true);
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            return;
+        }
+    }
+}
+
+/// Can one jump down from upper cell (ix, iz) towards `dir` (in Red's half), onto clear ground
+/// that nothing else needs?
+fn drop_spot(g: &Grid, res: &Reserve, ix: usize, iz: usize, dir: u8) -> bool {
+    let dm = g.dims;
+    let Some((x, z)) = dm.step(ix, iz, dir, 1) else {
+        return false;
+    };
+    g.upper[dm.idx(ix, iz)]
+        && iz >= dm.half()
+        && z >= dm.half()
+        && !g.upper[dm.idx(x, z)]
+        && g.ground[dm.idx(x, z)] == Ground::Open
+        && !res.has(x, z)
+        && !res.has_edge(edge(ix, iz, dir))
+        && !is_ramp_top(g, ix, iz, dir)
 }
 
 /// Is the edge from upper cell (ix, iz) towards `dir` the top of a ramp?

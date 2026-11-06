@@ -2217,8 +2217,21 @@ mod tests {
         let m = sim.level.mega.clone().unwrap();
         let a = sim.add_player("a", Some(Team::Red), false).unwrap();
         let i = pi_of(&sim, a);
+        // A place in front of the doorway's turrets with both switches in sight (none of the
+        // upper floor in between).
         let t = m.turrets[0];
-        let spot = Vec3::new(t.pos.x + 7.0, 0.0, t.pos.z);
+        let world = sim.level.world();
+        let spot = (5..12)
+            .map(|k| Vec3::new(t.pos.x + k as f32, 0.0, t.pos.z))
+            .chain(sim.level.nav.pos.iter().copied())
+            .filter(|p| p.distance(t.pos) < 14.0 && sim.level.nav.node_at(*p).is_some())
+            .find(|p| {
+                m.turrets[..2].iter().all(|u| {
+                    let s = u.switch;
+                    crate::level::box_seen(&world, *p + Vec3::Y * EYE, s.min, s.max, s.centre())
+                })
+            })
+            .expect("a spot in sight of both switches");
         sim.players[i].feet = spot;
         sim.drain_events();
         for _ in 0..(2.5 / TICK) as usize {
