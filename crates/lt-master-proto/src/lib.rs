@@ -47,6 +47,9 @@ pub struct ServerReport {
     pub dedicated: bool,
     /// The arena's generator seed.
     pub map_seed: u64,
+    /// What is played ("classic", "megatarget") and the arena's size ("small", ...).
+    pub mode: String,
+    pub arena: String,
     /// Human players (bots are only counted, in `bots`).
     pub players: Vec<ReportPlayer>,
     pub max_players: u16,
@@ -93,6 +96,8 @@ impl ServerReport {
         };
         cut(&mut self.game_version);
         cut(&mut self.name);
+        cut(&mut self.mode);
+        cut(&mut self.arena);
         self.players.truncate(MAX_PLAYERS);
         for p in &mut self.players {
             cut(&mut p.name);

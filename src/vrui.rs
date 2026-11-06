@@ -927,7 +927,11 @@ fn pointer(
         }
         Act::Play { host } => {
             commands.insert_resource(crate::menu::Start::Local {
-                host,
+                host: host.then(|| crate::game::Hosting {
+                    internet: false,
+                    name: "LAN game".into(),
+                    port: lt_net::protocol::DEFAULT_PORT,
+                }),
                 bots: choices.bots,
                 difficulty: choices.difficulty,
                 arena: choices.arena,

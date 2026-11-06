@@ -8,6 +8,7 @@ use std::sync::Arc;
 use bevy::prelude::*;
 use lt_net::client::{Client, ClientEvent};
 use lt_net::server::Server;
+use lt_net::{LanAnnouncer, PortMapper, PortStatus, Reporter};
 use lt_sim::bots::Bots;
 use lt_sim::collide::World;
 use lt_sim::level::Level;
@@ -20,8 +21,93 @@ pub enum Source {
         sim: Sim,
         bots: Bots,
         server: Option<Server>,
+        /// A hosting game's announcements (LAN, master server) and router port.
+        net: Option<HostNet>,
     },
     Remote(Client),
+}
+
+/// Host a game that others join: on the local network (announced there), or on the internet
+/// too (listed on the master server, its port opened on the router).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Hosting {
+    pub internet: bool,
+    pub name: String,
+    pub port: u16,
+}
+
+/// Ticks between a hosting game's reports to the LAN and the master server.
+const REPORT_TICKS: u64 = 120;
+
+pub struct HostNet {
+    port: u16,
+    lan: LanAnnouncer,
+    internet: Option<(Reporter, PortMapper)>,
+    /// The status last logged.
+    said: String,
+}
+
+impl HostNet {
+    fn new(h: &Hosting, port: u16) -> HostNet {
+        let internet = h.internet.then(|| {
+            let master =
+                std::env::var("LT_MASTER").unwrap_or_else(|_| lt_net::DEFAULT_MASTER.to_string());
+            (Reporter::new(&master), PortMapper::open(port))
+        });
+        HostNet {
+            port,
+            lan: LanAnnouncer::new(),
+            internet,
+            said: String::new(),
+        }
+    }
+
+    /// Tells the network about the server now and then; logs what happens.
+    fn tick(&mut self, server: &Server, sim: &Sim) {
+        if sim.tick % REPORT_TICKS != 1 {
+            return;
+        }
+        self.lan.update(server.report(sim, self.port, false));
+        if let Some((reporter, mapper)) = &self.internet {
+            // Outside, players join on the port the router opened.
+            let port = mapper.external_port().unwrap_or(self.port);
+            reporter.update(server.report(sim, port, false));
+            for line in reporter.take_log() {
+                info!("master server: {line}");
+            }
+        }
+        let now = self.status();
+        if now != self.said {
+            info!("{now}");
+            if let Some((_, m)) = &self.internet
+                && let PortStatus::Failed(e) = m.status()
+            {
+                warn!("port mapping: {e}");
+            }
+            self.said = now;
+        }
+    }
+
+    /// Where the server can be reached (for the menus).
+    pub fn status(&self) -> String {
+        let port = self.port;
+        match &self.internet {
+            None => format!("Hosting on the local network, UDP port {port}"),
+            Some((_, m)) => match m.status() {
+                PortStatus::Trying => {
+                    format!("Hosting on UDP port {port}: opening it on the router...")
+                }
+                PortStatus::Open { via, external } => {
+                    format!("Hosting on the internet at {external} (port opened with {via})")
+                }
+                PortStatus::Failed(_) => {
+                    format!(
+                        "The router didn't open the port: forward UDP port {port} to this computer"
+                    )
+                }
+            },
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -218,19 +304,25 @@ impl Game {
         skill: f32,
         rules: Rules,
         name: &str,
-        host_port: Option<u16>,
+        host: Option<Hosting>,
     ) -> Game {
         let mut sim = Sim::new(seed, rules.clone());
         let me = sim.add_player(name, None, false);
         let mut b = Bots::default();
         b.fill(&mut sim, bots, skill);
-        let server = host_port.and_then(|port| match Server::listen(port, "Listen server", seed) {
-            Ok(s) => Some(s),
-            Err(e) => {
-                error!("can't host on port {port}: {e}");
-                None
-            }
-        });
+        let server = host
+            .as_ref()
+            .and_then(|h| match Server::listen(h.port, &h.name, seed) {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    error!("can't host on port {}: {e}", h.port);
+                    None
+                }
+            });
+        let net = host
+            .as_ref()
+            .zip(server.as_ref())
+            .map(|(h, s)| HostNet::new(h, s.port().unwrap_or(h.port)));
         let snap = sim.snapshot();
         let names = sim
             .players
@@ -251,6 +343,7 @@ impl Game {
                 sim,
                 bots: b,
                 server,
+                net,
             },
         }
     }
@@ -373,7 +466,12 @@ fn step_game(
     // A throw is sent once.
     local.cmd.throw = None;
     match &mut game.source {
-        Source::Local { sim, bots, server } => {
+        Source::Local {
+            sim,
+            bots,
+            server,
+            net,
+        } => {
             if let Some(me) = game.me {
                 sim.set_cmd(me, cmd);
             }
@@ -385,6 +483,9 @@ fn step_game(
             let evs = sim.drain_events();
             if let Some(server) = server {
                 server.after_step(sim, &evs);
+                if let Some(n) = net {
+                    n.tick(server, sim);
+                }
             }
             for e in evs {
                 events.write(GameEvent(e));
@@ -551,6 +652,7 @@ impl Game {
             sim,
             bots: old_bots,
             server,
+            ..
         } = &mut self.source
         else {
             return;
@@ -590,12 +692,22 @@ impl Game {
     /// Stops hosting (telling the players) or leaves the server.
     pub fn close(&mut self) {
         match &mut self.source {
-            Source::Local { server, .. } => {
+            Source::Local { server, net, .. } => {
                 if let Some(mut s) = server.take() {
                     s.shutdown("the host left");
                 }
+                // Off the LAN and the master's list, the router's port closed.
+                *net = None;
             }
             Source::Remote(client) => client.close(),
+        }
+    }
+
+    /// A hosting game's state (where it can be reached).
+    pub fn hosting(&self) -> Option<String> {
+        match &self.source {
+            Source::Local { net: Some(n), .. } => Some(n.status()),
+            _ => None,
         }
     }
 

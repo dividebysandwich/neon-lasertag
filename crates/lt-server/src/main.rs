@@ -1,19 +1,18 @@
 //! The lasertag dedicated server: runs matches on UDP with bots filling the teams, listed on
-//! the master server unless `--private`.
+//! the master server unless `--private` and announced on the local network unless `--no-lan`.
 //!
 //!     lt-server [--port 27420] [--name NAME] [--seed N] [--bots 8] [--difficulty normal]
 //!               [--arena small|medium|large|random] [--mode classic|megatarget]
-//!               [--master URL] [--private]
+//!               [--master URL] [--private] [--no-lan]
 
 use std::time::{Duration, Instant};
 
-use lt_net::master_proto::{ReportPlayer, ServerReport, TEAM_BLUE, TEAM_RED};
-use lt_net::protocol::{DEFAULT_PORT, PROTOCOL};
+use lt_net::protocol::DEFAULT_PORT;
 use lt_net::server::Server;
-use lt_net::{DEFAULT_MASTER, Reporter};
+use lt_net::{DEFAULT_MASTER, LanAnnouncer, Reporter};
 use lt_sim::bots::{Bots, Difficulty};
 use lt_sim::level::{GameMode, SizeChoice};
-use lt_sim::{Rules, Sim, TICK, Team};
+use lt_sim::{Rules, Sim, TICK};
 
 struct Args {
     port: u16,
@@ -26,6 +25,8 @@ struct Args {
     mode: GameMode,
     master: String,
     private: bool,
+    /// Announce the server on the local network.
+    lan: bool,
 }
 
 fn args() -> Args {
@@ -39,6 +40,7 @@ fn args() -> Args {
         mode: GameMode::Megatarget,
         master: DEFAULT_MASTER.into(),
         private: false,
+        lan: true,
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -61,10 +63,11 @@ fn args() -> Args {
             },
             "--master" => a.master = it.next().unwrap_or(a.master),
             "--private" => a.private = true,
+            "--no-lan" => a.lan = false,
             "-h" | "--help" => {
                 println!(
                     "lt-server [--port N] [--name NAME] [--seed N] [--bots N] [--difficulty easy|normal|hard] \
-                     [--arena small|medium|large|random] [--mode classic|megatarget] [--master URL] [--private]"
+                     [--arena small|medium|large|random] [--mode classic|megatarget] [--master URL] [--private] [--no-lan]"
                 );
                 std::process::exit(0);
             }
@@ -94,34 +97,6 @@ fn new_match(
     (sim, b)
 }
 
-fn report(server: &Server, sim: &Sim, port: u16) -> ServerReport {
-    ServerReport {
-        protocol: PROTOCOL,
-        game_version: env!("CARGO_PKG_VERSION").into(),
-        name: server.name.clone(),
-        port,
-        dedicated: true,
-        map_seed: sim.level.seed,
-        players: sim
-            .players
-            .iter()
-            .filter(|p| !p.bot)
-            .map(|p| ReportPlayer {
-                name: p.name.clone(),
-                team: if p.team == Team::Red {
-                    TEAM_RED.into()
-                } else {
-                    TEAM_BLUE.into()
-                },
-            })
-            .collect(),
-        max_players: lt_sim::sim::MAX_PLAYERS as u16,
-        bots: sim.players.iter().filter(|p| p.bot).count() as u16,
-        scores: sim.scores,
-        time_left_s: sim.time_left as u32,
-    }
-}
-
 fn main() {
     let args = args();
     let mut seed = args.seed.unwrap_or_else(rand::random);
@@ -143,6 +118,7 @@ fn main() {
         args.difficulty.name()
     );
     let reporter = (!args.private).then(|| Reporter::new(&args.master));
+    let lan = args.lan.then(LanAnnouncer::new);
     let tick = Duration::from_secs_f32(TICK);
     let mut next = Instant::now();
     let mut over_since: Option<Instant> = None;
@@ -174,11 +150,17 @@ fn main() {
                 over_since = None;
             }
         }
-        if let Some(r) = &reporter {
-            if last_report.elapsed() > Duration::from_secs(5) {
-                r.update(report(&server, &sim, args.port));
-                last_report = Instant::now();
+        if last_report.elapsed() > Duration::from_secs(2) {
+            let report = server.report(&sim, args.port, true);
+            if let Some(l) = &lan {
+                l.update(report.clone());
             }
+            if let Some(r) = &reporter {
+                r.update(report);
+            }
+            last_report = Instant::now();
+        }
+        if let Some(r) = &reporter {
             for line in r.take_log() {
                 println!("master: {line}");
             }

@@ -118,7 +118,7 @@ fn show(
                                 );
                             }
                         });
-                    if let Some(status) = game.as_ref().and_then(|g| hosting(g)) {
+                    if let Some(status) = game.as_ref().and_then(|g| g.hosting()) {
                         p.spawn(neonui::text(status, 15.0, neonui::CYAN));
                     }
                     p.spawn(neonui::text("Esc: back to the game", 15.0, neonui::DIM));
@@ -128,18 +128,5 @@ fn show(
             commands.entity(e).despawn();
         }
         _ => {}
-    }
-}
-
-/// What a hosting game says about its server (its address, the port's state).
-fn hosting(game: &Game) -> Option<String> {
-    match &game.source {
-        crate::game::Source::Local {
-            server: Some(s), ..
-        } => Some(format!(
-            "Hosting on UDP port {}",
-            s.port().unwrap_or_default()
-        )),
-        _ => None,
     }
 }

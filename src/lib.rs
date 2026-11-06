@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! neon-lasertag [--vr | --gl-vr | --flat] [--seed N] [--bots N] [--name NAME]
-//!          [--host [PORT]] [--connect HOST[:PORT]] [--autopilot]
+//!          [--host [PORT]] [--public] [--server-name NAME] [--connect HOST[:PORT]] [--autopilot]
 //!          [--difficulty easy|normal|hard] [--arena small|medium|large|random]
 //!          [--mode classic|megatarget]
 //!          [--left-handed] [--match-time SECS]
@@ -76,6 +76,10 @@ pub struct Args {
     pub bots: usize,
     pub name: String,
     pub host: Option<u16>,
+    /// `--host` on the internet: listed on the master server, the port opened on the router.
+    pub public: bool,
+    /// The hosted server's name (`--server-name`; else the player's arena).
+    pub server_name: Option<String>,
     pub connect: Option<String>,
     pub autopilot: bool,
     /// The bots' skill in local and hosted games.
@@ -103,6 +107,8 @@ impl Args {
             bots: 7,
             name: std::env::var("USER").unwrap_or_else(|_| "Player".into()),
             host: None,
+            public: false,
+            server_name: None,
             connect: None,
             autopilot: false,
             difficulty: Difficulty::default(),
@@ -137,6 +143,8 @@ impl Args {
                     }
                     a.host = Some(port.unwrap_or(lt_net::protocol::DEFAULT_PORT));
                 }
+                "--public" => a.public = true,
+                "--server-name" => a.server_name = next(&mut i),
                 "--connect" => a.connect = next(&mut i),
                 "--autopilot" => a.autopilot = true,
                 "--difficulty" => match next(&mut i).as_deref().and_then(Difficulty::parse) {
@@ -174,6 +182,13 @@ impl Args {
         let chosen = ["--seed", "--bots", "--host", "--connect", "--autopilot"];
         a.menu = !argv.iter().any(|v| chosen.contains(&v.as_str()));
         a
+    }
+
+    /// The name a game hosted here goes by.
+    pub fn hosted_name(&self) -> String {
+        self.server_name
+            .clone()
+            .unwrap_or_else(|| format!("{}'s arena", self.name))
     }
 
     /// The rules of local games.
@@ -392,7 +407,11 @@ fn setup(
         commands.insert_resource(match &args.connect {
             Some(addr) => menu::Start::Join(addr.clone()),
             None => menu::Start::Local {
-                host: args.host.is_some(),
+                host: args.host.map(|port| game::Hosting {
+                    internet: args.public,
+                    name: args.hosted_name(),
+                    port,
+                }),
                 bots: args.bots,
                 difficulty: args.difficulty,
                 arena: args.arena,
@@ -444,7 +463,6 @@ fn start_game(
             arena,
             mode,
         } => {
-            let port = host.then(|| args.host.unwrap_or(lt_net::protocol::DEFAULT_PORT));
             session.difficulty = difficulty;
             session.arena = arena;
             session.mode = mode;
@@ -454,7 +472,7 @@ fn start_game(
                 difficulty.skill(),
                 session.rules(&args),
                 &args.name,
-                port,
+                host,
             );
             if args.autopilot {
                 session::autopilot(&mut game, seed);

@@ -58,7 +58,7 @@ struct Choices {
 #[derive(Resource, Clone)]
 pub enum Start {
     Local {
-        host: bool,
+        host: Option<crate::game::Hosting>,
         bots: usize,
         difficulty: Difficulty,
         arena: SizeChoice,
@@ -265,7 +265,7 @@ fn buttons(
         }
         commands.remove_resource::<MenuState>();
         commands.insert_resource(Start::Local {
-            host: false,
+            host: None,
             bots: choices.bots,
             difficulty: p.0,
             arena: choices.arena,
@@ -302,14 +302,18 @@ fn buttons(
         }
         let start = match action.clone() {
             Action::Bots => Some(Start::Local {
-                host: false,
+                host: None,
                 bots: choices.bots,
                 difficulty: choices.difficulty,
                 arena: choices.arena,
                 mode: choices.mode,
             }),
             Action::Host => Some(Start::Local {
-                host: true,
+                host: Some(crate::game::Hosting {
+                    internet: false,
+                    name: "LAN game".into(),
+                    port: lt_net::protocol::DEFAULT_PORT,
+                }),
                 bots: choices.bots,
                 difficulty: choices.difficulty,
                 arena: choices.arena,

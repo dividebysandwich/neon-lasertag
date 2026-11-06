@@ -8,6 +8,8 @@ use std::time::Instant;
 use lt_sim::bots::Bots;
 use lt_sim::{PlayerCmd, PlayerId, Sim, SimEvent, Team};
 
+use lt_master_proto::{ReportPlayer, ServerReport, TEAM_BLUE, TEAM_RED};
+
 use crate::protocol::{PROTOCOL, ToClient, ToServer, decode, encode};
 use crate::transport::{Channel, ConnId, Endpoint, NetEvent};
 
@@ -258,6 +260,38 @@ impl Server {
     pub fn shutdown(&mut self, why: &str) {
         self.broadcast(Channel::Reliable, &ToClient::Shutdown(why.to_string()));
         self.endpoint.flush(Instant::now());
+    }
+
+    /// The server as the master server's list and LAN beacons show it: joined on `port`
+    /// (outside a router: the port it opened), playing `sim`.
+    pub fn report(&self, sim: &Sim, port: u16, dedicated: bool) -> ServerReport {
+        ServerReport {
+            protocol: PROTOCOL,
+            game_version: env!("CARGO_PKG_VERSION").into(),
+            name: self.name.clone(),
+            port,
+            dedicated,
+            map_seed: sim.level.seed,
+            mode: sim.rules.mode.name().into(),
+            arena: sim.rules.arena.name().into(),
+            players: sim
+                .players
+                .iter()
+                .filter(|p| !p.bot)
+                .map(|p| ReportPlayer {
+                    name: p.name.clone(),
+                    team: if p.team == Team::Red {
+                        TEAM_RED.into()
+                    } else {
+                        TEAM_BLUE.into()
+                    },
+                })
+                .collect(),
+            max_players: lt_sim::sim::MAX_PLAYERS as u16,
+            bots: sim.players.iter().filter(|p| p.bot).count() as u16,
+            scores: sim.scores,
+            time_left_s: sim.time_left as u32,
+        }
     }
 
     /// The remote players' sim ids.
