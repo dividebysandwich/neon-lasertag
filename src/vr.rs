@@ -555,7 +555,17 @@ fn place_rig(
         let hand = &mut local.cmd.hands[gh.index()];
         hand.rot *= Quat::from_rotation_x(-tilt);
         let p = *hand;
-        let muzzle = p.pos + p.rot * models.muzzle;
+        let shotgun = game
+            .me
+            .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
+            .is_some_and(|p| p.shotgun);
+        let muzzle = p.pos
+            + p.rot
+                * if shotgun {
+                    models.shotgun_muzzle
+                } else {
+                    models.muzzle
+                };
         local.cmd.muzzle = Pose {
             pos: muzzle,
             rot: look_rot(p.rot * Vec3::NEG_Z),
@@ -575,7 +585,9 @@ struct Holster {
     root: Entity,
     gun: Entity,
     ring: Entity,
+    /// What the holster shows: the team's colours, and the shotgun instead of the blaster.
     team: Option<Team>,
+    shotgun: bool,
     dim: Handle<AccentMaterial>,
     bright: Handle<AccentMaterial>,
 }
@@ -615,6 +627,7 @@ fn spawn_holster(
         gun,
         ring,
         team: None,
+        shotgun: false,
         dim,
         bright,
     });
@@ -639,11 +652,18 @@ fn holster(
         .me
         .and_then(|me| game.snap.players.iter().find(|p| p.id == me));
     let team = me.map(|p| p.team);
-    // The blaster in the team's colours.
-    if team != h.team {
+    let shotgun = me.is_some_and(|p| p.shotgun);
+    // The blaster (or the shotgun) in the team's colours.
+    if team != h.team || shotgun != h.shotgun {
         h.team = team;
+        h.shotgun = shotgun;
         commands.entity(h.gun).despawn_children();
-        crate::actors::spawn_model(&mut commands, h.gun, &models.blaster, &palette, team);
+        let model = if shotgun {
+            &models.shotgun
+        } else {
+            &models.blaster
+        };
+        crate::actors::spawn_model(&mut commands, h.gun, model, &palette, team);
         for (m, k) in [(&h.dim, 0.5), (&h.bright, 2.5)] {
             if let Some(mut m) = accents.get_mut(m) {
                 m.neon = NeonUniform::fixed(team_color(team), k);

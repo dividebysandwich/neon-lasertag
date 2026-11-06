@@ -36,7 +36,11 @@ struct AvatarParts {
     hands: [Entity; 2],
     /// Chest lights (hits left).
     bars: Vec<(Entity, u8)>,
+    /// The weapon in hand: the blaster or the shotgun (children of `gun`), and their hit
+    /// lights.
     gun: Entity,
+    blaster: Entity,
+    shotgun: Entity,
     gun_hits: Vec<(Entity, u8)>,
     grenade: Entity,
     /// The shield's beam of light (a child of `root`), with its light on the player.
@@ -211,7 +215,20 @@ fn spawn_avatar(
     let gun = commands
         .spawn((Transform::IDENTITY, Visibility::default()))
         .id();
-    let gun_hits = spawn_model(commands, gun, &models.blaster, palette, team);
+    let blaster = commands
+        .spawn((Transform::IDENTITY, Visibility::default(), ChildOf(gun)))
+        .id();
+    let mut gun_hits = spawn_model(commands, blaster, &models.blaster, palette, team);
+    let shotgun = commands
+        .spawn((Transform::IDENTITY, Visibility::Hidden, ChildOf(gun)))
+        .id();
+    gun_hits.extend(spawn_model(
+        commands,
+        shotgun,
+        &models.shotgun,
+        palette,
+        team,
+    ));
     let grenade = commands
         .spawn((Transform::IDENTITY, Visibility::Hidden))
         .id();
@@ -246,6 +263,8 @@ fn spawn_avatar(
         hands,
         bars,
         gun,
+        blaster,
+        shotgun,
         gun_hits,
         grenade,
         beam,
@@ -387,6 +406,8 @@ fn sync_players(
             }
         }
         set_vis(&mut vis, v.gun, alive && gun_hand.is_some());
+        set_vis(&mut vis, v.blaster, !p.shotgun);
+        set_vis(&mut vis, v.shotgun, p.shotgun);
         if let Some(h) = gun_hand
             && let Ok(mut t) = transforms.get_mut(v.gun)
         {
@@ -764,7 +785,23 @@ fn sync_pickups(
                 .id();
             match models.powerups.get(&p.kind) {
                 Some(m) if !grenade => {
-                    spawn_powerup(&mut commands, spin, m, &palette, p.kind);
+                    // (The shotgun turns about its middle, not its grip.)
+                    let inner = commands
+                        .spawn((
+                            Transform::from_xyz(
+                                0.0,
+                                0.0,
+                                if p.kind == PickupKind::Shotgun {
+                                    0.13
+                                } else {
+                                    0.0
+                                },
+                            ),
+                            Visibility::default(),
+                            ChildOf(spin),
+                        ))
+                        .id();
+                    spawn_powerup(&mut commands, inner, m, &palette, p.kind);
                 }
                 _ => {
                     spawn_model(&mut commands, spin, &models.grenade, &palette, None);

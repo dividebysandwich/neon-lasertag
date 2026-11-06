@@ -91,6 +91,8 @@ pub struct Player {
     pub rapid: bool,
     pub shields: u8,
     pub shield: f32,
+    /// Holding a shotgun instead of the blaster (until tagged out).
+    pub shotgun: bool,
 }
 
 impl Player {
@@ -113,15 +115,21 @@ impl Player {
             PickupKind::Grenade => self.grenades < rules.grenade_max,
             PickupKind::Rapid => !self.rapid,
             PickupKind::Shield => self.shields == 0,
+            PickupKind::Shotgun => !self.shotgun || self.ammo < rules.ammo,
         }
     }
 
     /// Gives this player what a pickup of this kind holds.
-    fn take(&mut self, kind: PickupKind) {
+    fn take(&mut self, kind: PickupKind, rules: &Rules) {
         match kind {
             PickupKind::Grenade => self.grenades += 1,
             PickupKind::Rapid => self.rapid = true,
             PickupKind::Shield => self.shields += 1,
+            PickupKind::Shotgun => {
+                self.shotgun = true;
+                self.ammo = rules.ammo;
+                self.reloading = None;
+            }
         }
     }
 
@@ -130,6 +138,7 @@ impl Player {
         self.rapid = false;
         self.shields = 0;
         self.shield = 0.0;
+        self.shotgun = false;
     }
 
     pub fn eye(&self) -> Vec3 {
@@ -276,10 +285,11 @@ pub struct PlayerSnap {
     /// Megatarget mode (`Player::mega_hits`, `Player::power`).
     pub mega_hits: u8,
     pub power: Option<f32>,
-    /// Powerups (`Player::rapid`, `shields`, `shield`).
+    /// Powerups (`Player::rapid`, `shields`, `shield`, `shotgun`).
     pub rapid: bool,
     pub shields: u8,
     pub shield: f32,
+    pub shotgun: bool,
 }
 
 impl PlayerSnap {
@@ -289,6 +299,7 @@ impl PlayerSnap {
             PickupKind::Grenade => self.grenades > 0,
             PickupKind::Rapid => self.rapid,
             PickupKind::Shield => self.shields > 0 || self.shield > 0.0,
+            PickupKind::Shotgun => self.shotgun,
         }
     }
 }
@@ -445,6 +456,7 @@ impl Sim {
             rapid: false,
             shields: 0,
             shield: 0.0,
+            shotgun: false,
         };
         let spawn = self.pick_spawn(team);
         p.feet = spawn.pos;
@@ -678,7 +690,7 @@ impl Sim {
                             && (pk.pos.y - p.feet.y).abs() < 1.6
                     });
                     if let Some(p) = taker {
-                        p.take(pk.kind);
+                        p.take(pk.kind, rules);
                         let player = p.id;
                         self.events.push(SimEvent::PickedUp {
                             id: pk.id,
@@ -853,9 +865,8 @@ impl Sim {
                         dir = Quat::from_rotation_y(p.cmd.yaw) * Vec3::NEG_Z;
                     }
                     let dir = dir.normalize();
-                    let (id, team, view) = (p.id, p.team, p.cmd.view_tick);
+                    let (id, team, view, shotgun) = (p.id, p.team, p.cmd.view_tick, p.shotgun);
                     let blocked = self.world.ray(eye, from);
-                    let bid = self.id();
                     // Fired first, so its event comes before any hit it makes straight away.
                     self.events.push(SimEvent::Fired {
                         player: id,
@@ -871,17 +882,37 @@ impl Sim {
                             });
                         }
                         None => {
-                            let mut bolt = Bolt {
-                                id: bid,
-                                owner: id,
-                                owner_team: team,
-                                team: Some(team),
-                                pos: from,
-                                vel: dir * rules.blaster_bolt_speed,
-                                life: rules.bolt_life,
+                            // The blaster's one bolt, or the shotgun's spread of short-lived
+                            // ones.
+                            let (dirs, life) = if shotgun {
+                                let side = dir.any_orthonormal_vector();
+                                let up = dir.cross(side);
+                                let dirs: Vec<Vec3> = (0..rules.shotgun_bolts)
+                                    .map(|_| {
+                                        // Evenly over the cone's disc.
+                                        let r = self.rng.random::<f32>().sqrt()
+                                            * rules.shotgun_spread.tan();
+                                        let a = self.rng.random_range(0.0..std::f32::consts::TAU);
+                                        (dir + (side * a.cos() + up * a.sin()) * r).normalize()
+                                    })
+                                    .collect();
+                                (dirs, rules.shotgun_range / rules.blaster_bolt_speed)
+                            } else {
+                                (vec![dir], rules.bolt_life)
                             };
-                            if self.compensate(&mut bolt, view) {
-                                self.bolts.push(bolt);
+                            for d in dirs {
+                                let mut bolt = Bolt {
+                                    id: self.id(),
+                                    owner: id,
+                                    owner_team: team,
+                                    team: Some(team),
+                                    pos: from,
+                                    vel: d * rules.blaster_bolt_speed,
+                                    life,
+                                };
+                                if self.compensate(&mut bolt, view) {
+                                    self.bolts.push(bolt);
+                                }
                             }
                         }
                     }
@@ -1333,7 +1364,7 @@ impl Sim {
             && p.alive()
             && p.wants(kind, &rules)
         {
-            p.take(kind);
+            p.take(kind, &rules);
         }
     }
 
@@ -1524,6 +1555,7 @@ impl Sim {
                     rapid: p.rapid,
                     shields: p.shields,
                     shield: p.shield,
+                    shotgun: p.shotgun,
                 })
                 .collect(),
             bolts: self
@@ -2346,6 +2378,47 @@ mod tests {
         );
         shoot(&mut sim, a, b);
         assert_eq!(sim.player(b).unwrap().hits, 1, "the shield ran out");
+    }
+
+    #[test]
+    fn the_shotgun_sprays_short_lived_bolts_and_refills() {
+        let (mut sim, a, _) = duel();
+        sim.players[0].feet = Vec3::new(0.0, 0.0, 6.0);
+        sim.players[1].feet = Vec3::new(0.0, 0.0, 100.0);
+        sim.players[0].ammo = 3;
+        sim.give(a, PickupKind::Shotgun);
+        let pa = sim.player(a).unwrap();
+        assert!(pa.shotgun && pa.ammo == 50, "taking it fills it up");
+        sim.set_cmd(
+            a,
+            PlayerCmd {
+                gun_hand: Some(Hand::Right),
+                muzzle: Pose {
+                    pos: Vec3::Y * 1.4,
+                    rot: Quat::IDENTITY,
+                },
+                fire: true,
+                ..Default::default()
+            },
+        );
+        sim.step();
+        assert_eq!(sim.player(a).unwrap().ammo, 49, "one shot");
+        let mine: Vec<Bolt> = sim.bolts.iter().filter(|b| b.owner == a).copied().collect();
+        assert_eq!(mine.len(), 10);
+        let rules = &sim.rules;
+        for b in &mine {
+            let off = b.vel.normalize().angle_between(Vec3::NEG_Z);
+            assert!(off <= rules.shotgun_spread + 1e-4, "{off}");
+            assert!(b.life * rules.blaster_bolt_speed <= rules.shotgun_range + 0.01);
+        }
+        assert!(
+            mine.iter()
+                .any(|b| b.vel.normalize().angle_between(Vec3::NEG_Z) > 0.02),
+            "spread out"
+        );
+        // Gone with the next tag-out.
+        sim.players[0].lose_powerups();
+        assert!(!sim.player(a).unwrap().shotgun);
     }
 
     fn mega_sim(turrets: bool) -> Sim {

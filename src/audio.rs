@@ -192,13 +192,19 @@ fn play_events(
                     .iter()
                     .any(|p| p.id == player && p.team == lt_sim::Team::Red);
                 let sound = if red { &sounds.fire_red } else { &sounds.fire };
+                // The shotgun: deeper and louder.
+                let shotgun = game
+                    .snap
+                    .players
+                    .iter()
+                    .any(|p| p.id == player && p.shotgun);
                 play(
                     &mut commands,
                     gain,
                     sound,
                     (!mine).then_some(pos),
-                    if mine { 0.55 } else { 1.0 },
-                    1.0,
+                    if mine { 0.55 } else { 1.0 } * if shotgun { 1.3 } else { 1.0 },
+                    if shotgun { 0.7 } else { 1.0 },
                 );
             }
             SimEvent::Denied { player } if Some(player) == me => {

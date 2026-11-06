@@ -37,6 +37,7 @@ pub fn pickup_color(kind: PickupKind) -> Vec3 {
         PickupKind::Grenade => WHITE,
         PickupKind::Rapid => Vec3::new(1.0, 0.75, 0.04),
         PickupKind::Shield => Vec3::new(0.25, 0.9, 1.0),
+        PickupKind::Shotgun => Vec3::new(1.0, 0.4, 0.04),
     }
 }
 

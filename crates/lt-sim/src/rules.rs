@@ -41,6 +41,11 @@ pub struct Rules {
     pub powerup_respawn: (f32, f32),
     /// Seconds a shield lasts.
     pub shield_time: f32,
+    /// The shotgun: bolts a shot, their spread (the cone's half angle, radians) and how far
+    /// they fly (m).
+    pub shotgun_bolts: u8,
+    pub shotgun_spread: f32,
+    pub shotgun_range: f32,
     pub grenade_fuse: f32,
     pub grenade_active: f32,
     pub grenade_hop: f32,
@@ -96,6 +101,9 @@ impl Default for Rules {
             powerup_pairs: 1,
             powerup_respawn: (25.0, 45.0),
             shield_time: 10.0,
+            shotgun_bolts: 10,
+            shotgun_spread: 0.07,
+            shotgun_range: 14.0,
             grenade_fuse: 3.0,
             grenade_active: 4.0,
             grenade_hop: 1.0,

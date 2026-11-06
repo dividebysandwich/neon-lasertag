@@ -54,18 +54,28 @@ pub enum PickupKind {
     Rapid,
     /// Carried until used (`PlayerCmd::shield`): no hits taken for `Rules::shield_time`.
     Shield,
+    /// A shotgun instead of the blaster until tagged out (`Rules::shotgun_bolts` short-lived
+    /// bolts a shot, in a spread); taking one also fills it up.
+    Shotgun,
 }
 
 impl PickupKind {
-    pub const ALL: [PickupKind; 3] = [PickupKind::Grenade, PickupKind::Rapid, PickupKind::Shield];
+    pub const ALL: [PickupKind; 4] = [
+        PickupKind::Grenade,
+        PickupKind::Rapid,
+        PickupKind::Shield,
+        PickupKind::Shotgun,
+    ];
     /// The powerups (everything but the grenade).
-    pub const POWERUPS: [PickupKind; 2] = [PickupKind::Rapid, PickupKind::Shield];
+    pub const POWERUPS: [PickupKind; 3] =
+        [PickupKind::Rapid, PickupKind::Shield, PickupKind::Shotgun];
 
     pub fn name(self) -> &'static str {
         match self {
             PickupKind::Grenade => "grenade",
             PickupKind::Rapid => "rapid fire",
             PickupKind::Shield => "shield",
+            PickupKind::Shotgun => "shotgun",
         }
     }
 
@@ -75,6 +85,7 @@ impl PickupKind {
             PickupKind::Grenade => "grenade",
             PickupKind::Rapid => "rapid",
             PickupKind::Shield => "shield",
+            PickupKind::Shotgun => "shotgun",
         }
     }
 

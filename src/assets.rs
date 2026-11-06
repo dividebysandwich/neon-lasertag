@@ -213,8 +213,12 @@ pub struct Models {
     pub hands: [Model; 2],
     /// A reload station (origin on the floor in the middle of its cell).
     pub reload: Model,
-    /// The powerups lying in the arena (origin at their centre, front towards -Z).
+    /// The powerups lying in the arena (origin at their centre, front towards -Z; the shotgun
+    /// at its grip).
     pub powerups: HashMap<lt_sim::PickupKind, Model>,
+    /// The shotgun in a player's hand (in the blaster's frame), and its muzzle.
+    pub shotgun: Model,
+    pub shotgun_muzzle: Vec3,
 }
 
 pub const ANIMALS: [&str; 8] = [
@@ -227,6 +231,7 @@ fn powerup_mesh(kind: lt_sim::PickupKind) -> &'static str {
         lt_sim::PickupKind::Grenade => "grenade",
         lt_sim::PickupKind::Rapid => "rapid",
         lt_sim::PickupKind::Shield => "shield",
+        lt_sim::PickupKind::Shotgun => "shotgun",
     }
 }
 
@@ -269,6 +274,12 @@ pub fn load_models(meshes: &mut Assets<Mesh>) -> Models {
     }
     match load_glb("models/powerups.glb") {
         Ok(f) => {
+            if f.meshes.contains_key("shotgun") {
+                models.shotgun = Model::from_glb(&f, Some("shotgun"), meshes);
+            }
+            if let Some(m) = f.nodes.get("shotgun_muzzle") {
+                models.shotgun_muzzle = *m;
+            }
             for kind in lt_sim::PickupKind::POWERUPS {
                 let name = powerup_mesh(kind);
                 if f.meshes.contains_key(name) {
@@ -382,6 +393,10 @@ pub fn load_models(meshes: &mut Assets<Mesh>) -> Models {
             .blaster
             .parts
             .push(("accent".into(), meshes.add(Cuboid::new(0.055, 0.015, 0.2))));
+    }
+    if models.shotgun.parts.is_empty() {
+        models.shotgun = models.blaster.clone();
+        models.shotgun_muzzle = models.muzzle;
     }
     if models.grenade.parts.is_empty() {
         models

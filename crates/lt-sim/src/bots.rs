@@ -34,7 +34,7 @@
 //! hasn't got) → fetch it. Visible enemies in range
 //! are always shot at (strafing while doing so); a hit makes the bot look for the shooter.
 //! A carried shield goes on as soon as it has an enemy to shoot at; shielded enemies aren't
-//! shot at. Carrying a grenade, it lobs it at two or more enemies close together that it knows about
+//! shot at, and with a shotgun nothing out of its reach. Carrying a grenade, it lobs it at two or more enemies close together that it knows about
 //! (seen recently, heard nearby or heard shooting), picking a low or high arc whose simulated
 //! flight first lands next to the group, and never near team mates or itself.
 //!
@@ -2257,7 +2257,9 @@ impl Controller for Bot {
             self.aim = (Quat::from_axis_angle(axis, step) * self.aim).normalize_or(want);
         }
         let mut fire = false;
-        if let Some((_, true)) = shoot_at
+        // (With the shotgun, only what it reaches.)
+        if let Some((pt, true)) = shoot_at
+            && (!p.shotgun || pt.distance(muzzle) < sim.rules.shotgun_range * 0.9)
             && !self.fire_prev
             && p.fire_cd <= 0.0
             && p.cooldown <= 0.0

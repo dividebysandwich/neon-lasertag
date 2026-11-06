@@ -197,8 +197,9 @@ pub fn my_feet(game: &Game, a: f32) -> Option<Vec3> {
     Some(before.lerp(now.feet, a))
 }
 
-/// Where the blaster is held, relative to the eye, in view space.
+/// Where the blaster is held, relative to the eye, in view space; and the shotgun.
 const GRIP: Vec3 = Vec3::new(0.19, -0.2, -0.32);
+const SHOTGUN_GRIP: Vec3 = Vec3::new(0.16, -0.24, -0.6);
 
 #[allow(clippy::too_many_arguments)]
 fn read_input(
@@ -270,9 +271,21 @@ fn read_input(
     }
     let view = Quat::from_rotation_y(look.yaw) * Quat::from_rotation_x(look.pitch);
     let head = Vec3::Y * look.eye_height();
-    let grip = head + view * (GRIP + gun_offset);
+    let shotgun = game
+        .me
+        .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
+        .is_some_and(|p| p.shotgun);
+    // (The shotgun further out, its stock clear of the eye.)
+    let hold = if shotgun { SHOTGUN_GRIP } else { GRIP };
+    let grip = head + view * (hold + gun_offset);
     let grip_rot = view * gun_rot;
-    let muzzle = grip + grip_rot * models.muzzle;
+    let muzzle = grip
+        + grip_rot
+            * if shotgun {
+                models.shotgun_muzzle
+            } else {
+                models.muzzle
+            };
     // Aim the bolts at whatever is under the crosshair.
     let feet = if mover.valid {
         mover.feet
