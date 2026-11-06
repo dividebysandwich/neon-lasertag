@@ -3,6 +3,7 @@
 
 use std::time::Instant;
 
+use lt_sim::shot::HitClaim;
 use lt_sim::sim::Snapshot;
 use lt_sim::{PlayerCmd, PlayerId, Rules, SimEvent, Team};
 
@@ -72,6 +73,16 @@ impl Client {
             recent: self.recent.clone(),
         };
         self.endpoint.send(0, Channel::Unreliable, &encode(&msg));
+        self.endpoint.flush(Instant::now());
+    }
+
+    /// What this player's bolts hit (`lt_sim::shot`: the server checks and applies them).
+    pub fn send_hits(&mut self, hits: Vec<HitClaim>) {
+        if !self.connected || hits.is_empty() {
+            return;
+        }
+        self.endpoint
+            .send(0, Channel::Reliable, &encode(&ToServer::Hits(hits)));
         self.endpoint.flush(Instant::now());
     }
 

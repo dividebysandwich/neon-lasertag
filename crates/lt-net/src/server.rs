@@ -6,6 +6,8 @@ use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
 use lt_sim::bots::Bots;
+use lt_sim::shot::HitClaim;
+use lt_sim::sim::Claim;
 use lt_sim::{PlayerCmd, PlayerId, Sim, SimEvent, Team};
 
 use lt_master_proto::{ReportPlayer, ServerReport, TEAM_BLUE, TEAM_RED};
@@ -17,6 +19,11 @@ use crate::transport::{Channel, ConnId, Endpoint, NetEvent};
 pub const SEND_EVERY: u64 = 2;
 /// Commands buffered per client at most (beyond: the oldest are dropped).
 const QUEUE: usize = 4;
+/// Ticks over which the least queued is watched: commands that stay queued all that time only
+/// add delay, so one is dropped.
+const QUEUE_WINDOW: u32 = 60;
+/// Ticks a claim on a shot not fired yet waits for its command.
+const CLAIM_WAIT: u32 = 30;
 
 struct Remote {
     player: Option<PlayerId>,
@@ -24,6 +31,42 @@ struct Remote {
     last_seq: u32,
     queue: VecDeque<PlayerCmd>,
     last: PlayerCmd,
+    /// The least commands queued over the current `QUEUE_WINDOW`, and the ticks into it.
+    least: usize,
+    window: u32,
+    /// Hit claims waiting for their shot, with ticks waited.
+    claims: Vec<(HitClaim, u32)>,
+}
+
+impl Remote {
+    fn new() -> Remote {
+        Remote {
+            player: None,
+            name: String::new(),
+            last_seq: 0,
+            queue: VecDeque::new(),
+            last: PlayerCmd::default(),
+            least: usize::MAX,
+            window: 0,
+            claims: Vec::new(),
+        }
+    }
+
+    /// Drops the oldest queued command, keeping its one-shots (a throw, a trigger pull, the
+    /// shot count) in the next.
+    fn drop_oldest(&mut self) {
+        let Some(old) = self.queue.pop_front() else {
+            return;
+        };
+        if let Some(next) = self.queue.front_mut() {
+            next.throw = next.throw.or(old.throw);
+            // (A pull held for a tick only would be lost.)
+            if old.fire && !self.last.fire {
+                next.fire = true;
+            }
+            next.shot = next.shot.max(old.shot);
+        }
+    }
 }
 
 pub struct Server {
@@ -79,16 +122,7 @@ impl Server {
         for ev in self.endpoint.poll(now) {
             match ev {
                 NetEvent::Connected(id) => {
-                    self.remotes.insert(
-                        id,
-                        Remote {
-                            player: None,
-                            name: String::new(),
-                            last_seq: 0,
-                            queue: VecDeque::new(),
-                            last: PlayerCmd::default(),
-                        },
-                    );
+                    self.remotes.insert(id, Remote::new());
                 }
                 NetEvent::Disconnected(id, why) => {
                     if let Some(r) = self.remotes.remove(&id)
@@ -111,6 +145,16 @@ impl Server {
         }
         for r in self.remotes.values_mut() {
             let Some(p) = r.player else { continue };
+            // A queue that never runs dry is only delay: one less.
+            r.least = r.least.min(r.queue.len());
+            r.window += 1;
+            if r.window >= QUEUE_WINDOW {
+                if r.least > 1 && r.least != usize::MAX {
+                    r.drop_oldest();
+                }
+                r.least = usize::MAX;
+                r.window = 0;
+            }
             if let Some(cmd) = r.queue.pop_front() {
                 r.last = cmd;
             } else {
@@ -118,6 +162,17 @@ impl Server {
                 r.last.throw = None;
             }
             sim.set_cmd(p, r.last);
+            // Hit claims (the shots they're about may come with this command or later).
+            let claims = std::mem::take(&mut r.claims);
+            for (c, waited) in claims {
+                match sim.claim_hit(p, c) {
+                    Claim::Early if waited < CLAIM_WAIT => r.claims.push((c, waited + 1)),
+                    Claim::Accepted => {}
+                    other => {
+                        self.log.push(format!("{}: hit claim {other:?}", r.name));
+                    }
+                }
+            }
         }
     }
 
@@ -156,6 +211,7 @@ impl Server {
                             r.player = Some(p);
                             r.name = name.clone();
                         }
+                        set_client_hits(sim, p);
                         self.log.push(format!("{name} joined {team:?}"));
                         let welcome = ToClient::Welcome {
                             id: p,
@@ -189,11 +245,16 @@ impl Server {
                 }
                 while r.queue.len() > QUEUE {
                     // Behind: drop the oldest, keeping its one-shots.
-                    let old = r.queue.pop_front().unwrap();
-                    if let Some(next) = r.queue.front_mut() {
-                        next.throw = next.throw.or(old.throw);
-                    }
+                    r.drop_oldest();
                 }
+            }
+            ToServer::Hits(hits) => {
+                let Some(r) = self.remotes.get_mut(&id) else {
+                    return;
+                };
+                // (Tried when the commands are taken in, before the next step.)
+                r.claims.extend(hits.into_iter().take(64).map(|c| (c, 0)));
+                r.claims.truncate(256);
             }
             ToServer::Bye => self.endpoint.close(id, "Bye"),
         }
@@ -240,9 +301,13 @@ impl Server {
             {
                 self.displaced.insert(p, team);
             }
+            if let Some(p) = new_id {
+                set_client_hits(sim, p);
+            }
             if let Some(r) = self.remotes.get_mut(&id) {
                 r.player = new_id;
                 r.queue.clear();
+                r.claims.clear();
                 r.last = PlayerCmd::default();
             }
             if let Some(p) = new_id {
@@ -297,6 +362,13 @@ impl Server {
     /// The remote players' sim ids.
     pub fn players(&self) -> Vec<PlayerId> {
         self.remotes.values().filter_map(|r| r.player).collect()
+    }
+}
+
+/// A remote player's client judges its hits on others.
+fn set_client_hits(sim: &mut Sim, p: PlayerId) {
+    if let Some(pl) = sim.players.iter_mut().find(|q| q.id == p) {
+        pl.client_hits = true;
     }
 }
 

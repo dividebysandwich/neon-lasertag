@@ -42,6 +42,7 @@ pub mod segtext;
 pub mod session;
 pub mod settings;
 pub mod sevenseg;
+pub mod shots;
 pub mod targets;
 pub mod vfont;
 pub mod vr;

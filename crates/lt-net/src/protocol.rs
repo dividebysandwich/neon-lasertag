@@ -1,11 +1,12 @@
 //! The game's messages, CBOR encoded (LZ4 compressed when large), as in stealth-net.
 
+use lt_sim::shot::HitClaim;
 use lt_sim::sim::Snapshot;
 use lt_sim::{PlayerCmd, PlayerId, Rules, SimEvent, Team};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL: u16 = 14;
+pub const PROTOCOL: u16 = 15;
 pub const DEFAULT_PORT: u16 = 27420;
 /// How many of its latest commands a client sends with each input (a lost packet loses
 /// nothing).
@@ -21,6 +22,8 @@ pub enum ToServer {
     Input {
         recent: Vec<(u32, PlayerCmd)>,
     },
+    /// What the client's own bolts hit, as it showed the players (reliable).
+    Hits(Vec<HitClaim>),
     Bye,
 }
 
@@ -92,5 +95,13 @@ mod tests {
         let bytes = encode(&msg);
         assert!(bytes.len() < 4000, "{} bytes", bytes.len());
         assert_eq!(decode::<ToClient>(&bytes), Some(msg));
+        let hits = ToServer::Hits(vec![lt_sim::shot::HitClaim {
+            shot: 3,
+            pellet: 1,
+            victim: 2,
+            view: 120.5,
+            at: glam::Vec3::new(1.0, 1.2, -3.0),
+        }]);
+        assert_eq!(decode::<ToServer>(&encode(&hits)), Some(hits));
     }
 }

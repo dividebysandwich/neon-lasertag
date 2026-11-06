@@ -126,6 +126,8 @@ pub struct Game {
     pub status: String,
     /// Remote games: the snapshots received, played back a little behind (see `Interp`).
     pub interp: Interp,
+    /// Remote games: the local player's shots, worked out at once (src/shots.rs).
+    pub shots: crate::shots::Shots,
 }
 
 /// Remote games are drawn a few ticks behind the newest snapshot, interpolating between the
@@ -159,6 +161,11 @@ impl Interp {
 
     fn reset(&mut self) {
         *self = Interp::default();
+    }
+
+    /// A player as of the newest snapshot received.
+    pub fn newest(&self, id: PlayerId) -> Option<&PlayerSnap> {
+        self.buffer.back()?.players.iter().find(|p| p.id == id)
     }
 
     fn receive(&mut self, s: Snapshot) {
@@ -339,6 +346,7 @@ impl Game {
             names,
             status: String::new(),
             interp: Interp::default(),
+            shots: Default::default(),
             source: Source::Local {
                 sim,
                 bots: b,
@@ -359,6 +367,7 @@ impl Game {
             names: Vec::new(),
             status: String::new(),
             interp: Interp::default(),
+            shots: Default::default(),
             source: Source::Remote(client),
         }
     }
@@ -483,6 +492,9 @@ fn step_game(
             let evs = sim.drain_events();
             if let Some(server) = server {
                 server.after_step(sim, &evs);
+                for line in server.log.drain(..) {
+                    info!("server: {line}");
+                }
                 if let Some(n) = net {
                     n.tick(server, sim);
                 }
@@ -502,6 +514,15 @@ fn step_game(
         Source::Remote(client) => {
             // What the player sees, for the server's lag compensation.
             cmd.view_tick = game.interp.view_tick();
+            // The shot, at once (src/shots.rs).
+            let mut own = Vec::new();
+            if let Some(me) = game.me {
+                // (As the server last told: `game.snap` has the prediction's ammo.)
+                let p = game.interp.newest(me);
+                let feet = cmd.feet.or(p.map(|p| p.feet)).unwrap_or_default();
+                game.shots
+                    .trigger(&mut cmd, p, feet, &game.world, &game.rules, me, &mut own);
+            }
             client.send_input(cmd);
             for ev in client.poll() {
                 match ev {
@@ -534,15 +555,38 @@ fn step_game(
                         game.interp.reset();
                         // Events from the old arena (the match's end) still play.
                         for (_, e) in pending {
-                            events.write(GameEvent(e));
+                            if !game.shots.echo(&e, id) {
+                                events.write(GameEvent(e));
+                            }
                         }
+                        game.shots = Default::default();
                     }
                 }
             }
             if let Some(s) = game.interp.advance(game.me) {
                 game.prev = std::mem::replace(&mut game.snap, s);
             }
+            // The own bolts' flight against the players as now shown; what they hit goes to
+            // the server.
+            game.shots.fly(
+                &game.snap,
+                game.interp.view,
+                &game.world,
+                &game.level,
+                &game.rules,
+                &mut own,
+            );
+            client.send_hits(game.shots.take_claims());
+            if let Some(me) = game.me {
+                game.shots.show(&mut game.snap, me);
+            }
+            for e in own {
+                events.write(GameEvent(e));
+            }
             for e in game.interp.due() {
+                if game.me.is_some_and(|me| game.shots.echo(&e, me)) {
+                    continue;
+                }
                 events.write(GameEvent(e));
             }
         }

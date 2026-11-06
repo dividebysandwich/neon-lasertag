@@ -53,6 +53,7 @@ fn client_joins_and_receives_the_world() {
     assert_eq!(sim.players.len(), 4, "a bot made room");
     let p = sim.player(me).unwrap();
     assert!(!p.bot);
+    assert!(p.client_hits, "its client judges its hits");
     assert!(snaps > 50, "{snaps} snapshots");
     let _ = events;
     // The remote player moved.
