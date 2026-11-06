@@ -51,6 +51,13 @@ pub struct Rules {
     /// Seconds a cloak lasts, and how long one shows after firing or a hit.
     pub cloak_time: f32,
     pub cloak_flash: f32,
+    /// The charge gun: seconds to hold the trigger for a beam, the shots a beam takes, its
+    /// speed (m/s), reach (m) and hits dealt.
+    pub charge_time: f32,
+    pub beam_cost: u16,
+    pub beam_speed: f32,
+    pub beam_range: f32,
+    pub beam_damage: u8,
     /// Seconds a speed boost lasts, and how many times as fast it makes one.
     pub speed_time: f32,
     pub speed_factor: f32,
@@ -115,6 +122,11 @@ impl Default for Rules {
             shotgun_range: 14.0,
             cloak_time: 100.0,
             cloak_flash: 0.5,
+            charge_time: 1.0,
+            beam_cost: 5,
+            beam_speed: 400.0,
+            beam_range: 60.0,
+            beam_damage: 2,
             speed_time: 15.0,
             speed_factor: 1.5,
             grenade_fuse: 3.0,

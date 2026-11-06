@@ -293,6 +293,8 @@ pub struct LocalCmd {
     pub cmd: PlayerCmd,
     /// The trigger was pulled since the last tick (so a quick click isn't lost between ticks).
     pub fire_latch: bool,
+    /// Seconds more to hold the trigger down (testing: `LT_DEV` `fire=S`).
+    pub dev_fire: f32,
     /// A bot plays the local player (testing).
     pub autopilot: bool,
     /// Physical walking (VR) since the last frame's prediction, world XZ metres.
@@ -358,6 +360,10 @@ fn step_game(
     if local.fire_latch {
         cmd.fire = true;
         local.fire_latch = false;
+    }
+    if local.dev_fire > 0.0 {
+        cmd.fire = true;
+        local.dev_fire -= lt_sim::TICK;
     }
     // A throw is sent once.
     local.cmd.throw = None;

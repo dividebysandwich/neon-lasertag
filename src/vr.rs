@@ -1017,12 +1017,32 @@ fn haptics(
                 rumble.play(gun, 0.0, 0.05, 0.8);
                 rumble.play(gun, 0.1, 0.05, 0.8);
             }
+            // The charge gun: ready (a double tick), and the beam's heavy kick.
+            SimEvent::ChargeFull { player } if player == me => {
+                rumble.play(gun, 0.0, 0.02, 0.6);
+                rumble.play(gun, 0.06, 0.02, 0.6);
+            }
+            SimEvent::BeamFired { player, .. } if player == me => {
+                rumble.play(gun, 0.0, 0.06, 1.0);
+                rumble.fade(gun, 0.06, 0.2, 0.6);
+            }
             SimEvent::TaggedOut { by, player, .. } if by == me && player != me => {
                 rumble.play(gun, 0.0, 0.06, 0.9);
                 rumble.play(gun, 0.12, 0.04, 0.6);
             }
             _ => {}
         }
+    }
+    // Charging: a hum in the gun hand growing as it charges.
+    let charging = game
+        .snap
+        .players
+        .iter()
+        .find(|p| p.id == me)
+        .map_or(0.0, |p| p.charging);
+    if charging > 0.0 {
+        let k = (charging / game.rules.charge_time).min(1.0);
+        rumble.play(gun, 0.0, 0.02, 0.08 + 0.25 * k);
     }
 }
 

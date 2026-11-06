@@ -610,17 +610,26 @@ fn powerup_status(game: Res<Game>, mut q: Query<&mut Text, With<PowerText>>) {
     let me = game
         .me
         .and_then(|id| game.snap.players.iter().find(|p| p.id == id));
-    t.0 = me.map(powerup_line).unwrap_or_default();
+    t.0 = me.map(|p| powerup_line(p, &game.rules)).unwrap_or_default();
 }
 
 /// What the HUD says about a player's powerups ("" with none).
-pub fn powerup_line(p: &lt_sim::sim::PlayerSnap) -> String {
+pub fn powerup_line(p: &lt_sim::sim::PlayerSnap, rules: &lt_sim::Rules) -> String {
     let mut parts = Vec::new();
     if p.rapid {
         parts.push("RAPID FIRE".to_string());
     }
     if p.shotgun {
         parts.push("SHOTGUN".to_string());
+    }
+    if p.charge {
+        parts.push(if p.charging >= rules.charge_time {
+            "CHARGE GUN: CHARGED, LET GO".to_string()
+        } else if p.charging > 0.0 {
+            format!("CHARGE GUN {:.0}%", p.charging / rules.charge_time * 100.0)
+        } else {
+            "CHARGE GUN".to_string()
+        });
     }
     if p.cloak > 0.0 {
         let state = if p.cloaked() { "CLOAKED" } else { "SEEN" };

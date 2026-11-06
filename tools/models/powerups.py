@@ -9,6 +9,8 @@ Meshes (game frame, Y up, metres):
   wide at the hem and ~0.7 m tall, origin at the centre.
 - `speed`: a chevron pointing +X (running) with three speed lines trailing it, ~0.4 m wide,
   ~0.32 m tall, origin near the centre.
+- `charge`: a lightning bolt (the charge gun), ~0.26 m wide, ~0.46 m tall, origin near the
+  centre.
 - `shotgun`: the pump shotgun a player holds, in the blaster's frame (barrel along -Z, up +Y,
   origin at the middle of the grip hold), with `hit_1`/`hit_2`/`hit_3` lights on top of the
   receiver (hit_1 nearest the player) and a `muzzle` disc; the empty `shotgun_muzzle` marks the
@@ -182,6 +184,19 @@ def build_speed():
     return g
 
 
+def build_charge():
+    g = L.Geo()
+    # Two convex slabs: the upper stroke slanting down to the left, the lower one from a step
+    # to the right down to the point.
+    upper = [(-0.04, 0.23), (0.12, 0.23), (0.02, 0.01), (-0.13, 0.01)]
+    lower = [(-0.05, 0.05), (0.13, 0.05), (-0.09, -0.23)]
+    for poly in (upper, lower):
+        if L.signed_area(poly) < 0:
+            poly.reverse()
+        slab(g, poly, -0.03, 0.03, "body", front_mat="accent", back_mat="accent")
+    return g
+
+
 def build_shotgun():
     g = L.Geo()
 
@@ -252,7 +267,8 @@ def main():
         L.material(m, base=(1, 1, 1), emit=(1, 1, 1), strength=3.0)
     L.material("muzzle", base=(1, 1, 1), emit=(1, 1, 1), strength=5.0)
     for name, build in (("rapid", build_rapid), ("shield", build_shield), ("cloak", build_cloak),
-                        ("shotgun", build_shotgun), ("speed", build_speed)):
+                        ("shotgun", build_shotgun), ("speed", build_speed),
+                        ("charge", build_charge)):
         g = build()
         L.make_object(name, g)
         print("powerup %s %d tris" % (name, g.tris()))

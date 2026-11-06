@@ -215,6 +215,8 @@ const DOOR_OPEN_MIN: u32 = 40;
 /// Ticks a bot needs to get through a laser gate (it waits if the gate is on or switches on
 /// sooner).
 const GATE_CLEAR_TICKS: u32 = 24;
+/// With the charge gun, enemies at least this far off (m) get a beam, closer ones bolts.
+const BEAM_MIN_RANGE: f32 = 8.0;
 /// What going through a laser gate costs a route (metres), for the wait.
 const GATE_DETOUR: f32 = 3.0;
 
@@ -2327,14 +2329,26 @@ impl Controller for Bot {
             self.aim = (Quat::from_axis_angle(axis, step) * self.aim).normalize_or(want);
         }
         let mut fire = false;
-        // (With the shotgun, only what it reaches.)
-        if let Some((pt, true)) = shoot_at
+        let aimed = self.aim.angle_between(want) < 0.025;
+        if let Some(held) = p.charging {
+            // The charge gun, charging: hold on for a beam at an enemy further off (until it's
+            // full and on target), otherwise (and at target panels: bolts score as much, and
+            // quicker) let go at once for a plain bolt.
+            let far = target.is_some()
+                && shoot_at.is_some_and(|(pt, ok)| ok && pt.distance(muzzle) > BEAM_MIN_RANGE)
+                && p.ammo >= sim.rules.beam_cost;
+            let full = held >= sim.rules.charge_time;
+            fire = far && !(full && aimed) && held < sim.rules.charge_time * 2.5;
+            if !fire {
+                self.roll_error();
+            }
+        } else if let Some((pt, true)) = shoot_at
             && (!p.shotgun || pt.distance(muzzle) < sim.rules.shotgun_range * 0.9)
             && !self.fire_prev
             && p.fire_cd <= 0.0
             && p.cooldown <= 0.0
             && p.ammo > 0
-            && self.aim.angle_between(want) < 0.025
+            && aimed
         {
             fire = true;
             self.roll_error();

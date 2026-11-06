@@ -45,6 +45,9 @@ struct Sounds {
     mega_win: Handle<AudioSource>,
     mirror_ping: Handle<AudioSource>,
     jump_pad: Handle<AudioSource>,
+    charge_loop: Handle<AudioSource>,
+    charge_full: Handle<AudioSource>,
+    beam_fire: Handle<AudioSource>,
     tick: Handle<AudioSource>,
     power_up: Handle<AudioSource>,
     turret_fire: Handle<AudioSource>,
@@ -88,7 +91,7 @@ impl Plugin for SoundPlugin {
             .add_systems(Startup, load)
             .add_systems(
                 Update,
-                (play_events, footsteps, ticking).run_if(resource_exists::<Game>),
+                (play_events, footsteps, ticking, charge_hum).run_if(resource_exists::<Game>),
             );
     }
 }
@@ -118,6 +121,9 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
         mega_win: s("mega_win"),
         mirror_ping: s("mirror_ping"),
         jump_pad: s("jump_pad"),
+        charge_loop: s("charge_loop"),
+        charge_full: s("charge_full"),
+        beam_fire: s("beam_fire"),
         tick: s("power_tick"),
         power_up: s("power_up"),
         turret_fire: s("turret_fire"),
@@ -148,6 +154,47 @@ fn play(
         settings,
         Transform::from_translation(at.unwrap_or_default()),
     ));
+}
+
+/// The local player's charge gun charging: a whine rising as it charges.
+#[derive(Component)]
+struct ChargeHum;
+
+fn charge_hum(
+    mut commands: Commands,
+    game: Res<Game>,
+    sounds: Res<Sounds>,
+    settings: Option<Res<Settings>>,
+    mut hum: Query<&mut AudioSink, With<ChargeHum>>,
+    mut spawned: Local<bool>,
+) {
+    if !*spawned {
+        *spawned = true;
+        commands.spawn((
+            AudioPlayer(sounds.charge_loop.clone()),
+            PlaybackSettings {
+                mode: PlaybackMode::Loop,
+                volume: Volume::Linear(0.0),
+                ..default()
+            },
+            ChargeHum,
+        ));
+        return;
+    }
+    let gain = settings.map_or(1.0, |s| s.sound_volume);
+    let charging = game
+        .me
+        .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
+        .map_or(0.0, |p| p.charging);
+    let k = (charging / game.rules.charge_time).min(1.0);
+    for mut sink in &mut hum {
+        sink.set_volume(Volume::Linear(if charging > 0.0 {
+            (0.3 + 0.4 * k) * gain
+        } else {
+            0.0
+        }));
+        sink.set_speed(0.7 + 0.8 * k);
+    }
 }
 
 fn play_events(
@@ -243,6 +290,29 @@ fn play_events(
             }
             SimEvent::Uncloaked { player } if Some(player) == me => {
                 play(&mut commands, gain, &sounds.zap, None, 0.4, 0.8)
+            }
+            SimEvent::ChargeFull { player } => {
+                let at = (Some(player) != me)
+                    .then(|| {
+                        game.snap
+                            .players
+                            .iter()
+                            .find(|p| p.id == player)
+                            .map(|p| p.feet + Vec3::Y * 1.3)
+                    })
+                    .flatten();
+                play(&mut commands, gain, &sounds.charge_full, at, 0.8, 1.0)
+            }
+            SimEvent::BeamFired { player, pos, .. } => {
+                let mine = Some(player) == me;
+                play(
+                    &mut commands,
+                    gain,
+                    &sounds.beam_fire,
+                    (!mine).then_some(pos),
+                    if mine { 0.8 } else { 1.0 },
+                    1.0,
+                )
             }
             SimEvent::GateZap { pos, .. } => {
                 play(&mut commands, gain, &sounds.zap, Some(pos), 0.8, 1.3)

@@ -104,6 +104,10 @@ pub struct Player {
     pub decloak: f32,
     /// Seconds left of the speed boost (0: none).
     pub speed: f32,
+    /// Holding the charge gun instead of the blaster (until tagged out), and how long its
+    /// trigger has been held (while it charges).
+    pub charge: bool,
+    pub charging: Option<f32>,
 }
 
 impl Player {
@@ -146,7 +150,10 @@ impl Player {
             PickupKind::Grenade => self.grenades < rules.grenade_max,
             PickupKind::Rapid => !self.rapid,
             PickupKind::Shield => self.shields == 0,
-            PickupKind::Shotgun => !self.shotgun || self.ammo < rules.ammo,
+            // (One special gun at a time: the other stays where it is until this one is lost
+            // with a tag-out; one's own refills it.)
+            PickupKind::Shotgun => !self.charge && (!self.shotgun || self.ammo < rules.ammo),
+            PickupKind::Charge => !self.shotgun && (!self.charge || self.ammo < rules.ammo),
             PickupKind::Cloak => self.cloak <= 0.0,
             PickupKind::Speed => self.speed <= 0.0,
         }
@@ -158,8 +165,10 @@ impl Player {
             PickupKind::Grenade => self.grenades += 1,
             PickupKind::Rapid => self.rapid = true,
             PickupKind::Shield => self.shields += 1,
-            PickupKind::Shotgun => {
-                self.shotgun = true;
+            PickupKind::Shotgun | PickupKind::Charge => {
+                self.shotgun = kind == PickupKind::Shotgun;
+                self.charge = kind == PickupKind::Charge;
+                self.charging = None;
                 self.ammo = rules.ammo;
                 self.reloading = None;
             }
@@ -177,6 +186,8 @@ impl Player {
         self.cloak = 0.0;
         self.decloak = 0.0;
         self.speed = 0.0;
+        self.charge = false;
+        self.charging = None;
     }
 
     pub fn eye(&self) -> Vec3 {
@@ -253,10 +264,34 @@ pub struct Bolt {
 }
 
 /// What some bolts do besides one hit: bounce off mirrors, hit harder, fly through players.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BoltExtra {
     /// Mirrors bounced off so far.
     pub bounces: u8,
+    /// Hits it deals at once (the charge gun's beam: `Rules::beam_damage`).
+    pub damage: u8,
+    /// Flies on through the players it hits (each hit once: `struck`, by player id bit).
+    pub pierce: bool,
+    pub struck: u64,
+}
+
+impl Default for BoltExtra {
+    fn default() -> Self {
+        BoltExtra {
+            bounces: 0,
+            damage: 1,
+            pierce: false,
+            struck: 0,
+        }
+    }
+}
+
+/// What a trigger pull fires.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Shot {
+    Bolt,
+    Spread,
+    Beam,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -341,6 +376,9 @@ pub struct PlayerSnap {
     pub decloak: f32,
     /// `Player::speed`.
     pub speed: f32,
+    /// `Player::charge`, and `Player::charging` (0: not charging).
+    pub charge: bool,
+    pub charging: f32,
 }
 
 impl PlayerSnap {
@@ -353,6 +391,7 @@ impl PlayerSnap {
             PickupKind::Shotgun => self.shotgun,
             PickupKind::Cloak => self.cloak > 0.0,
             PickupKind::Speed => self.speed > 0.0,
+            PickupKind::Charge => self.charge,
         }
     }
 
@@ -368,6 +407,8 @@ pub struct BoltSnap {
     pub pos: Vec3,
     pub vel: Vec3,
     pub team: Option<Team>,
+    /// A charge gun's beam.
+    pub beam: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -519,6 +560,8 @@ impl Sim {
             cloak: 0.0,
             decloak: 0.0,
             speed: 0.0,
+            charge: false,
+            charging: None,
         };
         let spawn = self.pick_spawn(team);
         p.feet = spawn.pos;
@@ -937,9 +980,14 @@ impl Sim {
                 }
             }
 
-            // Firing (one bolt per trigger pull).
+            // Firing: one shot per trigger pull; the charge gun fires on letting go (a beam once
+            // held for `Rules::charge_time`), and a hit or holstering stops its charging.
             let pull = p.cmd.fire && !p.prev_fire;
             p.prev_fire = p.cmd.fire;
+            if p.cmd.gun_hand.is_none() || p.cooldown > 0.0 {
+                p.charging = None;
+            }
+            let mut shot = None;
             if pull && p.cmd.gun_hand.is_some() {
                 if p.cooldown > 0.0 {
                     self.events.push(SimEvent::Denied { player: p.id });
@@ -948,75 +996,32 @@ impl Sim {
                 } else if p.ammo == 0 {
                     p.fire_cd = p.fire_interval(&rules);
                     self.events.push(SimEvent::Empty { player: p.id });
+                } else if p.charge {
+                    p.charging = Some(0.0);
+                } else if p.shotgun {
+                    shot = Some(Shot::Spread);
                 } else {
-                    p.fire_cd = p.fire_interval(&rules);
-                    p.decloak = rules.cloak_flash;
-                    p.ammo -= 1;
-                    p.shots += 1;
-                    let eye = p.eye();
-                    let mut from = p.feet + p.cmd.muzzle.pos;
-                    // A muzzle far from its player, or through a wall, fires from the eye.
-                    if !from.is_finite() || (from - eye).length() > 1.5 {
-                        from = eye;
-                    }
-                    let mut dir = p.cmd.muzzle.forward();
-                    if !dir.is_finite() || dir.length_squared() < 0.5 {
-                        dir = Quat::from_rotation_y(p.cmd.yaw) * Vec3::NEG_Z;
-                    }
-                    let dir = dir.normalize();
-                    let (id, team, view, shotgun) = (p.id, p.team, p.cmd.view_tick, p.shotgun);
-                    let blocked = self.world.ray(eye, from);
-                    // Fired first, so its event comes before any hit it makes straight away.
-                    self.events.push(SimEvent::Fired {
-                        player: id,
-                        pos: from,
-                        dir,
-                    });
-                    match blocked {
-                        Some((_, q, n)) => {
-                            self.events.push(SimEvent::BoltImpact {
-                                pos: q,
-                                normal: n,
-                                team: Some(team),
-                            });
-                        }
-                        None => {
-                            // The blaster's one bolt, or the shotgun's spread of short-lived
-                            // ones.
-                            let (dirs, life) = if shotgun {
-                                let side = dir.any_orthonormal_vector();
-                                let up = dir.cross(side);
-                                let dirs: Vec<Vec3> = (0..rules.shotgun_bolts)
-                                    .map(|_| {
-                                        // Evenly over the cone's disc.
-                                        let r = self.rng.random::<f32>().sqrt()
-                                            * rules.shotgun_spread.tan();
-                                        let a = self.rng.random_range(0.0..std::f32::consts::TAU);
-                                        (dir + (side * a.cos() + up * a.sin()) * r).normalize()
-                                    })
-                                    .collect();
-                                (dirs, rules.shotgun_range / rules.blaster_bolt_speed)
-                            } else {
-                                (vec![dir], rules.bolt_life)
-                            };
-                            for d in dirs {
-                                let mut bolt = Bolt {
-                                    id: self.id(),
-                                    owner: id,
-                                    owner_team: team,
-                                    team: Some(team),
-                                    pos: from,
-                                    vel: d * rules.blaster_bolt_speed,
-                                    life,
-                                    extra: BoltExtra::default(),
-                                };
-                                if self.compensate(&mut bolt, view) {
-                                    self.bolts.push(bolt);
-                                }
-                            }
-                        }
-                    }
+                    shot = Some(Shot::Bolt);
                 }
+            }
+            if let Some(t) = p.charging {
+                if p.cmd.fire {
+                    let held = t + TICK;
+                    p.charging = Some(held);
+                    if t < rules.charge_time && held >= rules.charge_time {
+                        self.events.push(SimEvent::ChargeFull { player: p.id });
+                    }
+                } else {
+                    p.charging = None;
+                    shot = Some(if t >= rules.charge_time && p.ammo >= rules.beam_cost {
+                        Shot::Beam
+                    } else {
+                        Shot::Bolt
+                    });
+                }
+            }
+            if let Some(shot) = shot {
+                self.fire(i, shot, &rules);
             }
 
             // Throwing.
@@ -1050,6 +1055,106 @@ impl Sim {
                 });
                 self.events
                     .push(SimEvent::GrenadeThrown { player: id, pos });
+            }
+        }
+    }
+
+    /// Player `pi` fires (it may: see `step_players`): a blaster bolt, the shotgun's spread of
+    /// short-lived bolts or the charge gun's beam.
+    fn fire(&mut self, pi: usize, shot: Shot, rules: &Rules) {
+        let p = &mut self.players[pi];
+        p.fire_cd = p.fire_interval(rules);
+        p.decloak = rules.cloak_flash;
+        let cost = if shot == Shot::Beam {
+            rules.beam_cost
+        } else {
+            1
+        };
+        p.ammo = p.ammo.saturating_sub(cost);
+        p.shots += 1;
+        let eye = p.eye();
+        let mut from = p.feet + p.cmd.muzzle.pos;
+        // A muzzle far from its player, or through a wall, fires from the eye.
+        if !from.is_finite() || (from - eye).length() > 1.5 {
+            from = eye;
+        }
+        let mut dir = p.cmd.muzzle.forward();
+        if !dir.is_finite() || dir.length_squared() < 0.5 {
+            dir = Quat::from_rotation_y(p.cmd.yaw) * Vec3::NEG_Z;
+        }
+        let dir = dir.normalize();
+        let (id, team, view) = (p.id, p.team, p.cmd.view_tick);
+        let blocked = self.world.ray(eye, from);
+        // Fired first, so its event comes before any hit it makes straight away.
+        self.events.push(SimEvent::Fired {
+            player: id,
+            pos: from,
+            dir,
+        });
+        if shot == Shot::Beam {
+            self.events.push(SimEvent::BeamFired {
+                player: id,
+                pos: from,
+                dir,
+            });
+        }
+        if let Some((_, q, n)) = blocked {
+            self.events.push(SimEvent::BoltImpact {
+                pos: q,
+                normal: n,
+                team: Some(team),
+            });
+            return;
+        }
+        let (dirs, speed, life, extra) = match shot {
+            Shot::Bolt => (
+                vec![dir],
+                rules.blaster_bolt_speed,
+                rules.bolt_life,
+                BoltExtra::default(),
+            ),
+            Shot::Spread => {
+                let side = dir.any_orthonormal_vector();
+                let up = dir.cross(side);
+                let dirs: Vec<Vec3> = (0..rules.shotgun_bolts)
+                    .map(|_| {
+                        // Evenly over the cone's disc.
+                        let r = self.rng.random::<f32>().sqrt() * rules.shotgun_spread.tan();
+                        let a = self.rng.random_range(0.0..std::f32::consts::TAU);
+                        (dir + (side * a.cos() + up * a.sin()) * r).normalize()
+                    })
+                    .collect();
+                (
+                    dirs,
+                    rules.blaster_bolt_speed,
+                    rules.shotgun_range / rules.blaster_bolt_speed,
+                    BoltExtra::default(),
+                )
+            }
+            Shot::Beam => (
+                vec![dir],
+                rules.beam_speed,
+                rules.beam_range / rules.beam_speed,
+                BoltExtra {
+                    damage: rules.beam_damage,
+                    pierce: true,
+                    ..BoltExtra::default()
+                },
+            ),
+        };
+        for d in dirs {
+            let mut bolt = Bolt {
+                id: self.id(),
+                owner: id,
+                owner_team: team,
+                team: Some(team),
+                pos: from,
+                vel: d * speed,
+                life,
+                extra,
+            };
+            if self.compensate(&mut bolt, view) {
+                self.bolts.push(bolt);
             }
         }
     }
@@ -1088,8 +1193,11 @@ impl Sim {
             hit = Some((q, n));
         }
         // Team bolts pass through team mates (and their shooter); grenade bolts hit everyone.
+        let struck = b.extra.struck;
         let passes = |p: &Player| {
-            !p.alive() || b.team.is_some() && (p.id == b.owner || b.team == Some(p.team))
+            !p.alive()
+                || b.team.is_some() && (p.id == b.owner || b.team == Some(p.team))
+                || struck & (1u64 << (p.id % 64)) != 0
         };
         let mut victim: Option<usize> = None;
         match past {
@@ -1128,7 +1236,12 @@ impl Sim {
         if let Some(pi) = victim {
             let at = b.pos + (to - b.pos) * t_best;
             self.hit_player(pi, b, at);
-            remove = true;
+            if !b.extra.pierce {
+                return true;
+            }
+            // A beam: on through them (and whoever else is in its way this tick).
+            b.extra.struck |= 1u64 << (self.players[pi].id % 64);
+            return self.bolt_tick(b, past);
         } else if let Some((q, n)) = hit {
             // Where the bolt struck, on the box (however oblique the shot).
             let struck =
@@ -1223,7 +1336,7 @@ impl Sim {
             });
             return;
         }
-        p.hits += 1;
+        p.hits = (p.hits + b.extra.damage.max(1)).min(hits_to_tag);
         p.cooldown = hit_cooldown;
         p.decloak = self.rules.cloak_flash;
         let (id, team, feet, hits) = (p.id, p.team, p.feet, p.hits);
@@ -1723,6 +1836,8 @@ impl Sim {
                     cloak: p.cloak,
                     decloak: p.decloak,
                     speed: p.speed,
+                    charge: p.charge,
+                    charging: p.charging.unwrap_or(0.0),
                 })
                 .collect(),
             bolts: self
@@ -1733,6 +1848,7 @@ impl Sim {
                     pos: b.pos,
                     vel: b.vel,
                     team: b.team,
+                    beam: b.extra.pierce,
                 })
                 .collect(),
             grenades: self
@@ -2028,6 +2144,108 @@ mod tests {
         sim.players[0].hits = 2;
         sim.hit_player(0, &bolt, Vec3::ZERO);
         assert_eq!(sim.player(a).unwrap().speed, 0.0);
+    }
+
+    #[test]
+    fn the_charge_gun_taps_bolts_and_charges_beams_through_players() {
+        let (mut sim, a, b) = duel();
+        // (Standing on the spawn pads, which would refill it.)
+        sim.rules.reload_rate = 0.0;
+        let c = sim.add_player("c", Some(Team::Blue), false).unwrap();
+        // Lined up: b 3 m in front of a, c 2 m behind b.
+        let bf = sim.player(b).unwrap().feet;
+        sim.players[2].feet = bf + Vec3::new(0.0, 0.0, -2.0);
+        sim.give(a, PickupKind::Charge);
+        assert!(sim.player(a).unwrap().charge);
+        let me = sim.player(a).unwrap();
+        let target = sim.player(b).unwrap().chest();
+        let muzzle_pos = me.eye() - Vec3::Y * 0.2 - me.feet;
+        let dir = (target - (me.feet + muzzle_pos)).normalize();
+        let cmd = PlayerCmd {
+            gun_hand: Some(Hand::Right),
+            muzzle: Pose {
+                pos: muzzle_pos,
+                rot: look_rot(dir),
+            },
+            fire: true,
+            ..Default::default()
+        };
+        let beams = |evs: &[SimEvent]| {
+            evs.iter()
+                .filter(|e| matches!(e, SimEvent::BeamFired { .. }))
+                .count()
+        };
+        // A tap: a plain bolt, one hit on b only.
+        sim.set_cmd(a, cmd);
+        sim.step();
+        sim.set_cmd(a, PlayerCmd { fire: false, ..cmd });
+        for _ in 0..20 {
+            sim.step();
+        }
+        let evs = sim.drain_events();
+        assert_eq!(beams(&evs), 0);
+        assert_eq!(sim.player(b).unwrap().hits, 1);
+        assert_eq!(sim.player(c).unwrap().hits, 0);
+        assert_eq!(sim.player(a).unwrap().ammo, sim.rules.ammo - 1);
+        // Held a second and let go: a beam through both, two hits each.
+        for p in &mut sim.players {
+            p.hits = 0;
+            p.cooldown = 0.0;
+        }
+        sim.set_cmd(a, cmd);
+        for _ in 0..(sim.rules.charge_time / TICK) as usize + 2 {
+            sim.step();
+        }
+        assert!(
+            sim.drain_events()
+                .iter()
+                .any(|e| matches!(e, SimEvent::ChargeFull { .. }))
+        );
+        sim.set_cmd(a, PlayerCmd { fire: false, ..cmd });
+        for _ in 0..10 {
+            sim.step();
+        }
+        let evs = sim.drain_events();
+        assert_eq!(beams(&evs), 1, "{evs:?}");
+        assert_eq!(sim.player(b).unwrap().hits, 2);
+        assert_eq!(sim.player(c).unwrap().hits, 2);
+        assert_eq!(
+            sim.player(a).unwrap().ammo,
+            sim.rules.ammo - 1 - sim.rules.beam_cost
+        );
+        // A hit while charging stops it.
+        sim.set_cmd(a, PlayerCmd { fire: false, ..cmd });
+        for _ in 0..30 {
+            sim.step();
+        }
+        sim.set_cmd(a, cmd);
+        for _ in 0..30 {
+            sim.step();
+        }
+        assert!(sim.player(a).unwrap().charging.is_some());
+        let bolt = Bolt {
+            id: 1,
+            owner: b,
+            owner_team: Team::Blue,
+            team: Some(Team::Blue),
+            pos: Vec3::ZERO,
+            vel: Vec3::ZERO,
+            life: 1.0,
+            extra: BoltExtra::default(),
+        };
+        sim.hit_player(0, &bolt, Vec3::ZERO);
+        sim.step();
+        assert!(sim.player(a).unwrap().charging.is_none());
+        // One special gun at a time.
+        sim.players[0].hits = 0;
+        assert!(
+            !sim.player(a)
+                .unwrap()
+                .wants(PickupKind::Shotgun, &sim.rules)
+        );
+        sim.give(a, PickupKind::Shotgun);
+        let p = sim.player(a).unwrap();
+        assert!(!p.shotgun && p.charge);
     }
 
     #[test]

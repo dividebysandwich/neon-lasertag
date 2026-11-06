@@ -42,6 +42,11 @@
   noise and a sine chirp sweeping up two octaves.
 - gate_hum: a laser gate's buzz while it's on (a seamless one-second loop): a harsh
   electric hum with a fast flutter and a thin high whine.
+- charge_loop: the charge gun charging (a seamless one-second loop, its pitch raised as it
+  charges): a bright whine with a fast flutter over a low buzz.
+- charge_full: the charge gun fully charged: a quick rising two-note chime.
+- beam_fire: the charge gun's beam: a heavy crack, a long bright zap sweeping down from
+  3 kHz, a sub-bass punch and a hissing tail.
 - shield_hum: a forcefield's hum (a seamless two-second loop): a mains-like drone with
   slowly beating partials and faint crackle.
 
@@ -609,6 +614,35 @@ def gate_hum():
     return buzz + whine
 
 
+def charge_loop():
+    T = 1.0
+    x = seconds(T)
+    # Every partial a whole number of cycles in 1 s: a seamless loop.
+    whine = (np.sin(2 * np.pi * 660 * x) + 0.5 * np.sin(2 * np.pi * 1320 * x)
+             + 0.25 * np.sin(2 * np.pi * 1985 * x)) * (0.7 + 0.3 * np.sin(2 * np.pi * 16 * x))
+    buzz = lowpass(saw(np.full(len(x), 110.0)), 1500) * 0.3
+    return whine * 0.4 + buzz
+
+
+def charge_full():
+    T = 0.4
+    a = np.sin(2 * np.pi * 1318.5 * seconds(T)) * env(T, 0.002, 0.08)
+    b = at(T, 0.07, np.sin(2 * np.pi * 1975.5 * seconds(T - 0.07)) * env(T - 0.07, 0.002, 0.18))
+    return echoes((a + b) * 0.6, [0.06], [0.25], 8000)
+
+
+def beam_fire():
+    T = 1.0
+    x = seconds(T)
+    f = 3000 * np.exp(-x / 0.12) + 120
+    zap = (saw(f) * 0.5 + square(f * 0.5, 0.4) * 0.3) * env(T, 0.001, 0.35, hold=0.05)
+    zap = lowpass(zap, 7000)
+    crack = click(T, 1500, 14000, 0.004) * 1.6
+    punch = thump(T, 50, 0.18) * 1.2
+    hiss = noise(T, 3000, 12000) * env(T, 0.01, 0.5) * 0.25
+    return echoes(zap + crack + punch + hiss, [0.09, 0.2], [0.3, 0.15], 5000)
+
+
 SOUNDS = {
     # name: (generator, RMS dBFS, seed)
     "footstep_1": (lambda: footstep(1), -27.0, 11),
@@ -642,10 +676,13 @@ SOUNDS = {
     "mirror_ping": (mirror_ping, -21.0, 241),
     "jump_pad": (jump_pad, -20.0, 251),
     "gate_hum": (gate_hum, -27.0, 261),
+    "charge_loop": (charge_loop, -26.0, 271),
+    "charge_full": (charge_full, -21.0, 281),
+    "beam_fire": (beam_fire, -14.0, 291),
 }
 
 # Sounds played as loops.
-LOOPS = {"shield_hum", "gate_hum"}
+LOOPS = {"shield_hum", "gate_hum", "charge_loop"}
 
 
 if __name__ == "__main__":

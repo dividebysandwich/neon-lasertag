@@ -13,7 +13,8 @@
 //! team target (`target`). Megatarget mode in local games: both secondary targets hit at once
 //! (`power`), and going to Red's doorway into the megatarget's room (`warp-door`), into the
 //! room (`warp-room`), in front of the first turret (`warp-turret`) or into the first pocket
-//! (`warp-pocket`); in front of the nearest mirror (`warp-mirror`) jump pad (`warp-pad`) or laser gate (`warp-gate`); turning the flat screen's view (`yaw=90`, `pitch=-20`, in degrees).
+//! (`warp-pocket`); in front of the nearest mirror (`warp-mirror`) jump pad (`warp-pad`) or laser gate (`warp-gate`); turning the flat screen's view (`yaw=90`, `pitch=-20`, in degrees); holding the trigger
+//! down for S seconds (`fire=S`).
 
 use bevy::prelude::*;
 use lt_sim::bots::Difficulty;
@@ -398,6 +399,15 @@ fn dev_script(
                 p.shield = t;
             }
         }),
+        // Hold the trigger down for S seconds (`fire=S`).
+        a if a.starts_with("fire=") => {
+            let secs: f32 = a[5..].parse().unwrap_or(0.1);
+            commands.queue(move |w: &mut World| {
+                if let Some(mut local) = w.get_resource_mut::<LocalCmd>() {
+                    local.dev_fire = secs;
+                }
+            });
+        }
         // The flat screen's view: turn to `yaw=DEG` (0: facing -z, 90: -x) or `pitch=DEG`.
         a if a.starts_with("yaw=") || a.starts_with("pitch=") => {
             let (key, v) = a.split_once('=').unwrap_or_default();

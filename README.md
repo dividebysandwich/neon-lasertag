@@ -27,7 +27,7 @@ holster on the left hip; or `LT_LEFT_HANDED=1`), `--autopilot` (a bot plays you,
 Testing: `LT_DEV="6:menu,8:leave,10:play-hard,14:hit,20:next"` scripts menu actions and hits (`options`
 opens the options screen, `arc` shows the throw arc, `target` hits a team target;
 `give-KIND` gives you a pickup's contents (`give-all-KIND` everyone) and `drop-KIND` lays one in front of you, KIND
-`grenade`, `rapid`, `shield`, `shotgun`, `cloak`, `speed`; `shields-up` switches everyone's shield on, `summon` (or `summon=M`) puts the
+`grenade`, `rapid`, `shield`, `shotgun`, `cloak`, `speed`, `charge`; `fire=S` holds the trigger down for S s; `shields-up` switches everyone's shield on, `summon` (or `summon=M`) puts the
 nearest other player 4 m (M m) in front of you; Megatarget mode: `power` hits both secondary targets, `warp-door`, `warp-room`, `warp-turret` and `warp-pocket` move
 you there; `warp-mirror` puts you before the nearest mirror, `warp-pad` (or `warp-pad=M`) 1 m (M m) before
 the nearest jump pad, `warp-gate` before the nearest laser gate; `yaw=DEG` and `pitch=DEG` turn the flat screen's view),
@@ -108,6 +108,12 @@ it. You lose them all when you're tagged out.
 - **Cloak** (purple, a cape): for 100 s you can't be seen from further than 7 m, and closer you
   are only a faint shimmer (bots and turrets only notice you within 3 m, though they still hear
   you). You show for half a second whenever you fire or are hit.
+- **Charge gun** (pink, a lightning bolt): replaces your blaster, with coils round its barrel.
+  A tap of the trigger fires an ordinary bolt; hold it for a second (the muzzle glows brighter
+  and the gun hums higher, VR: in your hand) and let go for a beam that crosses 60 m almost at
+  once, flies through every player in its way and is two hits on each, for 5 shots. Getting
+  hit while charging stops it. Taking one also fills it up. You carry one special gun at a
+  time: while you have the shotgun or the charge gun, the other stays where it lies.
 - **Speed boost** (lime, an arrow with speed lines): for 15 s you run half as fast again
   (stick and keys; walking in your room is as it was), leaving a short trail of lime motes.
 

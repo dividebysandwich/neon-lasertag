@@ -21,6 +21,8 @@ pub struct ActorMeshes {
     /// A shielded player's beam of light from above, and its material.
     beam: Handle<Mesh>,
     beam_mat: Handle<GlowMaterial>,
+    /// A ring of the charge gun's coil.
+    coil: Handle<Mesh>,
 }
 
 #[derive(Component)]
@@ -41,6 +43,10 @@ struct AvatarParts {
     gun: Entity,
     blaster: Entity,
     shotgun: Entity,
+    /// The charge gun: coils round the blaster's barrel, and a glow at its muzzle growing as
+    /// it charges.
+    coil: Entity,
+    charge_glow: Entity,
     gun_hits: Vec<(Entity, u8)>,
     grenade: Entity,
     /// The shield's beam of light (a child of `root`), with its light on the player.
@@ -82,6 +88,14 @@ struct Flash {
     light: Option<f32>,
 }
 
+/// A charge gun beam's streak: thins out over its life.
+#[derive(Component)]
+struct Tracer {
+    life: f32,
+    max: f32,
+    width: f32,
+}
+
 #[derive(Component)]
 struct Ring {
     life: f32,
@@ -101,6 +115,7 @@ impl Plugin for ActorsPlugin {
                     sync_players,
                     sync_bolts,
                     speed_trails,
+                    fade_tracers,
                     sync_grenades,
                     sync_pickups,
                     effects,
@@ -134,6 +149,7 @@ fn make_meshes(
         spark: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         ring: meshes.add(Torus::new(0.95, 1.0)),
         halo: meshes.add(Sphere::new(1.0).mesh().ico(2).unwrap()),
+        coil: meshes.add(Torus::new(0.026, 0.034)),
     });
 }
 
@@ -313,6 +329,32 @@ fn spawn_avatar(
         &mut solid,
         &mut ghost,
     ));
+    let coil = commands
+        .spawn((Transform::IDENTITY, Visibility::Hidden, ChildOf(blaster)))
+        .id();
+    let (charge_accent, charge_halo) = palette.pickup_for(PickupKind::Charge);
+    for k in 0..3 {
+        let at = models.muzzle * Vec3::new(1.0, 1.0, 0.5 + 0.16 * k as f32);
+        let ring = commands
+            .spawn((
+                Mesh3d(meshes.coil.clone()),
+                MeshMaterial3d(charge_accent.clone()),
+                Transform::from_translation(at)
+                    .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+                ChildOf(coil),
+            ))
+            .id();
+        solid.push(ring);
+    }
+    let charge_glow = commands
+        .spawn((
+            Mesh3d(meshes.halo.clone()),
+            MeshMaterial3d(charge_halo),
+            Transform::from_translation(models.muzzle).with_scale(Vec3::ZERO),
+            Visibility::Hidden,
+            ChildOf(blaster),
+        ))
+        .id();
     let grenade = commands
         .spawn((Transform::IDENTITY, Visibility::Hidden))
         .id();
@@ -349,6 +391,8 @@ fn spawn_avatar(
         gun,
         blaster,
         shotgun,
+        coil,
+        charge_glow,
         gun_hits,
         grenade,
         beam,
@@ -503,6 +547,19 @@ fn sync_players(
         set_vis(&mut vis, v.gun, alive && gun_hand.is_some());
         set_vis(&mut vis, v.blaster, !p.shotgun);
         set_vis(&mut vis, v.shotgun, p.shotgun);
+        set_vis(&mut vis, v.coil, p.charge);
+        // Charging: the glow swells, and throbs once full.
+        let full = p.charging >= game.rules.charge_time;
+        let k = (p.charging / game.rules.charge_time).min(1.0);
+        set_vis(&mut vis, v.charge_glow, p.charging > 0.0 && !p.cloaked());
+        if let Ok(mut t) = transforms.get_mut(v.charge_glow) {
+            let throb = if full {
+                1.0 + 0.25 * (real.elapsed_secs() * 18.0).sin()
+            } else {
+                1.0
+            };
+            t.scale = Vec3::splat((0.015 + 0.05 * k) * throb);
+        }
         if let Some(h) = gun_hand
             && let Ok(mut t) = transforms.get_mut(v.gun)
         {
@@ -542,6 +599,23 @@ fn sync_players(
         // (Not one's own: from inside, it would tint everything one looks at; the HUD and the
         // VR hand's powerup icons tell.)
         set_vis(&mut vis, v.beam, alive && !me && p.shield > 0.0 && flicker);
+    }
+}
+
+fn fade_tracers(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut q: Query<(Entity, &mut Tracer, &mut Transform)>,
+) {
+    for (e, mut t, mut tr) in &mut q {
+        t.life -= time.delta_secs();
+        if t.life <= 0.0 {
+            commands.entity(e).despawn();
+            continue;
+        }
+        let w = t.width * t.life / t.max;
+        tr.scale.x = w;
+        tr.scale.y = w;
     }
 }
 
@@ -605,8 +679,14 @@ fn sync_bolts(
     for b in &game.snap.bolts {
         let dir = b.vel.normalize_or(Vec3::Y);
         let head = b.pos + b.vel * a * TICK;
-        // The capsule trails behind the bolt's head; hidden right at the eye.
-        let pos = head - dir * 0.4;
+        // The capsule trails behind the bolt's head (a beam's long and thick); hidden right at
+        // the eye.
+        let scale = if b.beam {
+            Vec3::new(2.5, 6.0, 2.5)
+        } else {
+            Vec3::ONE
+        };
+        let pos = head - dir * 0.4 * scale.y;
         let rot = Quat::from_rotation_arc(Vec3::Y, dir);
         let near = eyes.iter().any(|e| (*e - pos).length() < 0.9);
         match views.bolts.get(&b.id) {
@@ -614,6 +694,7 @@ fn sync_bolts(
                 if let Ok(mut t) = q.get_mut(e) {
                     t.translation = pos;
                     t.rotation = rot;
+                    t.scale = scale;
                 }
                 if let Ok(mut v) = vis.get_mut(e) {
                     *v = if near {
@@ -631,7 +712,7 @@ fn sync_bolts(
                         Transform {
                             translation: pos,
                             rotation: rot,
-                            ..default()
+                            scale,
                         },
                         if near {
                             Visibility::Hidden
@@ -1002,6 +1083,38 @@ fn effects(
                     3.0,
                     0.025,
                     seed,
+                );
+            }
+            // A charge gun's beam: a streak of light along its way, fading.
+            SimEvent::BeamFired { player, pos, dir } => {
+                let reach = game.rules.beam_range;
+                let end = game
+                    .world
+                    .ray(pos, pos + dir * reach)
+                    .map_or(pos + dir * reach, |h| h.1);
+                let len = pos.distance(end);
+                commands.spawn((
+                    Tracer {
+                        life: 0.3,
+                        max: 0.3,
+                        width: 0.05,
+                    },
+                    Mesh3d(meshes.spark.clone()),
+                    MeshMaterial3d(palette.bolt_for(team_of(player))),
+                    Transform::from_translation((pos + end) / 2.0)
+                        .with_rotation(Quat::from_rotation_arc(Vec3::Z, dir))
+                        .with_scale(Vec3::new(0.05, 0.05, len)),
+                ));
+                flash(
+                    &mut commands,
+                    &meshes,
+                    &palette,
+                    team_of(player),
+                    pos,
+                    0.35,
+                    60_000.0,
+                    4.0,
+                    0.25,
                 );
             }
             SimEvent::Launched { pos, .. } => {

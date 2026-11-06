@@ -63,24 +63,31 @@ pub enum PickupKind {
     /// `Rules::speed_factor` times as fast on one's feet for `Rules::speed_time` or until
     /// tagged out.
     Speed,
+    /// The charge gun instead of the blaster until tagged out: a tap fires a bolt, holding the
+    /// trigger for `Rules::charge_time` and letting go a beam that flies through players and
+    /// deals `Rules::beam_damage` hits (for `Rules::beam_cost` shots); taking one also fills it
+    /// up.
+    Charge,
 }
 
 impl PickupKind {
-    pub const ALL: [PickupKind; 6] = [
+    pub const ALL: [PickupKind; 7] = [
         PickupKind::Grenade,
         PickupKind::Rapid,
         PickupKind::Shield,
         PickupKind::Shotgun,
         PickupKind::Cloak,
         PickupKind::Speed,
+        PickupKind::Charge,
     ];
     /// The powerups (everything but the grenade).
-    pub const POWERUPS: [PickupKind; 5] = [
+    pub const POWERUPS: [PickupKind; 6] = [
         PickupKind::Rapid,
         PickupKind::Shield,
         PickupKind::Shotgun,
         PickupKind::Cloak,
         PickupKind::Speed,
+        PickupKind::Charge,
     ];
 
     pub fn name(self) -> &'static str {
@@ -91,6 +98,7 @@ impl PickupKind {
             PickupKind::Shotgun => "shotgun",
             PickupKind::Cloak => "cloak",
             PickupKind::Speed => "speed boost",
+            PickupKind::Charge => "charge gun",
         }
     }
 
@@ -103,6 +111,7 @@ impl PickupKind {
             PickupKind::Shotgun => "shotgun",
             PickupKind::Cloak => "cloak",
             PickupKind::Speed => "speed",
+            PickupKind::Charge => "charge",
         }
     }
 
@@ -188,6 +197,16 @@ pub struct PlayerCmd {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum SimEvent {
     Fired {
+        player: PlayerId,
+        pos: Vec3,
+        dir: Vec3,
+    },
+    /// A charge gun has been held long enough: letting go fires a beam.
+    ChargeFull {
+        player: PlayerId,
+    },
+    /// A charge gun's beam (as well as its `Fired`).
+    BeamFired {
         player: PlayerId,
         pos: Vec3,
         dir: Vec3,
