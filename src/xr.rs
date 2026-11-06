@@ -9,6 +9,8 @@ use bevy::prelude::*;
 use bevy_mod_openxr::action_binding::{OxrSendActionBindings, OxrSuggestActionBinding};
 use bevy_mod_openxr::action_set_attaching::OxrAttachActionSet;
 use bevy_mod_openxr::action_set_syncing::{OxrActionSetSyncSet, OxrSyncActionSet};
+use bevy_mod_openxr::exts::OxrEnabledExtensions;
+use bevy_mod_openxr::init::OxrInitPlugin;
 use bevy_mod_openxr::resources::OxrInstance;
 use bevy_mod_openxr::session::OxrSession;
 use bevy_mod_openxr::spaces::OxrSpaceLocationFlags;
@@ -21,7 +23,7 @@ use bevy_mod_xr::spaces::XrSpaceSyncSet;
 use openxr::{Haptic, Posef};
 
 use crate::game::InputSet;
-use crate::vr::{VrPlugin, XrInput, XrRig};
+use crate::vr::{FRAME_EXT, FRAME_PROFILE, VrPlugin, XrInput, XrRig};
 
 /// Whether an OpenXR runtime with Vulkan (what bevy_mod_openxr renders with) is there, without
 /// creating an instance (which would start SteamVR).
@@ -49,20 +51,27 @@ pub fn add_plugins(app: &mut App, asset_root: &str) -> bool {
     if !runtime_available() {
         return false;
     }
-    app.add_plugins(add_xr_plugins(
-        DefaultPlugins
-            .set(AssetPlugin {
-                file_path: asset_root.to_string(),
-                ..default()
-            })
-            .set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "Neon Lasertag (VR)".into(),
+    // (The Steam Frame's controller profile, where the runtime has it: only offered extensions
+    // are enabled.)
+    let mut init = OxrInitPlugin::default();
+    init.exts.other.push(FRAME_EXT.to_vec());
+    app.add_plugins(
+        add_xr_plugins(
+            DefaultPlugins
+                .set(AssetPlugin {
+                    file_path: asset_root.to_string(),
+                    ..default()
+                })
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Neon Lasertag (VR)".into(),
+                        ..default()
+                    }),
                     ..default()
                 }),
-                ..default()
-            }),
-    ))
+        )
+        .set(init),
+    )
     .add_plugins((OxrInputPlugin, VrPlugin));
     true
 }
@@ -146,9 +155,11 @@ fn create_actions(instance: Res<OxrInstance>, mut commands: Commands) {
 
 fn suggest_bindings(
     actions: Option<Res<XrActions>>,
+    exts: Option<Res<OxrEnabledExtensions>>,
     mut out: MessageWriter<OxrSuggestActionBinding>,
 ) {
     let Some(a) = actions else { return };
+    let frame = exts.is_some_and(|e| e.other.iter().any(|x| x == FRAME_EXT));
     type B = Vec<std::borrow::Cow<'static, str>>;
     let both = |s: &str| -> B {
         vec![
@@ -164,8 +175,10 @@ fn suggest_bindings(
     };
     let left = |s: &str| -> B { vec![format!("/user/hand/left/{s}").into()] };
     // (profile, squeeze, trigger, primary, secondary, thumbstick, menu). Where the menu button
-    // is the grenade's, holding it opens the menu (src/vr.rs).
-    let profiles: Vec<(&str, B, B, B, B, B, B)> = vec![
+    // is the grenade's, holding it opens the menu (src/vr.rs). The menu buttons: the left one
+    // recenters, the right one opens the menu.
+    let mut profiles: Vec<(&str, B, B, B, B, B, B)> = frame_profile(frame);
+    profiles.extend(vec![
         (
             "/interaction_profiles/oculus/touch_controller",
             both("input/squeeze/value"),
@@ -211,7 +224,7 @@ fn suggest_bindings(
             vec![],
             vec![],
         ),
-    ];
+    ]);
     for (profile, squeeze, trigger, primary, secondary, stick, menu) in profiles {
         let mut add = |action: openxr::sys::Action, bindings: B| {
             if !bindings.is_empty() {
@@ -232,6 +245,47 @@ fn suggest_bindings(
         add(a.thumbstick.as_raw(), stick);
         add(a.menu.as_raw(), menu);
     }
+}
+
+pub type Bindings = Vec<std::borrow::Cow<'static, str>>;
+
+/// The Steam Frame's controllers in their own profile (`frame`: the runtime has it), as SteamVR
+/// maps Touch onto them: the left D-pad is X (down) and Y (the rest), the right face buttons A
+/// and B (with X and Y). Its menu buttons are the left view button and the right menu button.
+#[allow(clippy::type_complexity)]
+pub fn frame_profile(
+    frame: bool,
+) -> Vec<(
+    &'static str,
+    Bindings,
+    Bindings,
+    Bindings,
+    Bindings,
+    Bindings,
+    Bindings,
+)> {
+    if !frame {
+        return Vec::new();
+    }
+    let l = |s: &str| -> std::borrow::Cow<'static, str> { format!("/user/hand/left/{s}").into() };
+    let r = |s: &str| -> std::borrow::Cow<'static, str> { format!("/user/hand/right/{s}").into() };
+    let both = |s: &str| vec![l(s), r(s)];
+    vec![(
+        FRAME_PROFILE,
+        both("input/squeeze/value"),
+        both("input/trigger/value"),
+        vec![l("input/dpad_down/click"), r("input/a/click")],
+        vec![
+            l("input/dpad_up/click"),
+            l("input/dpad_left/click"),
+            l("input/dpad_right/click"),
+            r("input/b/click"),
+            r("input/x/click"),
+            r("input/y/click"),
+        ],
+        both("input/thumbstick"),
+        vec![l("input/view/click"), r("input/menu/click")],
+    )]
 }
 
 fn attach_set(actions: Option<Res<XrActions>>, mut attach: MessageWriter<OxrAttachActionSet>) {

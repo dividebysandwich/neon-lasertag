@@ -72,6 +72,11 @@ impl Headset {
         let mut exts = xr::ExtensionSet::default();
         exts.mndx_egl_enable = true;
         exts.khr_opengl_enable = true;
+        // (The Steam Frame's controller profile, where the runtime has it.)
+        let frame = offered.other.iter().any(|x| x == crate::vr::FRAME_EXT);
+        if frame {
+            exts.other.push(crate::vr::FRAME_EXT.to_vec());
+        }
         let instance = entry
             .create_instance(
                 &xr::ApplicationInfo {
@@ -161,7 +166,7 @@ impl Headset {
                 .collect::<Result<Vec<_>, _>>()?;
             swapchains.push((swapchain, images));
         }
-        let controllers = Controllers::new(&instance, &session)
+        let controllers = Controllers::new(&instance, &session, frame)
             .inspect_err(|e| warn!("glvr: no controllers: {e}"))
             .ok();
         Ok(Headset {

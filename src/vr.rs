@@ -10,8 +10,11 @@
 //! - Hold B (or Y) to take a grenade into that hand; let go to throw it with the hand's speed.
 //! - The other hand's trigger (the left one, unless it holds the blaster) switches on a carried
 //!   shield.
-//! - The menu button (left Touch controller), or holding B / Y for a second without a grenade,
-//!   opens the VR menu (src/vrui.rs).
+//! - The right controller's menu button (Steam Frame), or holding B / Y for a second without a
+//!   grenade, opens the VR menu (src/vrui.rs).
+//! - The left controller's menu button (Steam Frame: view; Touch: menu) recenters: an open panel
+//!   comes in front of the eyes again, and out of a game the play space is turned and moved so
+//!   the head is at the centre of the arena, looking along -Z.
 //!
 //! Haptics are patterns (`Rumble`) played as an amplitude a frame per hand (`XrInput::haptic`),
 //! which each backend sends as short vibrations.
@@ -56,6 +59,10 @@ const HOLSTER_REACH: f32 = 0.2;
 const MENU_HOLD: f32 = 0.9;
 /// How long the backends vibrate for each frame's amplitude: a little over a frame.
 pub const HAPTIC_NANOS: i64 = 22_000_000;
+/// The Steam Frame's controllers (SteamVR), whose own interaction profile has the right
+/// controller's menu button (Touch emulation only has the left one, its view button).
+pub const FRAME_EXT: &[u8] = b"XR_VALVE_frame_controller_interaction\0";
+pub const FRAME_PROFILE: &str = "/interaction_profiles/valve/frame_controller";
 
 /// One controller as the runtime reports it (poses in the tracking space).
 #[derive(Clone, Copy, Debug, Default)]
@@ -115,6 +122,10 @@ pub struct VrState {
     hold: [(f32, bool); 2],
     /// Times the menu was asked for (src/vrui.rs takes them).
     pub menu_requests: u32,
+    /// Recentering was asked for this frame (the left menu button).
+    pub recenter: bool,
+    /// Out of a game: the tracking space in the arena (recentering moves it).
+    lobby_rig: Transform,
     /// A VR panel takes the triggers (the blaster doesn't fire).
     pub ui: bool,
 }
@@ -186,6 +197,7 @@ impl Plugin for VrPlugin {
                     .in_set(InputSet)
                     .run_if(resource_exists::<Game>),
             )
+            .add_systems(Update, menu_buttons.in_set(InputSet))
             .add_systems(
                 Update,
                 (place_rig, wrist, holster)
@@ -225,8 +237,26 @@ impl Plugin for VrPlugin {
     }
 }
 
-/// Out of a game (the VR menu's scene, src/lobby.rs): the tracking space at the centre of the
-/// arena, facing along -Z, and the holster and the wrist display hidden.
+/// The menu buttons, in and out of a game: the right one asks for the menu, the left one
+/// recenters.
+fn menu_buttons(input: Res<XrInput>, mut vr: ResMut<VrState>) {
+    vr.recenter = false;
+    for i in 0..2 {
+        let down = input.hands[i].menu;
+        if down && !vr.menu_held[i] {
+            if i == 0 {
+                vr.recenter = true;
+            } else {
+                vr.menu_requests += 1;
+            }
+        }
+        vr.menu_held[i] = down;
+    }
+}
+
+/// Out of a game (the VR menu's scene, src/lobby.rs): the tracking space where recentering put
+/// it (at first, its origin at the centre of the arena, facing along -Z), and the holster and
+/// the wrist display hidden.
 fn out_of_game(
     mut vr: ResMut<VrState>,
     rig: Option<Res<XrRig>>,
@@ -234,16 +264,28 @@ fn out_of_game(
     wrist: Option<Res<Wrist>>,
     mut transforms: Query<&mut Transform>,
     mut vis: Query<&mut Visibility>,
+    input: Res<XrInput>,
 ) {
+    if vr.recenter
+        && let Some(h) = input.head
+    {
+        // The head to the centre, looking along -Z.
+        let rot = Quat::from_rotation_y(-flat_yaw(h.rotation));
+        vr.lobby_rig = Transform {
+            translation: -(rot * Vec3::new(h.translation.x, 0.0, h.translation.z)),
+            rotation: rot,
+            ..default()
+        };
+    }
     vr.yaw = 0.0;
-    vr.rig = Transform::IDENTITY;
+    vr.rig = vr.lobby_rig;
     vr.gun = None;
     vr.holster_world = None;
     if let Some(r) = rig
         && let Ok(mut t) = transforms.get_mut(r.0)
-        && *t != Transform::IDENTITY
+        && *t != vr.rig
     {
-        *t = Transform::IDENTITY;
+        *t = vr.rig;
     }
     let mut hidden = Vec::new();
     if let Some(h) = holster {
@@ -420,13 +462,9 @@ fn read_controls(
     local.cmd.barrier =
         alive && !blocked && !vr.near[free.index()] && input.hands[free.index()].squeeze > 0.75;
 
-    // The menu: its button, or B / Y held without taking a grenade.
+    // The menu (its button: `menu_buttons`), or B / Y held without taking a grenade.
     for i in 0..2 {
         let hand = &input.hands[i];
-        if hand.menu && !vr.menu_held[i] {
-            vr.menu_requests += 1;
-        }
-        vr.menu_held[i] = hand.menu;
         let (held, opened) = vr.hold[i];
         if hand.secondary && vr.grenade != Some(hand_of(i)) {
             let held = held + dt;

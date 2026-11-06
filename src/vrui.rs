@@ -4,10 +4,10 @@
 //! - The start menu, out of a game (in the empty arena under fireworks, src/lobby.rs): the
 //!   levels of src/menu.rs (botmatch, internet and LAN server lists, hosting), with their
 //!   choices lit; no typing in VR.
-//! - The menu (the menu button, or B / Y held; see src/vr.rs): Resume, New match (local
+//! - The menu (the right menu button, or B / Y held; see src/vr.rs): Resume, New match (local
 //!   games: the next match on a new arena), Main menu and Quit, floating in front of the player.
-//! - A panel stays where it was placed: in front of the eyes when it opened (the start menu keeps
-//!   its place as its levels change).
+//! - A panel stays where it was placed (in front of the eyes when it opened; the start menu keeps
+//!   its place as its levels change) until the left menu button recenters it.
 //! - The end of a match: the winner, the scores and each team's players with their score,
 //!   tags, times tagged out, accuracy and target hits (one's own row lit), with the time to
 //!   the next match and a Next match button (local games).
@@ -1080,6 +1080,10 @@ fn panels(
     }
     vr.ui = ui.panel.is_some();
     let Some(p) = ui.panel.as_mut() else { return };
+    if vr.recenter {
+        p.pose = in_front();
+        p.headless = input.head.is_none();
+    }
     if let Ok(mut t) = transforms.get_mut(p.root) {
         *t = vr.rig * p.pose;
     }

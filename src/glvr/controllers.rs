@@ -34,6 +34,7 @@ impl Controllers {
     pub fn new<G: xr::Graphics>(
         instance: &xr::Instance,
         session: &xr::Session<G>,
+        frame: bool,
     ) -> Result<Self, String> {
         let path = |s: &str| instance.string_to_path(s).map_err(err("an OpenXR path"));
         let hands = [path("/user/hand/left")?, path("/user/hand/right")?];
@@ -76,7 +77,23 @@ impl Controllers {
         };
         let left = |s: &str| -> B { vec![format!("/user/hand/left/{s}")] };
         // (profile, squeeze, trigger, primary, secondary, thumbstick, menu)
-        let profiles: Vec<(&str, B, B, B, B, B, B)> = vec![
+        let owned =
+            |b: crate::xr::Bindings| -> B { b.into_iter().map(|p| p.into_owned()).collect() };
+        let mut profiles: Vec<(&str, B, B, B, B, B, B)> = crate::xr::frame_profile(frame)
+            .into_iter()
+            .map(|(p, a, b, c, d, e, f)| {
+                (
+                    p,
+                    owned(a),
+                    owned(b),
+                    owned(c),
+                    owned(d),
+                    owned(e),
+                    owned(f),
+                )
+            })
+            .collect();
+        profiles.extend(vec![
             (
                 "/interaction_profiles/oculus/touch_controller",
                 both("input/squeeze/value"),
@@ -122,7 +139,7 @@ impl Controllers {
                 vec![],
                 vec![],
             ),
-        ];
+        ]);
         for (profile, sq, tr, pr, se, st, me) in profiles {
             let mut bindings: Vec<xr::Binding> = Vec::new();
             for p in both("input/grip/pose") {
