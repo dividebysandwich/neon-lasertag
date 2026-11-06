@@ -1,7 +1,7 @@
 //! Neon lasertag: Red vs Blue in procedurally built arenas, in VR or on a flat screen.
 //!
 //! ```text
-//! lasertag [--vr | --gl-vr] [--seed N] [--bots N] [--name NAME]
+//! lasertag [--vr | --gl-vr | --flat] [--seed N] [--bots N] [--name NAME]
 //!          [--host [PORT]] [--connect HOST[:PORT]] [--autopilot]
 //!          [--difficulty easy|normal|hard] [--arena small|medium|large|random]
 //!          [--left-handed] [--match-time SECS]
@@ -9,7 +9,9 @@
 //! ```
 //!
 //! Modes (picked at startup, as OpenXR has to replace the renderer):
-//! - default: the flat screen with mouse and keyboard (src/desktop.rs);
+//! - default: VR on a Steam Frame (`--gl-vr` there) or while a VR compositor runs (SteamVR's
+//!   vrcompositor or Monado's service: `--vr`), the flat screen otherwise;
+//! - `--flat`: the flat screen with mouse and keyboard (src/desktop.rs);
 //! - `--vr`: any OpenXR headset through bevy_mod_openxr (src/xr.rs);
 //! - `--gl-vr`: our own OpenGL renderer drawing straight into the headset's swapchain, eye
 //!   tracked foveated on the Steam Frame (src/glvr, feature `glvr`, Linux).
@@ -55,6 +57,8 @@ use crate::materials::Palette;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
+    /// VR if there is a headset to use (see `auto_mode`), else the flat screen.
+    Auto,
     Desktop,
     Vr,
     GlVr,
@@ -87,7 +91,7 @@ pub struct Args {
 impl Args {
     pub fn parse() -> Args {
         let mut a = Args {
-            mode: Mode::Desktop,
+            mode: Mode::Auto,
             seed: rand::random::<u32>() as u64,
             bots: 7,
             name: std::env::var("USER").unwrap_or_else(|_| "Player".into()),
@@ -113,6 +117,7 @@ impl Args {
         while i < argv.len() {
             match argv[i].as_str() {
                 "--vr" => a.mode = Mode::Vr,
+                "--flat" => a.mode = Mode::Desktop,
                 "--gl-vr" => a.mode = Mode::GlVr,
                 "--seed" => a.seed = next(&mut i).and_then(|v| v.parse().ok()).unwrap_or(a.seed),
                 "--bots" => a.bots = next(&mut i).and_then(|v| v.parse().ok()).unwrap_or(a.bots),
@@ -181,8 +186,76 @@ pub struct Connecting(Option<Client>);
 #[derive(Resource, Default)]
 struct BuiltArena(Option<u64>);
 
+/// Whether this is a Steam Frame: SteamOS on arm64 (Valve's other SteamOS machines are x86-64).
+fn steam_frame() -> bool {
+    cfg!(all(target_os = "linux", target_arch = "aarch64"))
+        && std::fs::read_to_string("/etc/os-release").is_ok_and(|s| {
+            s.lines()
+                .any(|l| l.trim() == "ID=steamos" || l.trim() == "ID=\"steamos\"")
+        })
+}
+
+/// Whether a VR compositor is running: SteamVR's (vrcompositor) or Monado's service. Asking
+/// OpenXR itself would start SteamVR wherever it is installed.
+fn compositor_running() -> bool {
+    const NAMES: [&str; 2] = ["vrcompositor", "monado-service"];
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR")
+            && std::path::Path::new(&dir).join("monado_comp_ipc").exists()
+        {
+            return true;
+        }
+        let Ok(procs) = std::fs::read_dir("/proc") else {
+            return false;
+        };
+        procs.flatten().any(|p| {
+            std::fs::read_to_string(p.path().join("comm")).is_ok_and(|c| NAMES.contains(&c.trim()))
+        })
+    }
+    #[cfg(windows)]
+    {
+        std::process::Command::new("tasklist")
+            .args(["/NH", "/FI", "IMAGENAME eq vrcompositor.exe"])
+            .output()
+            .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("vrcompositor"))
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        let _ = NAMES;
+        false
+    }
+}
+
+/// The mode to start in without one on the command line: VR on a Steam Frame (our own GL
+/// renderer, foveated) or while a VR compositor runs (bevy_mod_openxr, or the GL renderer if the
+/// runtime only offers OpenGL), the flat screen otherwise.
+fn auto_mode() -> Mode {
+    let frame = steam_frame();
+    if !frame && !compositor_running() {
+        return Mode::Desktop;
+    }
+    #[cfg(all(feature = "glvr", target_os = "linux"))]
+    if frame && glvr::runtime_available() {
+        return Mode::GlVr;
+    }
+    #[cfg(feature = "xr")]
+    if xr::runtime_available() {
+        return Mode::Vr;
+    }
+    #[cfg(all(feature = "glvr", target_os = "linux"))]
+    if glvr::runtime_available() {
+        return Mode::GlVr;
+    }
+    Mode::Desktop
+}
+
 pub fn run() {
-    let args = Args::parse();
+    let mut args = Args::parse();
+    if args.mode == Mode::Auto {
+        args.mode = auto_mode();
+        eprintln!("starting in {:?} mode", args.mode);
+    }
     let mut app = App::new();
     let asset_root = assets::asset_dir().to_string_lossy().to_string();
     let vr = match args.mode {
@@ -196,6 +269,7 @@ pub fn run() {
         {
             if args.mode != Mode::Desktop {
                 warn!("no headset for {:?}; playing on the flat screen", args.mode);
+                args.mode = Mode::Desktop;
             }
             app.add_plugins(
                 DefaultPlugins

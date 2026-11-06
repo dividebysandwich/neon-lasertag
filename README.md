@@ -6,11 +6,16 @@ flat screen. Built with Bevy 0.19.
 ## Playing
 
 ```
-cargo run --release                         # flat screen, start menu
+cargo run --release                         # VR if there's a headset, else the flat screen
+cargo run --release -- --flat               # the flat screen, start menu
 cargo run --release -- --seed 42 --bots 7   # straight into a match against bots
 cargo run --release -- --vr                 # any OpenXR headset (bevy_mod_openxr, wgpu, bloom)
 cargo run --release --features glvr -- --gl-vr   # foveated GL renderer (Steam Frame, Linux)
 ```
+
+Without `--vr`, `--gl-vr` or `--flat` the game starts in VR on a Steam Frame (`--gl-vr`) or
+while a VR compositor runs (SteamVR's vrcompositor or Monado's service: `--vr`), and on the
+flat screen otherwise (or when the headset can't be used).
 
 Other flags: `--name NAME`, `--host [PORT]` (play and let others join), `--connect HOST[:PORT]`,
 `--difficulty easy|normal|hard` (the bots, also in the start menu), `--arena small|medium|large|random`
