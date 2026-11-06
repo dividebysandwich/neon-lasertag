@@ -4,6 +4,7 @@
 //! lasertag [--vr | --gl-vr | --flat] [--seed N] [--bots N] [--name NAME]
 //!          [--host [PORT]] [--connect HOST[:PORT]] [--autopilot]
 //!          [--difficulty easy|normal|hard] [--arena small|medium|large|random]
+//!          [--mode classic|megatarget]
 //!          [--left-handed] [--match-time SECS]
 //!          [--screenshot FILE --after SECS] [--quit-after SECS]
 //! ```
@@ -29,6 +30,7 @@ pub mod glvr;
 pub mod hud;
 pub mod lobby;
 pub mod materials;
+pub mod mega;
 pub mod menu;
 pub mod music;
 pub mod options;
@@ -78,6 +80,8 @@ pub struct Args {
     pub difficulty: Difficulty,
     /// The arenas' size in local and hosted games (`Random`: a new one every match).
     pub arena: lt_sim::level::SizeChoice,
+    /// What local and hosted games are played for (`--mode`).
+    pub game_mode: lt_sim::level::GameMode,
     /// VR: the holster on the left hip (`--left-handed` or `LT_LEFT_HANDED=1`).
     pub left_handed: bool,
     /// Local games: the match's length in seconds (testing).
@@ -101,6 +105,7 @@ impl Args {
             autopilot: false,
             difficulty: Difficulty::default(),
             arena: lt_sim::level::SizeChoice::default(),
+            game_mode: lt_sim::level::GameMode::default(),
             left_handed: std::env::var("LT_LEFT_HANDED").is_ok_and(|v| v == "1"),
             match_time: None,
             screenshot: None,
@@ -143,6 +148,13 @@ impl Args {
                     Some(s) => a.arena = s,
                     None => eprintln!("--arena: small, medium, large or random"),
                 },
+                "--mode" => match next(&mut i)
+                    .as_deref()
+                    .and_then(lt_sim::level::GameMode::parse)
+                {
+                    Some(m) => a.game_mode = m,
+                    None => eprintln!("--mode: classic or megatarget"),
+                },
                 "--left-handed" => a.left_handed = true,
                 "--match-time" => a.match_time = next(&mut i).and_then(|v| v.parse().ok()),
                 "--screenshot" => shot = next(&mut i),
@@ -177,7 +189,7 @@ impl Args {
 pub struct Connecting(Option<Client>);
 
 #[derive(Resource, Default)]
-struct BuiltArena(Option<u64>);
+struct BuiltArena(Option<(u64, lt_sim::level::GameMode)>);
 
 /// Whether this is a Steam Frame: SteamOS on arm64 (Valve's other SteamOS machines are x86-64).
 fn steam_frame() -> bool {
@@ -301,6 +313,7 @@ pub fn run() {
         ambience::AmbiencePlugin,
         session::SessionPlugin,
         targets::TargetsPlugin,
+        mega::MegaPlugin,
     ))
     .insert_resource(ClearColor(Color::linear_rgb(0.002, 0.002, 0.006)))
     .insert_resource(GlobalAmbientLight {
@@ -378,6 +391,7 @@ fn setup(
                 bots: args.bots,
                 difficulty: args.difficulty,
                 arena: args.arena,
+                mode: args.game_mode,
             },
         });
     }
@@ -407,6 +421,7 @@ fn start_game(
                 error!("can't connect to {addr}: {e}");
                 session.difficulty = args.difficulty;
                 session.arena = args.arena;
+                session.mode = args.game_mode;
                 commands.insert_resource(Game::local(
                     seed,
                     args.bots,
@@ -422,10 +437,12 @@ fn start_game(
             bots,
             difficulty,
             arena,
+            mode,
         } => {
             let port = host.then(|| args.host.unwrap_or(lt_net::protocol::DEFAULT_PORT));
             session.difficulty = difficulty;
             session.arena = arena;
+            session.mode = mode;
             let mut game = Game::local(
                 seed,
                 bots,
@@ -438,8 +455,9 @@ fn start_game(
                 session::autopilot(&mut game, seed);
             }
             info!(
-                "arena {seed} ({}, {})\n{}",
+                "arena {seed} ({}, {}, {})\n{}",
                 game.rules.arena.name(),
+                game.rules.mode.name(),
                 difficulty.name(),
                 lt_sim::level::ascii(&game.level)
             );
@@ -459,7 +477,7 @@ fn connect(
         match ev {
             ClientEvent::Welcome { id, seed, rules } => {
                 info!("joined as player {id} in arena {seed}");
-                let level = std::sync::Arc::new(Level::generate(seed, rules.arena));
+                let level = std::sync::Arc::new(Level::generate_for(seed, rules.arena, rules.mode));
                 let client = c.0.take().unwrap();
                 commands.insert_resource(Game::remote(client, level, rules, id));
                 commands.remove_resource::<Connecting>();
@@ -490,6 +508,7 @@ fn build_arena(
     mut glows: ResMut<Assets<materials::GlowMaterial>>,
     mut accents: ResMut<Assets<materials::AccentMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
+    assets: Res<AssetServer>,
     old: Query<Entity, With<ArenaPart>>,
 ) {
     let (Some(game), Some(kit)) = (game, kit) else {
@@ -497,7 +516,7 @@ fn build_arena(
         built.0 = None;
         return;
     };
-    if built.0 == Some(game.level.seed) {
+    if built.0 == Some((game.level.seed, game.level.mode)) {
         return;
     }
     for e in &old {
@@ -515,6 +534,15 @@ fn build_arena(
         actors::spawn_model(&mut commands, e, &models.reload, &palette, None);
     }
     targets::spawn(&mut commands, &game.level, &palette, &mut meshes);
+    mega::spawn(
+        &mut commands,
+        &game.level,
+        &palette,
+        &mut meshes,
+        &mut accents,
+        &mut glows,
+        &assets,
+    );
     ambience::spawn(
         &mut commands,
         &game.level,
@@ -523,5 +551,5 @@ fn build_arena(
         &mut accents,
     );
     sevenseg::spawn_scoreboards(&mut commands, &game.level, &palette, &mut meshes);
-    built.0 = Some(game.level.seed);
+    built.0 = Some((game.level.seed, game.level.mode));
 }

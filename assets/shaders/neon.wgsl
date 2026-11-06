@@ -9,7 +9,7 @@
 // Mode 1: a fixed colour (bolts, blasters). Mode 2: a fixed colour with pulses of light
 // flowing along the strip (uv.x: metres along it).
 // Halos fade with uv.y (0 at the strip, 1 at the outer edge); volume halos (light cones) also
-// fade where they are seen edge on.
+// fade where they are seen edge on; forcefields (shape 3) are translucent sheets of their own.
 
 #import bevy_pbr::forward_io::VertexOutput
 #import bevy_pbr::mesh_view_bindings::view
@@ -25,7 +25,7 @@ struct Neon {
     pulse_pos: array<vec4<f32>, 8>,
     // rgb colour of each pulse.
     pulse_color: array<vec4<f32>, 8>,
-    // x: halo shape (0 strip, 1 volume), y: flow speed (m/s, mode 2).
+    // x: halo shape (0 strip, 1 volume, 2 haze, 3 forcefield), y: flow speed (m/s, mode 2).
     extra: vec4<f32>,
 };
 
@@ -126,6 +126,45 @@ fn world_xz_noise(world: vec3<f32>, t: f32) -> f32 {
     return smoothstep(0.5, 0.9, n);
 }
 
+// Distance from the middle of the hexagon of a lattice (cells 1 across): 0 at its middle, 0.5
+// on its edges; and the cell's id.
+fn hex(p: vec2<f32>) -> vec3<f32> {
+    let s = vec2<f32>(1.0, 1.7320508);
+    let h = s * 0.5;
+    let a = p - s * floor(p / s) - h;
+    let pb = p - h;
+    let b = pb - s * floor(pb / s) - h;
+    var g = b;
+    if (dot(a, a) < dot(b, b)) {
+        g = a;
+    }
+    let q = abs(g);
+    let d = max(q.x * 0.5 + q.y * 0.8660254, q.x);
+    return vec3<f32>(d, p - g);
+}
+
+// A forcefield (halo shape 3): uv 0..1 across its width (x) and height (y). Translucent: a
+// faint sheet with a hexagonal lattice, cells sparkling now and then, bands of light rolling
+// up it, crawling noise, a bright frame, and brighter where seen edge on.
+fn shield(world: vec3<f32>, uv: vec2<f32>, n: vec3<f32>, to_eye: vec3<f32>, t: f32) -> vec2<f32> {
+    let p = vec2<f32>(world.x + world.z, world.y) * 3.2;
+    let hx = hex(p);
+    let lines = smoothstep(0.40, 0.49, hx.x);
+    let cell = hx.yz;
+    let spark = step(0.94, hash2(cell * 0.37 + floor(t * 5.0 + hash2(cell) * 3.0)))
+        * (1.0 - smoothstep(0.0, 0.45, hx.x));
+    let bands = pow(0.5 + 0.5 * sin(uv.y * 9.0 - t * 3.2), 10.0)
+        + 0.6 * pow(0.5 + 0.5 * sin(uv.y * 3.0 + t * 1.3 + uv.x * 2.0), 16.0);
+    let crawl = vnoise(p * 0.7 + vec2<f32>(t * 0.6, -t * 1.1));
+    let flicker = 0.85 + 0.15 * sin(t * 37.0 + crawl * 6.0);
+    let edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+    let frame = 1.0 - smoothstep(0.0, 0.08, edge);
+    let facing = abs(dot(normalize(n), to_eye));
+    var a = 0.07 + 0.10 * crawl + lines * (0.22 + 0.25 * crawl) + spark * 0.55 + bands * 0.22;
+    a = (a * mix(1.8, 0.85, facing) + frame * 0.6) * flicker;
+    return vec2<f32>(clamp(a, 0.0, 1.0), 1.0 + bands * 1.5 + spark * 2.0);
+}
+
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var uv = vec2<f32>(0.5, 0.5);
@@ -137,6 +176,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     tint = in.color;
 #endif
     let col = neon_color(in.world_position.xyz, uv, tint);
+    if (neon.params.y > 0.5 && neon.extra.x > 2.5) {
+        let to_eye = normalize(view.world_position - in.world_position.xyz);
+        let f = shield(in.world_position.xyz, uv, in.world_normal, to_eye, neon.params.z);
+        return vec4<f32>(col * f.y * f.x, f.x);
+    }
     if (neon.params.y > 0.5) {
         let v = clamp(uv.y, 0.0, 1.0);
         var a = (1.0 - v) * (1.0 - v) * 0.35;
@@ -145,7 +189,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             let facing = abs(dot(normalize(in.world_normal), to_eye));
             a *= facing * facing;
         }
-        if (neon.extra.x > 1.5) {
+        if (neon.extra.x > 1.5 && neon.extra.x < 2.5) {
             // Haze: drifting patches.
             let w = world_xz_noise(in.world_position.xyz, neon.params.z);
             a *= w;

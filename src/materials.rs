@@ -47,7 +47,8 @@ pub struct NeonUniform {
     pub blue: Vec4,
     pub pulse_pos: [Vec4; PULSES],
     pub pulse_color: [Vec4; PULSES],
-    /// x: halo shape (0 strip, 1 volume: fades where seen edge on), y: flow speed (m/s, mode 2).
+    /// x: halo shape (0 strip, 1 volume: fades where seen edge on, 2 haze, 3 forcefield), y:
+    /// flow speed (m/s, mode 2).
     pub extra: Vec4,
 }
 
@@ -77,6 +78,12 @@ impl NeonUniform {
     /// As a halo: haze, in slowly drifting patches.
     pub fn haze(mut self) -> Self {
         self.extra.x = 2.0;
+        self
+    }
+
+    /// As a halo: a translucent forcefield (uv 0..1 across and up the sheet).
+    pub fn shield(mut self) -> Self {
+        self.extra.x = 3.0;
         self
     }
 

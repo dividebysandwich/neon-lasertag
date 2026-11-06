@@ -35,7 +35,7 @@ impl Plugin for TargetsPlugin {
 }
 
 /// A chevron (">" pointing along +Y), from two bars.
-fn chevron() -> Mesh {
+pub(crate) fn chevron() -> Mesh {
     let bar = Cuboid::new(0.05, 0.24, 0.05).mesh().build();
     let place = |sx: f32| {
         bar.clone().transformed_by(

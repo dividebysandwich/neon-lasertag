@@ -674,7 +674,8 @@ fn holster(
 }
 
 /// The display on the wrist of the free hand: hits left, a grenade carried, shots left (the
-/// respawn countdown while tagged out).
+/// respawn countdown while tagged out); Megatarget mode: above them a dot per secondary target
+/// hit, or the seconds left to get into the megatarget's room.
 #[derive(Resource)]
 struct Wrist {
     root: Entity,
@@ -684,6 +685,8 @@ struct Wrist {
     /// A big countdown in front of the eyes while tagged out.
     panel: Entity,
     panel_digits: Vec<Digit>,
+    mega_digits: Vec<Digit>,
+    mega_pips: [Entity; 2],
 }
 
 fn spawn_wrist(mut commands: Commands, palette: Res<Palette>, mut meshes: ResMut<Assets<Mesh>>) {
@@ -719,6 +722,27 @@ fn spawn_wrist(mut commands: Commands, palette: Res<Palette>, mut meshes: ResMut
             ChildOf(root),
         ))
         .id();
+    let mega_digits = spawn_digits(
+        &mut commands,
+        &mut meshes,
+        root,
+        Vec3::new(-0.03, 0.075, 0.0),
+        2,
+        0.016,
+        &white,
+    );
+    let pip = meshes.add(Sphere::new(0.007));
+    let mega_pips = [0, 1].map(|k| {
+        commands
+            .spawn((
+                Mesh3d(pip.clone()),
+                MeshMaterial3d(white.clone()),
+                Transform::from_xyz(-0.012 + k as f32 * 0.024, 0.06, 0.0),
+                Visibility::Hidden,
+                ChildOf(root),
+            ))
+            .id()
+    });
     let panel = commands
         .spawn((Transform::IDENTITY, Visibility::Hidden))
         .id();
@@ -738,6 +762,8 @@ fn spawn_wrist(mut commands: Commands, palette: Res<Palette>, mut meshes: ResMut
         grenade,
         panel,
         panel_digits,
+        mega_digits,
+        mega_pips,
     });
 }
 
@@ -810,6 +836,24 @@ fn wrist(
         &w.panel_digits,
         &mut vis,
     );
+    let mega = game.level.mega.is_some() && p.respawn.is_none();
+    let power = p.power.filter(|_| mega);
+    show(
+        &power.map_or(String::new(), |t| {
+            format!("{:>2}", (t.ceil() as u32).min(99))
+        }),
+        &w.mega_digits,
+        &mut vis,
+    );
+    for (k, e) in w.mega_pips.iter().enumerate() {
+        if let Ok(mut v) = vis.get_mut(*e) {
+            *v = if mega && power.is_none() && p.mega_hits & (1 << k) != 0 {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            };
+        }
+    }
     if let Ok(mut v) = vis.get_mut(w.panel) {
         *v = if secs.is_some() {
             Visibility::Inherited

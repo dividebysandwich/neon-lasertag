@@ -10,7 +10,10 @@
 //! the in-game menu, leave, start a game vs bots from the start menu (`play`, `play-easy`, ...),
 //! the next match (`next`), a hit on the local player from the nearest enemy, the options
 //! screen (`options`, flat screen), the held grenade's throw arc (`arc`, flat screen), a hit on the first
-//! team target (`target`).
+//! team target (`target`). Megatarget mode in local games: both secondary targets hit at once
+//! (`power`), and going to Red's doorway into the megatarget's room (`warp-door`), into the
+//! room (`warp-room`), in front of the first turret (`warp-turret`) or into the first pocket
+//! (`warp-pocket`); turning the flat screen's view (`yaw=90`, `pitch=-20`, in degrees).
 
 use bevy::prelude::*;
 use lt_sim::bots::Difficulty;
@@ -28,6 +31,8 @@ pub struct Session {
     pub difficulty: Difficulty,
     /// The arenas' size in this (local) game.
     pub arena: lt_sim::level::SizeChoice,
+    /// What this (local) game is played for.
+    pub mode: lt_sim::level::GameMode,
     /// How long ago the match ended (None while it runs).
     pub over_for: Option<f32>,
     /// Leaving: the frames of taking the game down done so far.
@@ -39,6 +44,7 @@ impl Session {
     pub fn rules(&self, args: &crate::Args) -> lt_sim::Rules {
         lt_sim::Rules {
             arena: self.arena.pick(rand::random()),
+            mode: self.mode,
             ..args.rules()
         }
     }
@@ -170,6 +176,58 @@ fn dev_script(
                     hits: 1,
                 }));
             }
+        }
+        // Megatarget mode, local games: hit both secondary targets at once, or go to Red's
+        // doorway, into the room, before the first turret or into the first pocket.
+        "power" | "warp-door" | "warp-room" | "warp-turret" | "warp-pocket" => {
+            let action = action.clone();
+            commands.queue(move |w: &mut World| {
+                let Some(mut game) = w.get_resource_mut::<Game>() else {
+                    return;
+                };
+                let (Some(me), Some(m)) = (game.me, game.level.mega.clone()) else {
+                    return;
+                };
+                let Source::Local { sim, .. } = &mut game.source else {
+                    return;
+                };
+                let (s, t, p) = (m.shields[0], m.turrets[0], m.secondaries[0]);
+                match action.as_str() {
+                    "power" => {
+                        if let Some(p) = sim.players.iter_mut().find(|p| p.id == me) {
+                            p.mega_hits = 3;
+                            p.power = Some(sim.rules.power_time);
+                        }
+                    }
+                    "warp-door" => sim.teleport(me, s.outside + Vec3::Z * 3.0, 0.0),
+                    "warp-room" => sim.teleport(me, s.inside + Vec3::new(1.5, 0.0, -0.2), 0.6),
+                    "warp-turret" => sim.teleport(
+                        me,
+                        Vec3::new(t.pos.x + 4.5, 0.0, t.pos.z + 1.5),
+                        std::f32::consts::FRAC_PI_2 - 0.2,
+                    ),
+                    _ => sim.teleport(
+                        me,
+                        Vec3::new(p.centre().x - 1.6, 0.0, p.centre().z + 3.2),
+                        -0.5,
+                    ),
+                }
+            });
+        }
+        // The flat screen's view: turn to `yaw=DEG` (0: facing -z, 90: -x) or `pitch=DEG`.
+        a if a.starts_with("yaw=") || a.starts_with("pitch=") => {
+            let (key, v) = a.split_once('=').unwrap_or_default();
+            let Ok(deg) = v.parse::<f32>() else { return };
+            let yaw = key == "yaw";
+            commands.queue(move |w: &mut World| {
+                if let Some(mut look) = w.get_resource_mut::<crate::desktop::Look>() {
+                    if yaw {
+                        look.yaw = deg.to_radians();
+                    } else {
+                        look.pitch = deg.to_radians();
+                    }
+                }
+            });
         }
         a if a.starts_with("play") => {
             let d = a

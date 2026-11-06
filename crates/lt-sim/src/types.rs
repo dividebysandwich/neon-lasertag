@@ -5,6 +5,10 @@ use serde::{Deserialize, Serialize};
 
 pub type PlayerId = u8;
 
+/// The shooter of turret bolts and the tagger of players a forcefield or the megatarget room's
+/// timer got (never a player's id: there are at most `sim::MAX_PLAYERS`).
+pub const HAZARD: PlayerId = 255;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Team {
     Red,
@@ -193,5 +197,41 @@ pub enum SimEvent {
     },
     MatchOver {
         scores: [u32; 2],
+    },
+    /// Megatarget mode: a secondary target hit that counts (`side` 0 at -x, 1 at +x);
+    /// `charged`: it was the shooter's second, the megatarget's room is open to them now.
+    SecondaryHit {
+        side: u8,
+        by: PlayerId,
+        pos: Vec3,
+        charged: bool,
+    },
+    /// The megatarget hit; the shooter is sent back to its base straight after.
+    MegaHit {
+        by: PlayerId,
+        pos: Vec3,
+    },
+    /// A player's time to get into the room ran out (outside it: they start over).
+    PowerLost {
+        player: PlayerId,
+    },
+    TurretFired {
+        turret: u8,
+        pos: Vec3,
+        dir: Vec3,
+    },
+    /// A turret's deactivation target hit: it is off for `Rules::turret_off` seconds.
+    TurretOff {
+        turret: u8,
+        by: PlayerId,
+        pos: Vec3,
+    },
+    TurretOn {
+        turret: u8,
+    },
+    /// A player walked into a forcefield (and is tagged out by it).
+    Shocked {
+        player: PlayerId,
+        pos: Vec3,
     },
 }

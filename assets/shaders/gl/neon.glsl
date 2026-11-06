@@ -19,7 +19,8 @@ uniform vec3 u_red;
 uniform vec3 u_blue;
 uniform vec4 u_pulse_pos[8];
 uniform vec4 u_pulse_colour[8];
-// x: halo shape (0 strip, 1 volume: fades edge on), y: flow speed (m/s, mode 2).
+// x: halo shape (0 strip, 1 volume: fades edge on, 2 haze, 3 forcefield), y: flow speed (m/s,
+// mode 2).
 uniform vec4 u_extra;
 uniform vec3 u_eye[2];
 
@@ -145,6 +146,40 @@ vec3 neon_colour(vec3 world) {
     return col;
 }
 
+// Distance from the middle of the hexagon of a lattice (cells 1 across): 0 at its middle, 0.5
+// on its edges; and the cell's id.
+vec3 hex(vec2 p) {
+    vec2 s = vec2(1.0, 1.7320508);
+    vec2 h = s * 0.5;
+    vec2 a = p - s * floor(p / s) - h;
+    vec2 pb = p - h;
+    vec2 b = pb - s * floor(pb / s) - h;
+    vec2 g = dot(a, a) < dot(b, b) ? a : b;
+    vec2 q = abs(g);
+    float d = max(q.x * 0.5 + q.y * 0.8660254, q.x);
+    return vec3(d, p - g);
+}
+
+// A forcefield (halo shape 3), as neon.wgsl's `shield`: x alpha, y brightness.
+vec2 shield(vec3 world, vec2 uv, vec3 n, vec3 to_eye, float t) {
+    vec2 p = vec2(world.x + world.z, world.y) * 3.2;
+    vec3 hx = hex(p);
+    float lines = smoothstep(0.40, 0.49, hx.x);
+    vec2 cell = hx.yz;
+    float spark = step(0.94, hash2(cell * 0.37 + floor(t * 5.0 + hash2(cell) * 3.0)))
+        * (1.0 - smoothstep(0.0, 0.45, hx.x));
+    float bands = pow(0.5 + 0.5 * sin(uv.y * 9.0 - t * 3.2), 10.0)
+        + 0.6 * pow(0.5 + 0.5 * sin(uv.y * 3.0 + t * 1.3 + uv.x * 2.0), 16.0);
+    float crawl = vnoise(p * 0.7 + vec2(t * 0.6, -t * 1.1));
+    float flicker = 0.85 + 0.15 * sin(t * 37.0 + crawl * 6.0);
+    float edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+    float frame = 1.0 - smoothstep(0.0, 0.08, edge);
+    float facing = abs(dot(normalize(n), to_eye));
+    float a = 0.07 + 0.10 * crawl + lines * (0.22 + 0.25 * crawl) + spark * 0.55 + bands * 0.22;
+    a = (a * mix(1.8, 0.85, facing) + frame * 0.6) * flicker;
+    return vec2(clamp(a, 0.0, 1.0), 1.0 + bands * 1.5 + spark * 2.0);
+}
+
 // HDR to the display's range: the brightest channel rolls off (1 - e^-x) with the others
 // scaled alongside (the hue kept), and very bright light goes towards white as a bloomed
 // core would.
@@ -163,6 +198,11 @@ vec3 tone(vec3 c) {
 void main() {
     vec3 col = neon_colour(v_world);
 #ifdef GLOW
+    if (u_extra.x > 2.5) {
+        vec2 f = shield(v_world, v_uv, v_normal, normalize(v_eye - v_world), u_time);
+        o_colour = vec4(tone(col * f.y * f.x), f.x);
+        return;
+    }
     // Halo: fades out away from the accent (uv.y 0 at the strip, 1 at the outer edge).
     float v = clamp(v_uv.y, 0.0, 1.0);
     float a = (1.0 - v) * (1.0 - v) * 0.35;
@@ -170,7 +210,7 @@ void main() {
         float facing = abs(dot(normalize(v_normal), normalize(v_eye - v_world)));
         a *= facing * facing;
     }
-    if (u_extra.x > 1.5) {
+    if (u_extra.x > 1.5 && u_extra.x < 2.5) {
         a *= world_xz_noise(v_world, u_time);
     }
     o_colour = vec4(tone(col * a), a);

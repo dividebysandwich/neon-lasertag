@@ -26,6 +26,18 @@
   notes up a fifth.
 - score_tag: you tagged an enemy out: a fast four-note square-wave arpeggio up to a held top.
 - pickup: taking a grenade: a quick sparkly upward blip with a soft metallic latch.
+- mega_win: the megatarget hit (Megatarget mode), heard by everyone: a sub-bass impact, a
+  rising noise sweep into a big detuned-saw brass fanfare (a triad climbing an octave, then a
+  held major chord with a fifth on top), bells over it, and a long shimmering tail.
+- power_tick: the ticking of a player who may enter the megatarget's room: a sharp clock tick
+  with a tiny high ping.
+- power_up: both secondary targets hit: a rising filtered sweep resolving to a bright chord.
+- turret_fire: a turret's shot: a hard, metallic, lower zap with a mechanical knock.
+- turret_down: a turret switched off: a falling power-down whine with sputtering crackle.
+- shield_zap: a player walking into a forcefield: a violent electric crackle and a buzzing
+  discharge.
+- shield_hum: a forcefield's hum (a seamless two-second loop): a mains-like drone with
+  slowly beating partials and faint crackle.
 
 Each sound is scaled to an RMS loudness (dBFS) suited to the mix, peaks softly limited under
 full scale. Mono, 44.1 kHz, Ogg Vorbis.
@@ -166,9 +178,10 @@ def norm(x):
     return x / np.max(np.abs(x))
 
 
-def write(name, x, rms_db):
-    """Writes `x` at the RMS level `rms_db` dBFS, the peaks softly limited under full scale."""
-    x = fades(x - np.mean(x))
+def write(name, x, rms_db, loop=False):
+    """Writes `x` at the RMS level `rms_db` dBFS, the peaks softly limited under full scale
+    (`loop`: played round and round, so no fades at the ends)."""
+    x = x - np.mean(x) if loop else fades(x - np.mean(x))
     target = 10 ** (rms_db / 20)
     limit = lambda g: 0.95 * np.tanh(x * g / 0.95)
     lo, hi = 0.0, 1e3 / np.max(np.abs(x))
@@ -445,6 +458,121 @@ def score_tag():
     return chip([1046.5, 1318.5, 1568.0, 2093.0], 0.05, 0.2)
 
 
+def supersaw(hz, T, voices=7, spread=0.012):
+    """Detuned saws around `hz` (a big analog brass/pad tone)."""
+    x = seconds(T)
+    out = np.zeros(len(x))
+    for k in range(voices):
+        d = 1.0 + spread * (k - (voices - 1) / 2) / ((voices - 1) / 2)
+        f = np.full(len(x), hz * d) * (1 + 0.003 * np.sin(2 * np.pi * (4.5 + k * 0.3) * x))
+        p = phase(f) + rng.random()
+        out += 2.0 * (p - np.floor(p + 0.5))
+    return out / voices
+
+
+def brass(hz, T, attack, decay, hold, bright):
+    """A supersaw note through a filter that opens with the note (brassy swell)."""
+    tone = supersaw(hz, T) + 0.5 * supersaw(hz / 2, T, 3, 0.006)
+    # Filter sweep approximated by mixing a dull and a bright copy along the envelope.
+    e = env(T, attack, decay, hold)
+    dull = lowpass(tone, hz * 2.0)
+    shine = lowpass(tone, hz * bright)
+    return (dull * (1 - e) + shine * e) * e
+
+
+def mega_win():
+    T = 4.6
+    x = seconds(T)
+    # Impact: a sub drop and a burst of noise.
+    boom = thump(T, 55, 0.6, drop=0.55) * 1.6 + lowpass(noise(T, 20, 400), 180) * env(T, 0.002, 0.35) * 0.8
+    crack = click(T, 1500, 12000, 0.015) * 0.6
+    # A rising sweep into the fanfare.
+    sweep = sweep_noise(0.55, 300, 9000) * env(0.55, 0.4, 0.05, hold=0.5)
+    sweep = at(T, 0.0, sweep) * 0.35
+    # Fanfare: C E G (rising), then C' held as a big chord (C E G C' G').
+    fan = np.zeros(len(x))
+    for start, hz, dur in [(0.30, 261.6, 0.18), (0.48, 329.6, 0.18), (0.66, 392.0, 0.18)]:
+        fan += at(T, start, brass(hz, dur + 0.25, 0.01, 0.12, dur * 0.6, 6.0)) * 0.9
+    chord = [261.6, 329.6, 392.0, 523.3, 784.0]
+    for i, hz in enumerate(chord):
+        fan += at(T, 0.86, brass(hz, T - 0.86, 0.04, 1.4, 0.9, 7.0)) * (0.85 if i < 4 else 0.55)
+    # Sub pedal under the chord.
+    pedal = at(T, 0.86, np.sin(2 * np.pi * 65.4 * seconds(T - 0.86)) * env(T - 0.86, 0.05, 1.6, 0.8)) * 0.7
+    # Bells and sparkle.
+    bells = sum(at(T, 0.86 + 0.09 * i, bell(T, hz, 0.9)) for i, hz in enumerate([1046.5, 1568.0, 2093.0, 3136.0])) * 0.22
+    shimmer = noise(T, 5000, 14000) * (0.5 + 0.5 * np.sin(2 * np.pi * 17 * x))
+    shimmer *= at(T, 0.86, env(T, 0.2, 1.4, hold=0.4)) * 0.1
+    mix = boom + crack + sweep + fan + pedal + bells + shimmer
+    return echoes(mix, [0.13, 0.27, 0.41], [0.35, 0.2, 0.1], 4000)
+
+
+def power_tick():
+    T = 0.12
+    tick = click(T, 2500, 9000, 0.0025) * 1.2
+    knock = ring(T, [1800, 2950], [0.012, 0.008], [1.0, 0.6]) * 0.8
+    ping = np.sin(2 * np.pi * 3520 * seconds(T)) * env(T, 0.0005, 0.025) * 0.35
+    return tick + knock + ping
+
+
+def power_up():
+    T = 1.1
+    x = seconds(T)
+    f = 180 * (1 + 5 * (1 - np.exp(-x / 0.25)))
+    rise = lowpass(saw(f) * env(T, 0.02, 0.25, hold=0.45), 3500) * 0.5
+    sweep = sweep_noise(T, 400, 10000) * env(T, 0.3, 0.2, hold=0.4) * 0.25
+    chord = sum(at(T, 0.45, np.sin(2 * np.pi * phase(np.full(int((T - 0.45) * RATE), hz))) * env(T - 0.45, 0.01, 0.3))
+                for hz in [1046.5, 1318.5, 1568.0, 2093.0]) * 0.3
+    return echoes(rise + sweep + chord, [0.08], [0.25], 6000)
+
+
+def turret_fire():
+    T = 0.32
+    x = seconds(T)
+    f = 900 * np.exp(-x / 0.06) + 140
+    zap = (square(f, 0.3) * 0.6 + saw(f * 1.5) * 0.4) * env(T, 0.001, 0.07)
+    zap = lowpass(zap, 4500)
+    knock = thump(T, 120, 0.05, drop=0.6) * 0.9 + click(T, 300, 3000, 0.006) * 0.6
+    clank = ring(T, [930, 1410, 2350], [0.04, 0.03, 0.02], [0.6, 0.4, 0.3]) * 0.4
+    return echoes(zap + knock + clank, [0.06], [0.2], 3000)
+
+
+def turret_down():
+    T = 1.2
+    x = seconds(T)
+    f = 1400 * np.exp(-x / 0.35) + 60
+    whine = (saw(f) * 0.5 + np.sin(2 * np.pi * phase(f * 0.5)) * 0.5) * env(T, 0.005, 0.5, hold=0.3)
+    whine = lowpass(whine, 3000)
+    sputter = noise(T, 1500, 8000) * ((rng.random(len(x)) < 0.002).astype(float).cumsum() % 2)
+    sputter = lowpass(sputter * env(T, 0.01, 0.4), 6000) * 0.25
+    clunk = at(T, 0.85, thump(0.3, 90, 0.08) + click(0.3, 200, 2000, 0.01) * 0.5) * 0.9
+    return whine + sputter + clunk
+
+
+def shield_zap():
+    T = 0.8
+    x = seconds(T)
+    crackle = noise(T, 1500, 14000) * (rng.random(len(x)) < 0.02).astype(float)
+    crackle = lowpass(crackle, 9000) * env(T, 0.001, 0.25) * 3.0
+    buzz_f = 110 + 30 * np.sin(2 * np.pi * 13 * x)
+    buzz = (square(buzz_f, 0.5) * 0.6 + saw(buzz_f * 2.01) * 0.4) * env(T, 0.002, 0.3, hold=0.1)
+    buzz = lowpass(buzz, 4000)
+    snap = click(T, 800, 12000, 0.004) * 1.5 + thump(T, 70, 0.12) * 0.8
+    return crackle + buzz * 0.7 + snap
+
+
+def shield_hum():
+    T = 2.0
+    x = seconds(T)
+    # Every partial a whole number of cycles in 2 s (multiples of 0.5 Hz): a seamless loop.
+    drone = (np.sin(2 * np.pi * 60 * x) + 0.6 * np.sin(2 * np.pi * 120.5 * x)
+             + 0.35 * np.sin(2 * np.pi * 180 * x) + 0.25 * np.sin(2 * np.pi * 240.5 * x)
+             + 0.15 * np.sin(2 * np.pi * 420 * x))
+    drone *= 0.8 + 0.2 * np.sin(2 * np.pi * 1.5 * x)
+    # Noise from noise() is periodic over its length: the crackle loops too.
+    hiss = noise(T, 2000, 9000) * (0.5 + 0.5 * np.sin(2 * np.pi * 3.0 * x)) ** 4 * 0.12
+    return drone * 0.5 + hiss
+
+
 SOUNDS = {
     # name: (generator, RMS dBFS, seed)
     "footstep_1": (lambda: footstep(1), -27.0, 11),
@@ -468,7 +596,17 @@ SOUNDS = {
     "pickup": (pickup, -19.0, 141),
     "score_bleep": (score_bleep, -22.0, 151),
     "score_tag": (score_tag, -21.0, 161),
+    "mega_win": (mega_win, -13.0, 171),
+    "power_tick": (power_tick, -22.0, 181),
+    "power_up": (power_up, -18.0, 191),
+    "turret_fire": (turret_fire, -18.0, 201),
+    "turret_down": (turret_down, -19.0, 211),
+    "shield_zap": (shield_zap, -15.0, 221),
+    "shield_hum": (shield_hum, -24.0, 231),
 }
+
+# Sounds played as loops.
+LOOPS = {"shield_hum"}
 
 
 if __name__ == "__main__":
@@ -480,4 +618,4 @@ if __name__ == "__main__":
     for name in wanted:
         make, level, seed = SOUNDS[name]
         rng = np.random.default_rng(seed)
-        write(name, make(), level)
+        write(name, make(), level, loop=name in LOOPS)

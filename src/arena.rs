@@ -432,6 +432,10 @@ pub fn spawn_arena(
         if let Some(body) = parts.get("body") {
             chunk.entry("body").or_default().append(body, rot, p.pos);
         }
+        // Megatarget mode: the walls targets and turrets hang on, plain.
+        if level.mega.as_ref().is_some_and(|m| m.plain(p.kind, p.pos)) {
+            continue;
+        }
         // Fewer accents on ordinary pieces: a random share of their shapes, the outline kept.
         let thin = !important
             && !matches!(

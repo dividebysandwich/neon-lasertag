@@ -7,7 +7,7 @@ use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::prelude::*;
 use lt_net::{ListSlot, ServerEntry, fetch_list_into};
 use lt_sim::bots::Difficulty;
-use lt_sim::level::SizeChoice;
+use lt_sim::level::{GameMode, SizeChoice};
 
 use crate::Args;
 use crate::desktop::Overlays;
@@ -24,6 +24,7 @@ enum Action {
     MoreBots(i32),
     Difficulty(Difficulty),
     Arena(SizeChoice),
+    Mode(GameMode),
     Refresh,
     Options,
     Quit,
@@ -50,6 +51,7 @@ struct Choices {
     bots: usize,
     difficulty: Difficulty,
     arena: SizeChoice,
+    mode: GameMode,
 }
 
 /// The menu has made its choice: start this game.
@@ -60,6 +62,7 @@ pub enum Start {
         bots: usize,
         difficulty: Difficulty,
         arena: SizeChoice,
+        mode: GameMode,
     },
     Join(String),
 }
@@ -91,6 +94,7 @@ fn first(mut commands: Commands, args: Res<Args>) {
         bots: args.bots,
         difficulty: args.difficulty,
         arena: args.arena,
+        mode: args.game_mode,
     });
     if args.menu {
         commands.insert_resource(ShowMenu);
@@ -186,6 +190,13 @@ fn spawn(mut commands: Commands, old: Query<Entity, With<MenuRoot>>) {
                 }
             });
             p.spawn(Node { column_gap: Val::Px(10.0), align_items: AlignItems::Center, ..default() }).with_children(|r| {
+                r.spawn(label("Mode:", 22.0, Color::WHITE));
+                for m in GameMode::ALL {
+                    let n = m.name();
+                    button(r, &format!("{}{}", n[..1].to_uppercase(), &n[1..]), Action::Mode(m));
+                }
+            });
+            p.spawn(Node { column_gap: Val::Px(10.0), align_items: AlignItems::Center, ..default() }).with_children(|r| {
                 r.spawn(label("Join address:", 22.0, Color::WHITE));
                 r.spawn((
                     Node { width: Val::Px(320.0), padding: UiRect::all(Val::Px(8.0)), ..default() },
@@ -257,6 +268,7 @@ fn buttons(
             bots: choices.bots,
             difficulty: p.0,
             arena: choices.arena,
+            mode: choices.mode,
         });
         return;
     }
@@ -275,6 +287,7 @@ fn buttons(
         let on = match a {
             Action::Difficulty(d) => *d == choices.difficulty,
             Action::Arena(s) => *s == choices.arena,
+            Action::Mode(m) => *m == choices.mode,
             _ => continue,
         };
         let want = BorderColor::all(if on { BORDER_ON } else { BORDER });
@@ -292,12 +305,14 @@ fn buttons(
                 bots: choices.bots,
                 difficulty: choices.difficulty,
                 arena: choices.arena,
+                mode: choices.mode,
             }),
             Action::Host => Some(Start::Local {
                 host: true,
                 bots: choices.bots,
                 difficulty: choices.difficulty,
                 arena: choices.arena,
+                mode: choices.mode,
             }),
             Action::Join if !choices.address.trim().is_empty() => {
                 Some(Start::Join(choices.address.trim().to_string()))
@@ -313,6 +328,10 @@ fn buttons(
             }
             Action::Arena(a) => {
                 choices.arena = a;
+                None
+            }
+            Action::Mode(m) => {
+                choices.mode = m;
                 None
             }
             Action::Refresh => {

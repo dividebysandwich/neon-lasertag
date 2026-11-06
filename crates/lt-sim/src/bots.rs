@@ -199,6 +199,8 @@ pub struct BotGraph {
     /// closed and with every door open.
     comp: Vec<u32>,
     comp_open: Vec<u32>,
+    /// Megatarget mode: per secondary target, the nodes it can be hit from.
+    pub mega_spots: [Vec<usize>; 2],
 }
 
 /// Walking speed assumed for door timing (metres a second).
@@ -287,6 +289,11 @@ fn hits_panel(world: &World, eye: Vec3, t: &level::TargetDef) -> bool {
         Some((_, q, _)) => q.cmpge(t.min - 0.03).all() && q.cmple(t.max + 0.03).all(),
         None => false,
     }
+}
+
+/// Does a bolt from `eye` towards the middle of the box hit it (and nothing before it)?
+fn hits_box(world: &World, eye: Vec3, min: Vec3, max: Vec3) -> bool {
+    level::box_seen(world, eye, min, max, (min + max) / 2.0)
 }
 
 impl BotGraph {
@@ -385,8 +392,21 @@ impl BotGraph {
             tactics: [Vec::new(), Vec::new()],
             comp,
             comp_open,
+            mega_spots: [Vec::new(), Vec::new()],
         };
         g.tactics = Team::ALL.map(|team| g.tactics_for(level, world, team));
+        if let Some(m) = &level.mega {
+            for (i, t) in m.secondaries.iter().enumerate() {
+                g.mega_spots[i] = (0..g.pos.len())
+                    .filter(|&n| g.valid[n] && g.pos[n].distance(t.centre()) < 10.0)
+                    .filter(|&n| {
+                        let eye = g.pos[n] + Vec3::Y * EYE;
+                        hits_box(world, eye, t.min, t.max)
+                            && hits_box(world, eye - Vec3::Y * 0.3, t.min, t.max)
+                    })
+                    .collect();
+            }
+        }
         g
     }
 
@@ -790,6 +810,9 @@ enum Plan {
     Attack,
     /// Watch the own targets from a covered spot.
     Defend,
+    /// Megatarget mode: hit both secondary targets, then get into the room and hit the
+    /// megatarget.
+    Mega,
 }
 
 /// Something to do before going on with the plan.
@@ -878,6 +901,8 @@ pub struct Bot {
     gate_since: Option<f64>,
     /// Defenders: the last alarm answered.
     alarm_seen: f64,
+    /// Megatarget plan: the secondary target going for and the node to shoot it from.
+    mega_spot: Option<(usize, usize)>,
 }
 
 /// The original name of the bot (the client's autopilot uses it).
@@ -952,6 +977,7 @@ impl Bot {
             pushing: false,
             gate_since: None,
             alarm_seen: -1.0,
+            mega_spot: None,
         }
     }
 
@@ -1023,6 +1049,7 @@ impl Bot {
         self.prev_hits = 0;
         self.fire_prev = false;
         self.peek = None;
+        self.mega_spot = None;
     }
 
     fn claim(&mut self, team: Team, pos: Vec3) {
@@ -1209,7 +1236,8 @@ impl Bot {
         now: f64,
     ) -> Option<(usize, Vec3)> {
         let Some(me) = self.me else { return dest };
-        if self.role != Role::Offense {
+        // (Megatarget: the objectives are on both sides, nothing to push into.)
+        if self.role != Role::Offense || sim.level.mega.is_some() {
             return dest;
         }
         let side = p.team.side();
@@ -1513,9 +1541,19 @@ impl Bot {
         self.patrol = None;
         self.route_goal = None;
         self.peek = None;
-        let role_plan = match self.role {
-            Role::Offense => Plan::Attack,
-            Role::Defense => Plan::Defend,
+        self.mega_spot = None;
+        let role_plan = match (self.role, sim.level.mega.is_some()) {
+            (Role::Offense, false) => Plan::Attack,
+            (Role::Defense, false) => Plan::Defend,
+            (Role::Offense, true) => Plan::Mega,
+            // Defenders go for it too now and then, and otherwise hunt.
+            (Role::Defense, true) => {
+                if self.rng.random_bool(0.4) {
+                    Plan::Mega
+                } else {
+                    Plan::Engage
+                }
+            }
         };
         let plan = self.next_plan_hint.take().unwrap_or_else(|| {
             let r: f32 = self.rng.random();
@@ -1535,6 +1573,11 @@ impl Bot {
         for plan in [plan, Plan::Hold, Plan::Engage] {
             if plan == Plan::Engage {
                 self.plan = Plan::Engage;
+                return;
+            }
+            if plan == Plan::Mega {
+                self.plan = Plan::Mega;
+                self.plan_left = self.rng.random_range(35.0..50.0);
                 return;
             }
             if let Some(s) = self.pick_spot(sim, g, p, plan) {
@@ -1606,7 +1649,7 @@ impl Bot {
                     }
                     2.0 * t.cover - 0.06 * dist
                 }
-                Plan::Engage => continue,
+                Plan::Engage | Plan::Mega => continue,
             };
             // Worse bots care less about cover: their choice is noisier and cover counts less.
             s *= 0.5 + 0.5 * self.skill;
@@ -1631,7 +1674,49 @@ impl Bot {
         match self.plan {
             Plan::Hold | Plan::Attack | Plan::Defend => self.spot.map(|s| (s, g.pos[s])),
             Plan::Engage => self.engage_dest(sim, g, p),
+            Plan::Mega => self.mega_dest(sim, g, p),
         }
+    }
+
+    /// The Megatarget plan's next stop: a spot in a pocket whose secondary target this bot
+    /// still has to hit, or with both hit the inside of the nearer doorway into the room
+    /// (`None` once in the room: shoot from there).
+    fn mega_dest(&mut self, sim: &Sim, g: &BotGraph, p: &Player) -> Option<(usize, Vec3)> {
+        let m = sim.level.mega.as_ref()?;
+        if p.power.is_some() {
+            if m.in_room(p.feet) {
+                return None;
+            }
+            let s = m.shields.iter().min_by(|a, b| {
+                a.outside
+                    .distance(p.feet)
+                    .total_cmp(&b.outside.distance(p.feet))
+            })?;
+            let node = sim.level.nav.node_at(s.outside)?;
+            return Some((node, s.inside));
+        }
+        let here = g.nearest(&sim.world, p.feet)?;
+        if self
+            .mega_spot
+            .is_none_or(|(side, _)| p.mega_hits & (1 << side) != 0)
+        {
+            // The nearer secondary target still to hit, a random spot of those it's hit from.
+            let mut sides: Vec<usize> = (0..2).filter(|i| p.mega_hits & (1 << i) == 0).collect();
+            sides.sort_by(|a, b| {
+                let d = |i: usize| m.secondaries[i].centre().distance(p.feet);
+                d(*a).total_cmp(&d(*b))
+            });
+            self.mega_spot = sides.into_iter().find_map(|side| {
+                let spots: Vec<usize> = g.mega_spots[side]
+                    .iter()
+                    .copied()
+                    .filter(|&n| g.connected(here, n))
+                    .collect();
+                (!spots.is_empty()).then(|| (side, spots[self.rng.random_range(0..spots.len())]))
+            });
+        }
+        let (_, n) = self.mega_spot?;
+        Some((n, g.pos[n]))
     }
 
     fn engage_dest(&mut self, sim: &Sim, g: &BotGraph, p: &Player) -> Option<(usize, Vec3)> {
@@ -1702,6 +1787,7 @@ impl Bot {
             _ => {
                 self.release_claim();
                 self.spot = None;
+                self.mega_spot = None;
                 self.plan_left = 0.0;
             }
         }
@@ -1826,8 +1912,35 @@ impl Bot {
         cands.first().map(|&(id, d, pt)| (id, d, pt, hittable(id)))
     }
 
-    /// The middle of an enemy target this bot can hit from where it stands.
+    /// The middle of an enemy target this bot can hit from where it stands (Megatarget mode:
+    /// one of the targets that counts for it, or a turret's switch on its way).
     fn panel_in_reach(&self, sim: &Sim, p: &Player, eye: Vec3, muzzle: Vec3) -> Option<Vec3> {
+        if let Some(m) = &sim.level.mega {
+            let seen = |min: Vec3, max: Vec3| {
+                hits_box(&sim.world, eye, min, max) && hits_box(&sim.world, muzzle, min, max)
+            };
+            if p.power.is_some() && m.in_room(p.feet) {
+                return seen(m.core.min, m.core.max).then(|| m.core.centre());
+            }
+            if let Some(t) = (0..2)
+                .filter(|_| p.power.is_none())
+                .filter(|i| p.mega_hits & (1 << i) == 0)
+                .map(|i| m.secondaries[i])
+                .find(|t| t.centre().distance(eye) < 12.0 && seen(t.min, t.max))
+            {
+                return Some(t.centre());
+            }
+            if self.plan != Plan::Mega {
+                return None;
+            }
+            return m
+                .turrets
+                .iter()
+                .zip(&sim.turrets)
+                .filter(|(t, st)| st.off <= 0.0 && t.switch.centre().distance(eye) < 22.0)
+                .find(|(t, _)| seen(t.switch.min, t.switch.max))
+                .map(|(t, _)| t.switch.centre());
+        }
         sim.level
             .targets
             .iter()
@@ -1987,6 +2100,18 @@ impl Controller for Bot {
         }
         self.update_errand(sim, &g, p);
         self.plan_left -= TICK;
+        if p.power.is_some() {
+            // The room is open to it: nothing else matters (not even refilling).
+            if self.plan != Plan::Mega {
+                self.release_claim();
+                self.spot = None;
+                self.chase = None;
+                self.route_goal = None;
+                self.plan = Plan::Mega;
+            }
+            self.errand = None;
+            self.plan_left = self.plan_left.max(1.0);
+        }
         if self.plan_left <= 0.0 {
             self.decide(sim, &g, p);
         }
@@ -1996,7 +2121,27 @@ impl Controller for Bot {
         let mut anchor = None;
         let dest = self.destination(sim, &g, p);
         let dest = self.gate(sim, &g, p, dest, now);
+        // With the power, at a doorway of the room: straight through (inside, the nearest nodes
+        // aren't linked to the rest).
+        let doorway = sim.level.mega.as_ref().and_then(|m| {
+            if p.power.is_none() || m.in_room(feet) {
+                return None;
+            }
+            m.shields.iter().find_map(|s| {
+                let mid = (s.outside + s.inside) / 2.0;
+                (Vec2::new(mid.x - feet.x, mid.z - feet.z).length() < 1.3).then(|| {
+                    Vec2::new(s.inside.x - feet.x, s.inside.z - feet.z).normalize_or_zero()
+                })
+            })
+        });
+        let dest = if doorway.is_some() { None } else { dest };
+        if let Some(d) = doorway {
+            move_dir = d;
+            self.route.clear();
+            self.route_goal = None;
+        }
         match dest {
+            None if doorway.is_some() => {}
             Some((node, end)) => {
                 let arrive = if self.errand.is_none() && self.plan != Plan::Engage {
                     1.0
@@ -2039,7 +2184,9 @@ impl Controller for Bot {
                 Vec2::new(self.aim.x, self.aim.z).normalize_or_zero()
             };
             let side = Vec2::new(-fwd.y, fwd.x) * self.strafe;
-            if move_dir != Vec2::ZERO {
+            if doorway.is_some() {
+                // Straight through.
+            } else if move_dir != Vec2::ZERO {
                 move_dir = (move_dir * 0.55 + side * 0.65).normalize_or_zero();
             } else if let Some(a) = anchor
                 && !matches!(self.errand, Some(Errand::Reload { .. }))
@@ -2112,6 +2259,17 @@ impl Controller for Bot {
             self.roll_error();
         }
         self.fire_prev = fire;
+
+        // Never into a forcefield without the power (strafing, nudges).
+        if let Some(m) = &sim.level.mega
+            && p.power.is_none()
+            && move_dir != Vec2::ZERO
+            && m.touching_shield(feet + Vec3::new(move_dir.x, 0.0, move_dir.y) * 0.35)
+                .is_some()
+        {
+            move_dir = Vec2::ZERO;
+            self.strafe = -self.strafe;
+        }
 
         let throw = self.try_grenade(sim, p, now);
         self.pose(PlayerCmd {
@@ -2689,5 +2847,51 @@ mod tests {
             }
         }
         assert!(found > 3, "{found}");
+    }
+
+    #[test]
+    fn bots_go_for_the_megatarget() {
+        let mut totals = [0usize; 6];
+        for seed in [3u64, 8] {
+            let mut sim = Sim::new(
+                seed,
+                Rules {
+                    mode: level::GameMode::Megatarget,
+                    match_time: 300.0,
+                    ..Rules::default()
+                },
+            );
+            let mut bots = Bots::default();
+            bots.fill(&mut sim, 8, 0.6);
+            let mut n = [0usize; 6];
+            for _ in 0..(300.0 / TICK) as usize {
+                bots.think(&mut sim);
+                sim.step();
+                for e in sim.drain_events() {
+                    match e {
+                        SimEvent::SecondaryHit { charged, .. } => {
+                            n[0] += 1;
+                            n[1] += charged as usize;
+                        }
+                        SimEvent::MegaHit { .. } => n[2] += 1,
+                        SimEvent::Shocked { .. } => n[3] += 1,
+                        SimEvent::TurretOff { .. } => n[4] += 1,
+                        SimEvent::TaggedOut { by: HAZARD, .. } => n[5] += 1,
+                        _ => {}
+                    }
+                }
+            }
+            println!(
+                "seed {seed}: secondary hits {}, powered {}, megatarget {}, shocked {}, \
+                 turrets off {}, zapped {}, scores {:?}",
+                n[0], n[1], n[2], n[3], n[4], n[5], sim.scores
+            );
+            for k in 0..6 {
+                totals[k] += n[k];
+            }
+        }
+        assert!(totals[0] >= 6, "secondaries hit: {totals:?}");
+        assert!(totals[2] >= 1, "the megatarget hit: {totals:?}");
+        assert_eq!(totals[3], 0, "bots keep out of forcefields: {totals:?}");
     }
 }

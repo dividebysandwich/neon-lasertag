@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::collide::{BODY_HEIGHT, BODY_RADIUS, GRAVITY, World, ray_box};
 use crate::hitbox::first_hit;
-use crate::level::{Ground, Level, MoverKind};
+use crate::level::{Ground, Level, MoverKind, Panel};
 use crate::rules::Rules;
 use crate::types::*;
 
@@ -79,6 +79,10 @@ pub struct Player {
     pub target_hits: u32,
     /// Ticks to ignore predicted positions (just respawned: the client hasn't seen it yet).
     pub claim_block: u32,
+    /// Megatarget mode: the secondary targets hit since starting over (bit `side`), and once
+    /// both are, the seconds left to get into the megatarget's room.
+    pub mega_hits: u8,
+    pub power: Option<f32>,
 }
 
 impl Player {
@@ -108,6 +112,22 @@ impl Player {
     pub fn hit_by(&self, a: Vec3, b: Vec3) -> Option<(f32, crate::hitbox::Part)> {
         first_hit(self.feet, self.eye(), &self.cmd, a, b)
     }
+}
+
+/// A Megatarget turret's state.
+#[derive(Clone, Copy, Debug)]
+pub struct TurretState {
+    /// Where its gun points.
+    pub aim: Vec3,
+    /// Seconds left switched off.
+    pub off: f32,
+    fire_t: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TurretSnap {
+    pub aim: Vec3,
+    pub off: f32,
 }
 
 /// A grenade lying in the arena for anyone to take.
@@ -172,6 +192,8 @@ pub struct Snapshot {
     pub grenades: Vec<GrenadeSnap>,
     pub pickups: Vec<PickupSnap>,
     pub over: bool,
+    /// Megatarget mode's turrets (as `Mega::turrets`).
+    pub turrets: Vec<TurretSnap>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -204,6 +226,9 @@ pub struct PlayerSnap {
     pub shots: u32,
     pub landed: u32,
     pub target_hits: u32,
+    /// Megatarget mode (`Player::mega_hits`, `Player::power`).
+    pub mega_hits: u8,
+    pub power: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -237,6 +262,7 @@ pub struct Sim {
     /// Per target (by id): the tick and shooter of its last hit (the bots' alarm; events are
     /// drained by the caller, so bots can't see them).
     pub last_target_hit: Vec<Option<(u64, PlayerId)>>,
+    pub turrets: Vec<TurretState>,
     /// Every player's hit-relevant state at the end of each of the last `HISTORY` ticks.
     history: std::collections::VecDeque<(u64, Vec<Ghost>)>,
     events: Vec<SimEvent>,
@@ -248,7 +274,10 @@ pub struct Sim {
 
 impl Sim {
     pub fn new(seed: u64, rules: Rules) -> Sim {
-        Self::with_level(Arc::new(Level::generate(seed, rules.arena)), rules)
+        Self::with_level(
+            Arc::new(Level::generate_for(seed, rules.arena, rules.mode)),
+            rules,
+        )
     }
 
     pub fn with_level(level: Arc<Level>, rules: Rules) -> Sim {
@@ -275,6 +304,16 @@ impl Sim {
             tick: 0,
             over: false,
             last_target_hit: vec![None; level.targets.len()],
+            turrets: level.mega.as_ref().map_or(Vec::new(), |m| {
+                m.turrets
+                    .iter()
+                    .map(|t| TurretState {
+                        aim: t.facing,
+                        off: 0.0,
+                        fire_t: 1.0,
+                    })
+                    .collect()
+            }),
             history: std::collections::VecDeque::with_capacity(HISTORY + 1),
             events: Vec::new(),
             rng: ChaCha8Rng::seed_from_u64(level.seed ^ 0x5EED),
@@ -326,6 +365,8 @@ impl Sim {
             landed: 0,
             target_hits: 0,
             claim_block: 0,
+            mega_hits: 0,
+            power: None,
         };
         let spawn = self.pick_spawn(team);
         p.feet = spawn.pos;
@@ -400,6 +441,7 @@ impl Sim {
         }
         self.step_movers();
         self.step_players();
+        self.step_mega();
         self.step_bolts();
         self.step_grenades();
         self.step_pickups();
@@ -454,6 +496,11 @@ impl Sim {
                 nav.ground_node(ix, iz)
             };
             if !nav.valid[n]
+                || self
+                    .level
+                    .mega
+                    .as_ref()
+                    .is_some_and(|m| m.in_room(nav.pos[n]))
                 || !upper
                     && (grid.ground[dm.idx(ix, iz)] != Ground::Open || self.level.on_track(ix, iz))
             {
@@ -841,17 +888,21 @@ impl Sim {
             self.hit_player(pi, b, at);
             remove = true;
         } else if let Some((q, n)) = hit {
-            // A target panel?
             let dir = (to - b.pos).normalize_or_zero();
             let len = (to - b.pos).length();
+            let struck = |min: Vec3, max: Vec3| {
+                ray_box(b.pos, dir, min - 0.01, max + 0.01, len)
+                    .is_some_and(|(tt, _)| (tt / len - t_best).abs() < 0.02)
+            };
+            if self.mega_bolt(b, q, &struck) {
+                return true;
+            }
+            // A target panel?
             let target = self
                 .level
                 .targets
                 .iter()
-                .find(|t| {
-                    ray_box(b.pos, dir, t.min - 0.01, t.max + 0.01, len)
-                        .is_some_and(|(tt, _)| (tt / len - t_best).abs() < 0.02)
-                })
+                .find(|t| struck(t.min, t.max))
                 .copied();
             match target {
                 Some(t) if t.team != b.owner_team => {
@@ -930,13 +981,15 @@ impl Sim {
             p.respawn = Some(wait);
             p.tagged += 1;
             p.cmd.fire = false;
+            p.mega_hits = 0;
+            p.power = None;
             self.events.push(SimEvent::TaggedOut {
                 player: id,
                 by: b.owner,
                 pos: at,
                 respawn_in: wait,
             });
-            if b.owner_team != team {
+            if b.owner_team != team && b.owner != HAZARD {
                 self.scores[b.owner_team.index()] += self.rules.tag_points;
                 let points = self.rules.tag_points;
                 if let Some(s) = self.player_mut(b.owner) {
@@ -1039,6 +1092,253 @@ impl Sim {
         }
     }
 
+    /// Megatarget mode, once a tick: the players' time to get into the room, the forcefields
+    /// and the turrets.
+    fn step_mega(&mut self) {
+        let Some(mega) = self.level.mega.clone() else {
+            return;
+        };
+        let rules = self.rules.clone();
+        for i in 0..self.players.len() {
+            let p = &mut self.players[i];
+            if !p.alive() {
+                continue;
+            }
+            let (id, feet) = (p.id, p.feet);
+            let mut zap = false;
+            if let Some(t) = p.power.as_mut() {
+                *t -= TICK;
+                if *t <= 0.0 {
+                    p.power = None;
+                    p.mega_hits = 0;
+                    self.events.push(SimEvent::PowerLost { player: id });
+                    // Still in the room (or its doorway) without having hit the megatarget.
+                    zap = mega.in_room(feet) || mega.touching_shield(feet).is_some();
+                }
+            } else if mega.touching_shield(feet).is_some() {
+                self.events.push(SimEvent::Shocked {
+                    player: id,
+                    pos: feet + Vec3::Y * 1.2,
+                });
+                zap = true;
+            }
+            if zap {
+                self.zap(i);
+            }
+        }
+
+        for k in 0..self.turrets.len() {
+            let def = mega.turrets[k];
+            let st = &mut self.turrets[k];
+            if st.off > 0.0 {
+                st.off -= TICK;
+                if st.off <= 0.0 {
+                    st.off = 0.0;
+                    st.fire_t = 0.5;
+                    self.events.push(SimEvent::TurretOn { turret: k as u8 });
+                }
+                // Drooping while off.
+                let rest = (def.facing - Vec3::Y * 0.6).normalize();
+                st.aim = st.aim.lerp(rest, 0.05).normalize_or(rest);
+                continue;
+            }
+            st.fire_t -= TICK;
+            // The nearest player it sees in front of it who can be hit now.
+            let muzzle = def.pos + def.facing * 0.3;
+            let target = self
+                .players
+                .iter()
+                .filter(|p| p.alive() && p.cooldown <= 0.0)
+                .map(|p| p.chest())
+                .filter(|c| {
+                    let d = *c - muzzle;
+                    d.length() < rules.turret_range
+                        && d.normalize_or_zero().dot(def.facing) > 0.1
+                        && self.world.clear(muzzle, *c)
+                })
+                .min_by(|a, b| a.distance(muzzle).total_cmp(&b.distance(muzzle)));
+            let want = match target {
+                Some(c) => (c - def.pos).normalize_or(def.facing),
+                // Nobody: sweep slowly from side to side.
+                None => {
+                    let t = self.tick as f32 * TICK;
+                    Quat::from_rotation_y((t * 0.5 + k as f32 * 1.7).sin() * 0.7)
+                        * (def.facing - Vec3::Y * 0.25).normalize()
+                }
+            };
+            let st = &mut self.turrets[k];
+            let angle = st.aim.angle_between(want);
+            if angle > 1e-4 {
+                let step = (rules.turret_turn * TICK).min(angle);
+                let axis = st.aim.cross(want).normalize_or(Vec3::Y);
+                st.aim = (Quat::from_axis_angle(axis, step) * st.aim).normalize_or(want);
+            }
+            if target.is_some() && st.fire_t <= 0.0 && st.aim.angle_between(want) < 0.06 {
+                st.fire_t = rules.turret_every;
+                let aim = st.aim;
+                // Off by a random angle in a random direction.
+                let side = aim.any_orthonormal_vector();
+                let err: f32 = ((0..3).map(|_| self.rng.random::<f32>()).sum::<f32>() - 1.5)
+                    * 2.0
+                    * rules.turret_spread;
+                let roll = self.rng.random_range(0.0..std::f32::consts::TAU);
+                let dir = Quat::from_axis_angle(Quat::from_axis_angle(aim, roll) * side, err) * aim;
+                let from = def.pos + dir * 0.5;
+                let id = self.id();
+                self.bolts.push(Bolt {
+                    id,
+                    owner: HAZARD,
+                    owner_team: Team::Red,
+                    team: None,
+                    pos: from,
+                    vel: dir * rules.bolt_speed,
+                    life: rules.bolt_life,
+                });
+                self.events.push(SimEvent::TurretFired {
+                    turret: k as u8,
+                    pos: from,
+                    dir,
+                });
+            }
+        }
+    }
+
+    /// Puts a player somewhere else at once, facing `yaw` (testing; its client is told by a
+    /// `Respawned` event, as after a respawn).
+    pub fn teleport(&mut self, id: PlayerId, feet: Vec3, yaw: f32) {
+        let Some(p) = self.player_mut(id) else { return };
+        p.feet = feet;
+        p.vy = 0.0;
+        p.cmd.yaw = yaw;
+        p.claim_block = 30;
+        self.events.push(SimEvent::Respawned {
+            player: id,
+            pos: feet,
+        });
+    }
+
+    /// Tags player `pi` out without a shooter (a forcefield, the room's timer).
+    fn zap(&mut self, pi: usize) {
+        let (team, feet) = (self.players[pi].team, self.players[pi].feet);
+        let wait = self.respawn_time(team, feet);
+        let p = &mut self.players[pi];
+        p.hits = self.rules.hits_to_tag;
+        p.respawn = Some(wait);
+        p.tagged += 1;
+        p.cmd.fire = false;
+        p.mega_hits = 0;
+        p.power = None;
+        self.events.push(SimEvent::TaggedOut {
+            player: p.id,
+            by: HAZARD,
+            pos: p.eye() - Vec3::Y * 0.4,
+            respawn_in: wait,
+        });
+    }
+
+    /// Sends a player back to one of its team's spawn pads at once, healed and refilled.
+    fn send_home(&mut self, pi: usize) {
+        let team = self.players[pi].team;
+        let s = self.pick_spawn(team);
+        let ammo = self.rules.ammo;
+        let p = &mut self.players[pi];
+        p.hits = 0;
+        p.cooldown = 0.0;
+        p.ammo = ammo;
+        p.reloading = None;
+        p.mega_hits = 0;
+        p.power = None;
+        p.feet = s.pos;
+        p.vy = 0.0;
+        p.cmd.yaw = s.yaw;
+        p.claim_block = 30;
+        self.events.push(SimEvent::Respawned {
+            player: p.id,
+            pos: s.pos,
+        });
+    }
+
+    /// A bolt that struck the arena at `q`: whether it was one of the Megatarget mode's
+    /// targets or switches (`struck` tells whether the strike was on a box), handled here.
+    fn mega_bolt(&mut self, b: &Bolt, q: Vec3, struck: &dyn Fn(Vec3, Vec3) -> bool) -> bool {
+        let Some(mega) = self.level.mega.as_ref() else {
+            return false;
+        };
+        let on = |p: &Panel| struck(p.min, p.max);
+        if let Some(k) = mega.turrets.iter().position(|t| on(&t.switch)) {
+            if b.owner != HAZARD {
+                self.turrets[k].off = self.rules.turret_off;
+                self.events.push(SimEvent::TurretOff {
+                    turret: k as u8,
+                    by: b.owner,
+                    pos: q,
+                });
+            }
+            return true;
+        }
+        let side = mega.secondaries.iter().position(on);
+        let core = on(&mega.core);
+        if side.is_none() && !core {
+            return false;
+        }
+        let in_room = |p: &Player| mega.in_room(p.feet);
+        // Only a player's own blaster bolts count.
+        let shooter = b.team.and_then(|_| {
+            self.players
+                .iter()
+                .position(|p| p.id == b.owner && p.alive())
+        });
+        let counts = shooter.is_some_and(|pi| {
+            let p = &self.players[pi];
+            match side {
+                Some(i) => p.power.is_none() && p.mega_hits & (1 << i) == 0,
+                None => p.power.is_some() && in_room(p),
+            }
+        });
+        if !counts {
+            self.events.push(SimEvent::BoltImpact {
+                pos: q,
+                normal: -(b.vel.normalize_or_zero()),
+                team: b.team,
+            });
+            return true;
+        }
+        let pi = shooter.unwrap();
+        let points = if side.is_some() {
+            self.rules.secondary_points
+        } else {
+            self.rules.megatarget_points
+        };
+        self.scores[b.owner_team.index()] += points;
+        let power_time = self.rules.power_time;
+        let p = &mut self.players[pi];
+        p.score += points;
+        p.target_hits += 1;
+        match side {
+            Some(i) => {
+                p.mega_hits |= 1 << i;
+                let charged = p.mega_hits == 0b11;
+                if charged {
+                    p.power = Some(power_time);
+                }
+                self.events.push(SimEvent::SecondaryHit {
+                    side: i as u8,
+                    by: b.owner,
+                    pos: q,
+                    charged,
+                });
+            }
+            None => {
+                self.events.push(SimEvent::MegaHit {
+                    by: b.owner,
+                    pos: q,
+                });
+                self.send_home(pi);
+            }
+        }
+        true
+    }
+
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
             tick: self.tick,
@@ -1072,6 +1372,8 @@ impl Sim {
                     shots: p.shots,
                     landed: p.landed,
                     target_hits: p.target_hits,
+                    mega_hits: p.mega_hits,
+                    power: p.power,
                 })
                 .collect(),
             bolts: self
@@ -1099,6 +1401,14 @@ impl Sim {
                 .map(|p| PickupSnap {
                     id: p.id,
                     pos: p.pos,
+                })
+                .collect(),
+            turrets: self
+                .turrets
+                .iter()
+                .map(|t| TurretSnap {
+                    aim: t.aim,
+                    off: t.off,
                 })
                 .collect(),
         }
@@ -1742,5 +2052,198 @@ mod tests {
             sim.step();
         }
         assert_eq!(sim.pickups().count(), 4, "the taken one comes back");
+    }
+
+    fn mega_sim(turrets: bool) -> Sim {
+        Sim::new(
+            9,
+            Rules {
+                mode: crate::level::GameMode::Megatarget,
+                pickup_pairs: 0,
+                turret_range: if turrets { 24.0 } else { 0.0 },
+                match_time: 1000.0,
+                ..Rules::default()
+            },
+        )
+    }
+
+    /// Player `id` (standing where it is) fires one bolt at `point`, then waits half a second.
+    fn fire_at(sim: &mut Sim, id: PlayerId, point: Vec3) {
+        let me = sim.player(id).unwrap();
+        let eye = me.eye();
+        let dir = (point - eye).normalize();
+        let cmd = PlayerCmd {
+            gun_hand: Some(Hand::Right),
+            muzzle: Pose {
+                pos: eye - me.feet,
+                rot: look_rot(dir),
+            },
+            fire: true,
+            ..Default::default()
+        };
+        sim.set_cmd(id, cmd);
+        sim.step();
+        sim.set_cmd(id, PlayerCmd { fire: false, ..cmd });
+        for _ in 0..30 {
+            sim.step();
+        }
+    }
+
+    fn walk(sim: &mut Sim, id: PlayerId, to: Vec3, secs: f32) {
+        for _ in 0..(secs / TICK) as usize {
+            let f = sim.player(id).unwrap().feet;
+            let d = Vec2::new(to.x - f.x, to.z - f.z);
+            let stick = if d.length() < 0.1 {
+                Vec2::ZERO
+            } else {
+                d.normalize()
+            };
+            sim.set_cmd(
+                id,
+                PlayerCmd {
+                    stick,
+                    ..Default::default()
+                },
+            );
+            sim.step();
+        }
+    }
+
+    fn pi_of(sim: &Sim, id: PlayerId) -> usize {
+        sim.players.iter().position(|p| p.id == id).unwrap()
+    }
+
+    #[test]
+    fn megatarget_needs_both_secondaries_and_sends_home() {
+        let mut sim = mega_sim(false);
+        let m = sim.level.mega.clone().unwrap();
+        assert!(sim.level.targets.is_empty(), "no team targets");
+        let a = sim.add_player("a", Some(Team::Red), false).unwrap();
+        let i = pi_of(&sim, a);
+        // Into the left pocket, then the right one, shooting each secondary twice.
+        for side in 0..2 {
+            let t = m.secondaries[side];
+            sim.players[i].feet = Vec3::new(t.centre().x + t.normal.x * 2.0, 0.0, 2.2);
+            fire_at(&mut sim, a, t.centre());
+            assert_eq!(sim.player(a).unwrap().mega_hits, (1u8 << (side + 1)) - 1);
+            let score = sim.scores;
+            fire_at(&mut sim, a, t.centre());
+            assert_eq!(sim.scores, score, "a second hit doesn't count");
+        }
+        assert_eq!(sim.scores, [200, 0]);
+        let p = sim.player(a).unwrap();
+        assert!(p.power.is_some_and(|t| t > 55.0), "{:?}", p.power);
+        // Through Red's forcefield into the room, then up at the megatarget.
+        sim.players[i].feet = m.shields[0].outside;
+        walk(&mut sim, a, m.shields[0].inside, 1.5);
+        let p = sim.player(a).unwrap();
+        assert!(p.alive() && m.in_room(p.feet), "{}", p.feet);
+        sim.drain_events();
+        fire_at(&mut sim, a, m.core.centre());
+        let ev = sim.drain_events();
+        assert!(
+            ev.iter()
+                .any(|e| matches!(e, SimEvent::MegaHit { by, .. } if *by == a))
+        );
+        let p = sim.player(a).unwrap();
+        assert_eq!(sim.scores, [1200, 0]);
+        assert!(p.power.is_none() && p.mega_hits == 0 && p.ammo == sim.rules.ammo);
+        assert!(
+            sim.level.reloads_at(p.feet),
+            "back on a spawn pad: {}",
+            p.feet
+        );
+    }
+
+    #[test]
+    fn forcefields_kill_and_block() {
+        let mut sim = mega_sim(false);
+        let m = sim.level.mega.clone().unwrap();
+        let a = sim.add_player("a", Some(Team::Blue), false).unwrap();
+        let i = pi_of(&sim, a);
+        // Bolts and sight stop at the forcefield.
+        let s = m.shields[1];
+        let from = s.outside + Vec3::Y * 1.5;
+        assert!(!sim.world.clear(from, s.inside + Vec3::Y * 1.5));
+        // Walking in without the power: tagged out.
+        sim.players[i].feet = s.outside;
+        walk(&mut sim, a, s.inside, 1.5);
+        assert!(!sim.player(a).unwrap().alive());
+        let ev = sim.drain_events();
+        assert!(ev.iter().any(|e| matches!(e, SimEvent::Shocked { .. })));
+        assert!(
+            ev.iter().any(
+                |e| matches!(e, SimEvent::TaggedOut { by: HAZARD, player, .. } if *player == a)
+            )
+        );
+        assert_eq!(sim.scores, [0, 0]);
+        // In the room when the time runs out: tagged out too.
+        let mut sim = mega_sim(false);
+        let b = sim.add_player("b", Some(Team::Red), false).unwrap();
+        let j = pi_of(&sim, b);
+        sim.players[j].feet = m.shields[0].inside;
+        sim.players[j].power = Some(0.2);
+        sim.players[j].mega_hits = 3;
+        for _ in 0..30 {
+            sim.step();
+        }
+        let p = sim.player(b).unwrap();
+        assert!(!p.alive() && p.power.is_none() && p.mega_hits == 0);
+        // Outside it, only the power goes.
+        let c = sim.add_player("c", Some(Team::Red), false).unwrap();
+        let k = pi_of(&sim, c);
+        sim.players[k].feet = m.shields[0].outside + Vec3::Z * 2.0;
+        sim.players[k].power = Some(0.2);
+        for _ in 0..30 {
+            sim.step();
+        }
+        let p = sim.player(c).unwrap();
+        assert!(p.alive() && p.power.is_none());
+    }
+
+    #[test]
+    fn turrets_shoot_everyone_until_switched_off() {
+        let mut sim = mega_sim(true);
+        let m = sim.level.mega.clone().unwrap();
+        let a = sim.add_player("a", Some(Team::Red), false).unwrap();
+        let i = pi_of(&sim, a);
+        let t = m.turrets[0];
+        let spot = Vec3::new(t.pos.x + 7.0, 0.0, t.pos.z);
+        sim.players[i].feet = spot;
+        sim.drain_events();
+        for _ in 0..(2.5 / TICK) as usize {
+            sim.step();
+        }
+        let ev = sim.drain_events();
+        assert!(ev.iter().any(|e| matches!(e, SimEvent::TurretFired { .. })));
+        assert!(
+            ev.iter()
+                .any(|e| matches!(e, SimEvent::Hit { player, by: HAZARD, .. } if *player == a)),
+            "{ev:?}"
+        );
+        // Both turrets over this doorway switched off: no more shots for a while.
+        for _ in 0..(3.2 / TICK) as usize {
+            sim.step();
+        }
+        sim.players[i].hits = 0;
+        sim.players[i].cooldown = 0.0;
+        for k in 0..2 {
+            fire_at(&mut sim, a, m.turrets[k].switch.centre());
+            sim.players[i].cooldown = 0.0;
+        }
+        assert!(sim.turrets[0].off > 10.0 && sim.turrets[1].off > 10.0);
+        sim.drain_events();
+        for _ in 0..(5.0 / TICK) as usize {
+            sim.step();
+        }
+        assert!(
+            !sim.drain_events()
+                .iter()
+                .any(|e| matches!(e, SimEvent::TurretFired { turret: 0 | 1, .. }))
+        );
+        for _ in 0..(11.0 / TICK) as usize {
+            sim.step();
+        }
+        assert_eq!(sim.turrets[0].off, 0.0);
     }
 }

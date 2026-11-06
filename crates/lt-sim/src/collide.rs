@@ -254,6 +254,9 @@ pub struct World {
     pub colliders: Vec<Collider>,
     /// The moving pieces' colliders where they are now (`set_dynamic`).
     pub dynamic: Vec<Collider>,
+    /// Forcefields: they stop rays (bolts, grenades, sight lines) but not bodies (whoever walks
+    /// into one is dealt with by the sim).
+    pub shields: Vec<Collider>,
     origin: Vec2,
     cell: f32,
     dims: (usize, usize),
@@ -279,6 +282,7 @@ impl World {
         let mut w = World {
             colliders,
             dynamic: Vec::new(),
+            shields: Vec::new(),
             origin: min,
             cell,
             dims: (nx, nz),
@@ -348,7 +352,11 @@ impl World {
         self.near(Vec2::new(lo.x, lo.z), Vec2::new(hi.x, hi.z), &mut idx);
         let mut best: Option<(f32, Vec3)> = None;
         let near = idx.iter().map(|&i| &self.colliders[i as usize]);
-        for c in near.chain(self.near_dynamic(Vec2::new(lo.x, lo.z), Vec2::new(hi.x, hi.z))) {
+        let shields = self.shields.iter();
+        for c in near
+            .chain(self.near_dynamic(Vec2::new(lo.x, lo.z), Vec2::new(hi.x, hi.z)))
+            .chain(shields)
+        {
             let lim = best.map_or(len, |b| b.0);
             if let Some((t, n)) = c.ray(from, dir, lim) {
                 best = Some((t, n));

@@ -5,6 +5,9 @@
 //! `SPATIAL_SCALE` metres' reciprocal: full volume up to 1 / SPATIAL_SCALE metres, a quarter at
 //! twice that. (At the default 1 m a grenade bouncing 10 m away was 40 dB down.) Team target
 //! hits are heard everywhere.
+//!
+//! Megatarget mode: a player who may enter the megatarget's room ticks like a clock where they
+//! are (faster in the last ten seconds), and the megatarget hit plays a fanfare for everyone.
 
 use std::collections::HashMap;
 
@@ -39,7 +42,17 @@ struct Sounds {
     bleep: Handle<AudioSource>,
     bleep_tag: Handle<AudioSource>,
     steps: [Handle<AudioSource>; 3],
+    mega_win: Handle<AudioSource>,
+    tick: Handle<AudioSource>,
+    power_up: Handle<AudioSource>,
+    turret_fire: Handle<AudioSource>,
+    turret_down: Handle<AudioSource>,
+    zap: Handle<AudioSource>,
 }
+
+/// Seconds until each powered player's next tick.
+#[derive(Resource, Default)]
+struct Ticking(HashMap<PlayerId, f32>);
 
 #[derive(Resource, Default)]
 struct Walked {
@@ -55,11 +68,12 @@ pub struct SoundPlugin;
 impl Plugin for SoundPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Walked>()
+            .init_resource::<Ticking>()
             .insert_resource(DefaultSpatialScale(SpatialScale::new(SPATIAL_SCALE)))
             .add_systems(Startup, load)
             .add_systems(
                 Update,
-                (play_events, footsteps).run_if(resource_exists::<Game>),
+                (play_events, footsteps, ticking).run_if(resource_exists::<Game>),
             );
     }
 }
@@ -86,6 +100,12 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
         bleep: s("score_bleep"),
         bleep_tag: s("score_tag"),
         steps: [s("footstep_1"), s("footstep_2"), s("footstep_3")],
+        mega_win: s("mega_win"),
+        tick: s("power_tick"),
+        power_up: s("power_up"),
+        turret_fire: s("turret_fire"),
+        turret_down: s("turret_down"),
+        zap: s("shield_zap"),
     });
 }
 
@@ -140,7 +160,11 @@ fn play_events(
             SimEvent::TaggedOut { player, by, .. } if Some(by) == me && enemy(player) => {
                 play(&mut commands, gain, &sounds.bleep_tag, None, 0.8, 1.0)
             }
-            SimEvent::TargetHit { by, .. } if Some(by) == me => {
+            SimEvent::TargetHit { by, .. }
+            | SimEvent::SecondaryHit { by, .. }
+            | SimEvent::TurretOff { by, .. }
+                if Some(by) == me =>
+            {
                 play(&mut commands, gain, &sounds.bleep, None, 0.8, 1.0)
             }
             _ => {}
@@ -211,6 +235,72 @@ fn play_events(
                 // Across the whole arena, and from where it is.
                 play(&mut commands, gain, &sounds.target, None, 0.6, 1.0);
                 play(&mut commands, gain, &sounds.target, Some(pos), 1.0, 1.0);
+            }
+            SimEvent::SecondaryHit {
+                by, pos, charged, ..
+            } => {
+                let mine = Some(by) == me;
+                play(&mut commands, gain, &sounds.target, Some(pos), 1.0, 1.15);
+                if charged {
+                    play(
+                        &mut commands,
+                        gain,
+                        &sounds.power_up,
+                        (!mine).then_some(pos),
+                        1.0,
+                        1.0,
+                    );
+                }
+            }
+            SimEvent::MegaHit { .. } => {
+                play(&mut commands, gain, &sounds.mega_win, None, 1.0, 1.0);
+            }
+            SimEvent::PowerLost { player } if Some(player) == me => {
+                play(&mut commands, gain, &sounds.turret_down, None, 0.7, 1.3)
+            }
+            SimEvent::TurretFired { pos, .. } => play(
+                &mut commands,
+                gain,
+                &sounds.turret_fire,
+                Some(pos),
+                1.0,
+                1.0,
+            ),
+            SimEvent::TurretOff { pos, .. } => play(
+                &mut commands,
+                gain,
+                &sounds.turret_down,
+                Some(pos),
+                1.2,
+                1.0,
+            ),
+            SimEvent::TurretOn { turret } => {
+                if let Some(t) = game
+                    .level
+                    .mega
+                    .as_ref()
+                    .and_then(|m| m.turrets.get(turret as usize))
+                {
+                    play(
+                        &mut commands,
+                        gain,
+                        &sounds.reload_done,
+                        Some(t.pos),
+                        1.0,
+                        0.6,
+                    )
+                }
+            }
+            SimEvent::Shocked { player, pos } => {
+                let mine = Some(player) == me;
+                play(
+                    &mut commands,
+                    gain,
+                    &sounds.zap,
+                    (!mine).then_some(pos),
+                    1.0,
+                    1.0,
+                )
             }
             SimEvent::GrenadeThrown { player, pos } => {
                 let mine = Some(player) == me;
@@ -291,4 +381,48 @@ fn footsteps(
     walked
         .last
         .retain(|id, _| game.snap.players.iter().any(|p| p.id == *id));
+}
+
+/// Megatarget mode: every player who may enter the megatarget's room ticks where they are,
+/// once a second, four times a second in the last ten (higher, too).
+fn ticking(
+    mut commands: Commands,
+    time: Res<Time>,
+    game: Res<Game>,
+    sounds: Res<Sounds>,
+    mut ticking: ResMut<Ticking>,
+    settings: Option<Res<Settings>>,
+) {
+    let gain = settings.map_or(1.0, |s| s.sound_volume);
+    let dt = time.delta_secs();
+    let ticking = &mut ticking.0;
+    for p in &game.snap.players {
+        let Some(left) = p.power.filter(|_| p.respawn.is_none()) else {
+            ticking.remove(&p.id);
+            continue;
+        };
+        let next = ticking.entry(p.id).or_insert(0.0);
+        *next -= dt;
+        if *next > 0.0 {
+            continue;
+        }
+        let hurry = left < 10.0;
+        *next = if left < 5.0 {
+            0.25
+        } else if hurry {
+            0.5
+        } else {
+            1.0
+        };
+        let mine = Some(p.id) == game.me;
+        play(
+            &mut commands,
+            gain,
+            &sounds.tick,
+            (!mine).then_some(p.feet + Vec3::Y * 1.2),
+            if mine { 0.7 } else { 1.0 },
+            if hurry { 1.25 } else { 1.0 },
+        );
+    }
+    ticking.retain(|id, _| game.snap.players.iter().any(|p| p.id == *id));
 }

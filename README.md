@@ -20,11 +20,14 @@ flat screen otherwise (or when the headset can't be used).
 Other flags: `--name NAME`, `--host [PORT]` (play and let others join), `--connect HOST[:PORT]`,
 `--difficulty easy|normal|hard` (the bots, also in the start menu), `--arena small|medium|large|random`
 (the arenas' size in local and hosted games, also in the start menu; random picks one for every
-match), `--left-handed` (VR: the
+match), `--mode classic|megatarget` (what local and hosted games are played for, also in the start
+menu), `--left-handed` (VR: the
 holster on the left hip; or `LT_LEFT_HANDED=1`), `--autopilot` (a bot plays you, for testing),
 `--match-time S` (local games), `--screenshot FILE --after 5,10`, `--quit-after S`.
 Testing: `LT_DEV="6:menu,8:leave,10:play-hard,14:hit,20:next"` scripts menu actions and hits (`options`
-opens the options screen, `arc` shows the throw arc, `target` hits a team target),
+opens the options screen, `arc` shows the throw arc, `target` hits a team target; Megatarget mode:
+`power` hits both secondary targets, `warp-door`, `warp-room`, `warp-turret` and `warp-pocket` move
+you there, `yaw=DEG` and `pitch=DEG` turn the flat screen's view),
 `LT_VR_MENU=1` opens the VR menu, `LT_VR_FAKE_HANDS=1` fakes controllers, `LT_HOLSTER=x,y,z`
 moves the holster (from the eyes; default `0.23,-0.58,-0.07`). `LT_GUN_TILT=DEG` turns the
 blaster nose down in the hand by that much from the controller's aim (default 15), for a more
@@ -38,6 +41,21 @@ glowing cores hanging from a roof over the upper level, deep in each team's half
 walled on three sides on both floors, with chevrons running in towards them: they can only be
 hit from the rear quarter of the arena behind them, from the upper level around them or from
 the ground below and behind them.
+**Megatarget mode** (`--mode megatarget`). The arena is half as big again each way and has no
+team targets. Two secondary targets hang at the arena's left and right edges, across the centre
+line, on the back of a wall two storeys high: to hit one you have to get into the pocket behind
+that wall through a doorway at either end of it. Each is guarded by two turrets on the wall's
+outer face, above the doorways, which shoot at every player in front of them (16 m); hitting the
+yellow deactivation target above a turret switches it off for 15 s. In the middle stands a
+closed room two storeys high with a doorway on each team's side, each closed by a shimmering
+forcefield that stops bolts and grenades and tags out anyone who walks into it. Hit both
+secondary targets (100 points each) and for 60 s you may pass through the forcefields (you tick
+like a clock meanwhile, faster in the last 10 s, and everyone hears it): inside, the megatarget
+hangs from the ceiling over a shaft of light, with chevrons climbing the walls towards it. Hitting
+it scores 1000 points and sends you straight back to your base with full health and shots. Tagged
+out, or out of time, you start over; out of time inside the room (or in its doorway), you are
+tagged out.
+
 Matches last 10 minutes. Then the results show (each player's
 score, tags, times tagged out, accuracy and target hits); a local game goes on to the next
 match on a new arena after 15 s (or at once with Next match), a server opens its next arena
@@ -90,9 +108,9 @@ the saved volumes too).
 |---|---|
 | `crates/lt-sim` | The game without a renderer: rules (`rules.rs`), arena generation (`level.rs`), modular kit dimensions (`kit.rs`), collision (`collide.rs`), the simulation (`sim.rs`, 60 Hz, authoritative), bots (`bots.rs`: the `Controller` trait and the placeholder `WanderBot`). |
 | `crates/lt-net` | UDP transport (reliable and unreliable channels; ported from stealth-mission-89), protocol (CBOR + LZ4), server and client sessions, master server reporting. |
-| `crates/lt-server` | Dedicated server: `lt-server --port 27420 --bots 8 --difficulty normal --name NAME [--arena small|medium|large|random] [--seed N] [--private] [--master URL]`. |
+| `crates/lt-server` | Dedicated server: `lt-server --port 27420 --bots 8 --difficulty normal --name NAME [--arena small|medium|large|random] [--mode classic|megatarget] [--seed N] [--private] [--master URL]`. |
 | `crates/lt-master`, `lt-master-proto` | Master server list (REST/JSON): `lt-master --bind 0.0.0.0:27500`, with deploy files in `crates/lt-master/deploy`. |
-| `src/` | The Bevy client: `game.rs` (local sim or connection, stepped in `FixedUpdate`, client movement prediction), `arena.rs` (kit pieces merged into chunk meshes), `materials.rs` + `assets/shaders/neon.wgsl` (neon accents and glow halos), `actors.rs` (players, bolts, grenades, sparks), `desktop.rs`, `vr.rs` (shared VR input, holster, haptics), `vrui.rs` (VR menus, end panel, hit flash; text from `segtext.rs`), `lobby.rs` (VR start menu scene, fireworks), `xr.rs` (bevy_mod_openxr), `glvr/` (foveated GL renderer), `audio.rs`, `hud.rs`, `sevenseg.rs`, `menu.rs`, `pause.rs` (in-game menu), `endscreen.rs` (results), `session.rs` (next match, leaving a game). |
+| `src/` | The Bevy client: `game.rs` (local sim or connection, stepped in `FixedUpdate`, client movement prediction), `arena.rs` (kit pieces merged into chunk meshes), `materials.rs` + `assets/shaders/neon.wgsl` (neon accents and glow halos), `actors.rs` (players, bolts, grenades, sparks), `desktop.rs`, `vr.rs` (shared VR input, holster, haptics), `vrui.rs` (VR menus, end panel, hit flash; text from `segtext.rs`), `lobby.rs` (VR start menu scene, fireworks), `xr.rs` (bevy_mod_openxr), `glvr/` (foveated GL renderer), `audio.rs`, `hud.rs`, `sevenseg.rs`, `targets.rs` (team targets), `mega.rs` (the Megatarget mode's pieces), `menu.rs`, `pause.rs` (in-game menu), `endscreen.rs` (results), `session.rs` (next match, leaving a game). |
 | `tools/models` | Blender build scripts for the kit, blaster, grenade, avatars and reload station (`build_all.sh`, conventions in its README). |
 | `tools/gen_sfx.py` | Sound synthesis (numpy + ffmpeg): `python3 tools/gen_sfx.py`. |
 | `tools/gen_spectrum.py` | The music's precomputed spectrum: `python3 tools/gen_spectrum.py`. |

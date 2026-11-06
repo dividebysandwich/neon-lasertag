@@ -17,7 +17,7 @@
 
 use bevy::prelude::*;
 use lt_sim::bots::Difficulty;
-use lt_sim::level::SizeChoice;
+use lt_sim::level::{GameMode, SizeChoice};
 use lt_sim::{PlayerId, SimEvent, Team};
 
 use crate::assets::MeshData;
@@ -46,6 +46,7 @@ impl Plugin for VrUiPlugin {
                     bots: args.bots,
                     difficulty: args.difficulty,
                     arena: args.arena,
+                    mode: args.game_mode,
                 });
             })
             .add_systems(
@@ -87,6 +88,7 @@ enum Act {
     Bots(i32),
     Skill(Difficulty),
     Arena(SizeChoice),
+    Mode(GameMode),
 }
 
 /// The start menu's choices (kept for the next time it shows).
@@ -95,6 +97,7 @@ pub struct LobbyChoices {
     pub bots: usize,
     pub difficulty: Difficulty,
     pub arena: SizeChoice,
+    pub mode: GameMode,
 }
 
 struct Button {
@@ -360,7 +363,7 @@ fn build_menu(b: &mut Builder, local: bool) -> Vec<Button> {
 /// The start menu: the title, Play vs bots and Host game, the bots' number and skill, the
 /// arenas' size (the chosen ones lit) and Quit.
 fn build_lobby(b: &mut Builder, choices: &LobbyChoices) -> Vec<Button> {
-    let size = Vec2::new(1.1, 0.98);
+    let size = Vec2::new(1.1, 1.12);
     b.backing(size);
     let top = size.y / 2.0;
     let (red, red_glow) = (b.mats.team[0].clone(), b.mats.glow[0].clone());
@@ -451,10 +454,16 @@ fn build_lobby(b: &mut Builder, choices: &LobbyChoices) -> Vec<Button> {
         .map(|&a| (a.name().to_uppercase(), Act::Arena(a), a == choices.arena))
         .collect();
     row(b, arenas, top - 0.76, 0.24);
+    label(b, "MODE", top - 0.85);
+    let modes = GameMode::ALL
+        .iter()
+        .map(|&m| (m.name().to_uppercase(), Act::Mode(m), m == choices.mode))
+        .collect();
+    row(b, modes, top - 0.92, 0.42);
     buttons.push(b.button(
         "QUIT",
         Act::Quit,
-        Vec2::new(0.0, top - 0.88),
+        Vec2::new(0.0, top - 1.03),
         Vec2::new(0.4, 0.09),
     ));
     buttons
@@ -875,11 +884,13 @@ fn pointer(
                 bots: choices.bots,
                 difficulty: choices.difficulty,
                 arena: choices.arena,
+                mode: choices.mode,
             });
         }
         Act::Bots(d) => choices.bots = (choices.bots as i32 + d).clamp(0, 15) as usize,
         Act::Skill(d) => choices.difficulty = d,
         Act::Arena(a) => choices.arena = a,
+        Act::Mode(m) => choices.mode = m,
     }
 }
 

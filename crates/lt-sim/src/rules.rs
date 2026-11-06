@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::level::ArenaSize;
+use crate::level::{ArenaSize, GameMode};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -43,8 +43,25 @@ pub struct Rules {
     pub grenade_max_speed: f32,
     /// Match length (seconds).
     pub match_time: f32,
-    /// The arena's size (with the seed, all a client needs to build the same arena).
+    /// The arena's size (with the seed and the mode, all a client needs to build the same
+    /// arena).
     pub arena: ArenaSize,
+    pub mode: GameMode,
+    /// Megatarget mode: points for a secondary target hit that counts (the shooter's first on
+    /// it since starting over) and for the megatarget.
+    pub secondary_points: u32,
+    pub megatarget_points: u32,
+    /// Megatarget mode: seconds to get into the megatarget's room after hitting both secondary
+    /// targets.
+    pub power_time: f32,
+    /// Turrets: seconds off after their deactivation target is hit, seconds between shots,
+    /// reach (m), aiming error (radians, standard deviation) and turning speed (radians a
+    /// second).
+    pub turret_off: f32,
+    pub turret_every: f32,
+    pub turret_range: f32,
+    pub turret_spread: f32,
+    pub turret_turn: f32,
 }
 
 impl Default for Rules {
@@ -76,6 +93,15 @@ impl Default for Rules {
             grenade_max_speed: 16.0,
             match_time: 600.0,
             arena: ArenaSize::Small,
+            mode: GameMode::Classic,
+            secondary_points: 100,
+            megatarget_points: 1000,
+            power_time: 60.0,
+            turret_off: 15.0,
+            turret_every: 0.6,
+            turret_range: 16.0,
+            turret_spread: 0.035,
+            turret_turn: 2.2,
         }
     }
 }

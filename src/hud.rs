@@ -30,6 +30,9 @@ struct Pip(u8);
 struct HudRoot;
 #[derive(Component)]
 struct DifficultyText;
+/// Megatarget mode: the local player's progress (bottom middle).
+#[derive(Component)]
+struct MegaText;
 /// A piece of hit arc `mark` (of `MARKS`), `piece` (of `PIECES`).
 #[derive(Component)]
 struct ArcPiece {
@@ -66,7 +69,7 @@ impl Plugin for HudPlugin {
             .add_systems(Update, reset.run_if(resource_added::<Game>))
             .add_systems(
                 Update,
-                (events, update, hit_arcs)
+                (events, update, hit_arcs, mega_status)
                     .chain()
                     .run_if(resource_exists::<Game>),
             )
@@ -101,6 +104,20 @@ fn shown(
 pub fn shooter_pos(game: &Game, by: PlayerId) -> Option<Vec3> {
     if Some(by) == game.me {
         return None;
+    }
+    if by == lt_sim::HAZARD {
+        // A turret: the nearest switched on.
+        let me = game
+            .me
+            .and_then(|id| game.snap.players.iter().find(|p| p.id == id))?;
+        let m = game.level.mega.as_ref()?;
+        return m
+            .turrets
+            .iter()
+            .zip(&game.snap.turrets)
+            .filter(|(_, st)| st.off <= 0.0)
+            .map(|(t, _)| t.pos)
+            .min_by(|a, b| a.distance(me.feet).total_cmp(&b.distance(me.feet)));
     }
     let p = game.snap.players.iter().find(|p| p.id == by)?;
     Some(p.feet + p.head.pos)
@@ -224,6 +241,25 @@ fn spawn(mut commands: Commands) {
                 TextLayout::justify(Justify::Center),
             ));
         });
+    // Bottom middle: the Megatarget mode's progress.
+    commands
+        .spawn((
+            HudRoot,
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(18.0),
+                width: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+        ))
+        .with_children(|p| {
+            p.spawn((
+                MegaText,
+                text("", 24.0, Color::srgb(1.0, 0.55, 0.15)),
+                TextLayout::justify(Justify::Center),
+            ));
+        });
     // Bottom left: hits left and the grenade.
     commands.spawn((
         HudRoot,
@@ -279,7 +315,9 @@ fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMu
     for GameEvent(e) in events.read() {
         match *e {
             SimEvent::TaggedOut { player, by, .. } => {
-                let line = if player == by {
+                let line = if by == lt_sim::HAZARD {
+                    format!("{} got zapped", game.name_of(player))
+                } else if player == by {
                     format!("{} tagged themself out", game.name_of(player))
                 } else {
                     format!("{} tagged out {}", game.name_of(by), game.name_of(player))
@@ -300,6 +338,25 @@ fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMu
                         t.unwrap_or(Team::Red)
                     ),
                     3.0,
+                ));
+            }
+            SimEvent::SecondaryHit { by, charged, .. } => {
+                let who = game.name_of(by);
+                feed.lines
+                    .push((format!("{who} hit a secondary target +100"), 3.0));
+                if charged {
+                    feed.lines
+                        .push((format!("{who} may enter the megatarget room!"), 5.0));
+                }
+            }
+            SimEvent::MegaHit { by, .. } => {
+                feed.lines.push((
+                    format!(
+                        "{} HIT THE MEGATARGET +{}",
+                        game.name_of(by),
+                        game.rules.megatarget_points
+                    ),
+                    8.0,
                 ));
             }
             SimEvent::Hit {
@@ -411,6 +468,15 @@ fn update(
             Some(p) if p.ammo == 0 => {
                 "OUT OF AMMO\nrefill at your base or a white station".to_string()
             }
+            Some(p) if p.power.is_some() => {
+                let left = p.power.unwrap_or(0.0).ceil();
+                let inside = game.level.mega.as_ref().is_some_and(|m| m.in_room(p.feet));
+                if inside {
+                    format!("SHOOT THE MEGATARGET ABOVE YOU!  {left:.0}")
+                } else {
+                    format!("GET INTO THE MEGATARGET ROOM  {left:.0}")
+                }
+            }
             _ => String::new(),
         };
     }
@@ -520,4 +586,41 @@ fn hit_arcs(
         let edge = 1.0 - (k.abs() / ((PIECES as f32) / 2.0)).powi(2);
         bg.0 = Color::srgba(1.0, 0.08, 0.05, 0.9 * fade.sqrt() * edge);
     }
+}
+
+/// Megatarget mode: which secondary targets the local player has hit, or the time left to get
+/// into the megatarget's room.
+fn mega_status(game: Res<Game>, mut q: Query<(&mut Text, &mut TextColor), With<MegaText>>) {
+    let Ok((mut t, mut colour)) = q.single_mut() else {
+        return;
+    };
+    let me = game
+        .me
+        .and_then(|id| game.snap.players.iter().find(|p| p.id == id));
+    let (want, c) = match me {
+        Some(p) if game.level.mega.is_some() && p.respawn.is_none() => match p.power {
+            Some(left) => (
+                format!("MEGATARGET ROOM OPEN  {:.0} s", left.ceil()),
+                Color::srgb(0.3, 1.0, 0.4),
+            ),
+            None => {
+                let mark = |i: u8| {
+                    if p.mega_hits & (1 << i) != 0 {
+                        "HIT"
+                    } else {
+                        "---"
+                    }
+                };
+                (
+                    format!("secondary targets   left {}   right {}", mark(0), mark(1)),
+                    Color::srgb(1.0, 0.55, 0.15),
+                )
+            }
+        },
+        _ => (String::new(), Color::WHITE),
+    };
+    if t.0 != want {
+        t.0 = want;
+    }
+    colour.0 = c;
 }
