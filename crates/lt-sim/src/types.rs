@@ -308,6 +308,16 @@ pub enum SimEvent {
         player: PlayerId,
         pos: Vec3,
     },
+    /// A player helped tag `victim` out (`Rules::assist_points`).
+    Assist {
+        player: PlayerId,
+        victim: PlayerId,
+    },
+    /// A player tagged `victim` out near their own targets (`Rules::defend_points`).
+    Defended {
+        player: PlayerId,
+        victim: PlayerId,
+    },
     TargetHit {
         target: u8,
         by: PlayerId,

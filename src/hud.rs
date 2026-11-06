@@ -339,6 +339,26 @@ fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMu
                 };
                 feed.lines.push((line, 6.0));
             }
+            SimEvent::Assist { player, .. } => {
+                feed.lines.push((
+                    format!(
+                        "{} assist +{}",
+                        game.name_of(player),
+                        game.rules.assist_points
+                    ),
+                    3.0,
+                ));
+            }
+            SimEvent::Defended { player, .. } => {
+                feed.lines.push((
+                    format!(
+                        "{} defended +{}",
+                        game.name_of(player),
+                        game.rules.defend_points
+                    ),
+                    3.0,
+                ));
+            }
             SimEvent::TargetHit { by, target, .. } => {
                 let t = game
                     .level

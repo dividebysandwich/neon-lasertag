@@ -1,5 +1,5 @@
 //! The end of a match on the flat screen: the winner, the teams' scores and a table per team
-//! of its players by score (tags, times tagged out, accuracy, target hits), one's own row
+//! of its players by score (tags, times tagged out, assists, accuracy, target hits), one's own row
 //! highlighted. Local games go on to the next match after a while or when asked; remote ones
 //! when the server sends the next arena. (VR's panel is in src/vrui.rs; both use
 //! `standings`.)
@@ -21,6 +21,7 @@ pub struct Row {
     pub score: u32,
     pub tags: u32,
     pub tagged: u32,
+    pub assists: u32,
     /// Bolts that hit an enemy, in percent of those fired (None: never fired).
     pub accuracy: Option<u32>,
     pub target_hits: u32,
@@ -37,6 +38,7 @@ pub fn standings(game: &Game) -> [Vec<Row>; 2] {
             score: p.score,
             tags: p.tags,
             tagged: p.tagged,
+            assists: p.assists,
             accuracy: (p.shots > 0).then(|| (p.landed * 100 + p.shots / 2) / p.shots),
             target_hits: p.target_hits,
             me: Some(p.id) == game.me,
@@ -93,7 +95,7 @@ impl Plugin for EndScreenPlugin {
 const BUTTON: Color = Color::srgb(0.08, 0.08, 0.14);
 const BUTTON_HOVER: Color = Color::srgb(0.16, 0.12, 0.3);
 /// Column widths: name, score, tags, tagged, accuracy, targets.
-const COLUMNS: [f32; 6] = [190.0, 76.0, 64.0, 84.0, 104.0, 88.0];
+const COLUMNS: [f32; 7] = [160.0, 72.0, 56.0, 72.0, 76.0, 92.0, 76.0];
 
 fn label(s: impl Into<String>, size: f32, color: Color) -> impl Bundle {
     (
@@ -108,7 +110,7 @@ fn label(s: impl Into<String>, size: f32, color: Color) -> impl Bundle {
 
 fn row(
     p: &mut ChildSpawnerCommands,
-    cells: [String; 6],
+    cells: [String; 7],
     color: Color,
     size: f32,
     highlight: Option<Color>,
@@ -170,7 +172,10 @@ fn table(p: &mut ChildSpawnerCommands, team: Team, score: u32, rows: &[Row]) {
         let grey = Color::srgb(0.6, 0.6, 0.7);
         row(
             t,
-            ["player", "score", "tags", "tagged", "accuracy", "targets"].map(String::from),
+            [
+                "player", "score", "tags", "tagged", "assists", "accuracy", "targets",
+            ]
+            .map(String::from),
             grey,
             16.0,
             None,
@@ -181,6 +186,7 @@ fn table(p: &mut ChildSpawnerCommands, team: Team, score: u32, rows: &[Row]) {
                 r.score.to_string(),
                 r.tags.to_string(),
                 r.tagged.to_string(),
+                r.assists.to_string(),
                 r.accuracy.map_or("-".to_string(), |a| format!("{a}%")),
                 r.target_hits.to_string(),
             ];

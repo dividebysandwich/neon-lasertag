@@ -16,6 +16,12 @@ pub struct Rules {
     pub respawn_max: f32,
     pub tag_points: u32,
     pub target_points: u32,
+    /// Points for an assist (hitting an enemy whom a team mate tags out within `assist_window`
+    /// seconds) and for tagging out an enemy within `defend_range` metres of one's own targets.
+    pub assist_points: u32,
+    pub assist_window: f32,
+    pub defend_points: u32,
+    pub defend_range: f32,
     /// Least time between shots (three a second).
     pub fire_cooldown: f32,
     /// Shots in a full blaster.
@@ -108,6 +114,10 @@ impl Default for Rules {
             respawn_max: 15.0,
             tag_points: 100,
             target_points: 100,
+            assist_points: 50,
+            assist_window: 10.0,
+            defend_points: 25,
+            defend_range: 12.0,
             fire_cooldown: 1.0 / 3.0,
             ammo: 50,
             reload_rate: 25.0,

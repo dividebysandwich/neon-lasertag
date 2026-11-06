@@ -86,6 +86,16 @@ pub struct Player {
     pub landed: u32,
     /// Hits on the enemy team's targets.
     pub target_hits: u32,
+    /// Assists (an enemy this player hit tagged out by a team mate soon after), defends (an
+    /// enemy tagged out near one's own targets), and tag-outs with a grenade and while
+    /// cloaked.
+    pub assists: u32,
+    pub defends: u32,
+    pub grenade_tags: u32,
+    pub cloak_tags: u32,
+    /// The enemies who hit this player since they were last unhurt, and the tick of each one's
+    /// last hit.
+    pub hit_by: Vec<(PlayerId, u64)>,
     /// Ticks to ignore predicted positions (just respawned: the client hasn't seen it yet).
     pub claim_block: u32,
     /// Megatarget mode: the secondary targets hit since starting over (bit `side`), and once
@@ -401,6 +411,11 @@ pub struct PlayerSnap {
     pub shots: u32,
     pub landed: u32,
     pub target_hits: u32,
+    /// `Player::assists`, `defends`, `grenade_tags`, `cloak_tags`.
+    pub assists: u32,
+    pub defends: u32,
+    pub grenade_tags: u32,
+    pub cloak_tags: u32,
     /// Megatarget mode (`Player::mega_hits`, `Player::power`).
     pub mega_hits: u8,
     pub power: Option<f32>,
@@ -594,6 +609,11 @@ impl Sim {
             shots: 0,
             landed: 0,
             target_hits: 0,
+            assists: 0,
+            defends: 0,
+            grenade_tags: 0,
+            cloak_tags: 0,
+            hit_by: Vec::new(),
             claim_block: 0,
             mega_hits: 0,
             power: None,
@@ -972,6 +992,7 @@ impl Sim {
             // Healed on the team's own spawn pads.
             if p.hits > 0 && home == Some(p.team) {
                 p.hits = 0;
+                p.hit_by.clear();
                 self.events.push(SimEvent::Healed { player: p.id });
             }
 
@@ -1364,10 +1385,8 @@ impl Sim {
                 .copied();
             match target {
                 Some(t) if t.team != b.owner_team => {
-                    let points = self.rules.target_points;
-                    self.scores[b.owner_team.index()] += points;
+                    self.award(b.owner_team, Some(b.owner), self.rules.target_points);
                     if let Some(p) = self.player_mut(b.owner) {
-                        p.score += points;
                         p.target_hits += 1;
                     }
                     if let Some(h) = self.last_target_hit.get_mut(t.id as usize) {
@@ -1430,6 +1449,12 @@ impl Sim {
         p.cooldown = hit_cooldown;
         p.decloak = self.rules.cloak_flash;
         let (id, team, feet, hits) = (p.id, p.team, p.feet, p.hits);
+        // Who hit them, for assists.
+        if b.owner != HAZARD && b.owner_team != team {
+            let tick = self.tick;
+            p.hit_by.retain(|h| h.0 != b.owner);
+            p.hit_by.push((b.owner, tick));
+        }
         // Only team bolts at an enemy count as landed (grenade bolts hit anyone).
         if b.team.is_some_and(|t| t != team)
             && let Some(s) = self.player_mut(b.owner)
@@ -1457,13 +1482,65 @@ impl Sim {
                 pos: at,
                 respawn_in: wait,
             });
+            let hit_by = std::mem::take(&mut self.players[pi].hit_by);
             if b.owner_team != team && b.owner != HAZARD {
-                self.scores[b.owner_team.index()] += self.rules.tag_points;
-                let points = self.rules.tag_points;
+                self.award(b.owner_team, Some(b.owner), self.rules.tag_points);
+                let grenade = b.team.is_none();
                 if let Some(s) = self.player_mut(b.owner) {
-                    s.score += points;
                     s.tags += 1;
+                    if grenade {
+                        s.grenade_tags += 1;
+                    }
+                    if s.cloak > 0.0 {
+                        s.cloak_tags += 1;
+                    }
                 }
+                // Defending: tagged near the tagger's own targets (Megatarget mode: their
+                // team's doorway into the megatarget's room).
+                let range = self.rules.defend_range;
+                let near = |c: Vec3| c.distance(feet) < range;
+                let defended = match &self.level.mega {
+                    None => self
+                        .level
+                        .targets
+                        .iter()
+                        .any(|t| t.team == b.owner_team && near(t.centre())),
+                    Some(m) => m
+                        .shields
+                        .iter()
+                        .any(|s| Team::of_z(s.outside.z) == b.owner_team && near(s.outside)),
+                };
+                if defended {
+                    self.award(b.owner_team, Some(b.owner), self.rules.defend_points);
+                    if let Some(s) = self.player_mut(b.owner) {
+                        s.defends += 1;
+                    }
+                    self.events.push(SimEvent::Defended {
+                        player: b.owner,
+                        victim: id,
+                    });
+                }
+            }
+            // Assists: everyone else of the other team who hit them a moment ago.
+            let since = self
+                .tick
+                .saturating_sub((self.rules.assist_window / TICK) as u64);
+            for (helper, tick) in hit_by {
+                let Some(h) = self.player(helper) else {
+                    continue;
+                };
+                if helper == b.owner || h.team == team || tick < since {
+                    continue;
+                }
+                let helper_team = h.team;
+                self.award(helper_team, Some(helper), self.rules.assist_points);
+                if let Some(h) = self.player_mut(helper) {
+                    h.assists += 1;
+                }
+                self.events.push(SimEvent::Assist {
+                    player: helper,
+                    victim: id,
+                });
             }
         }
     }
@@ -1558,6 +1635,14 @@ impl Sim {
                 self.grenades[i] = g;
                 i += 1;
             }
+        }
+    }
+
+    /// Points for a team, and for one of its players.
+    fn award(&mut self, team: Team, player: Option<PlayerId>, points: u32) {
+        self.scores[team.index()] += points;
+        if let Some(p) = player.and_then(|id| self.player_mut(id)) {
+            p.score += points;
         }
     }
 
@@ -1817,6 +1902,7 @@ impl Sim {
         let wait = self.respawn_time(team, feet);
         let p = &mut self.players[pi];
         p.hits = self.rules.hits_to_tag;
+        p.hit_by.clear();
         p.respawn = Some(wait);
         p.tagged += 1;
         p.cmd.fire = false;
@@ -1905,10 +1991,9 @@ impl Sim {
         } else {
             self.rules.megatarget_points
         };
-        self.scores[b.owner_team.index()] += points;
+        self.award(b.owner_team, Some(b.owner), points);
         let power_time = self.rules.power_time;
         let p = &mut self.players[pi];
-        p.score += points;
         p.target_hits += 1;
         match side {
             Some(i) => {
@@ -1968,6 +2053,10 @@ impl Sim {
                     shots: p.shots,
                     landed: p.landed,
                     target_hits: p.target_hits,
+                    assists: p.assists,
+                    defends: p.defends,
+                    grenade_tags: p.grenade_tags,
+                    cloak_tags: p.cloak_tags,
                     mega_hits: p.mega_hits,
                     power: p.power,
                     rapid: p.rapid,
@@ -2458,6 +2547,76 @@ mod tests {
         sim.players[0].cmd.yaw = yaw_of(-n);
         let near = sim.barrier_for(0);
         assert!((near.centre - sim.players[0].feet).with_y(0.0).length() < 0.8);
+    }
+
+    #[test]
+    fn assists_and_defends_score() {
+        let (mut sim, a, b) = duel();
+        let a2 = sim.add_player("a2", Some(Team::Red), false).unwrap();
+        let bolt = |owner| Bolt {
+            id: 1,
+            owner,
+            owner_team: Team::Red,
+            team: Some(Team::Red),
+            pos: Vec3::ZERO,
+            vel: Vec3::ZERO,
+            life: 1.0,
+            extra: BoltExtra::default(),
+        };
+        let bi = pi_of(&sim, b);
+        // Far from every target.
+        sim.players[bi].feet = Vec3::ZERO;
+        sim.hit_player(bi, &bolt(a), Vec3::ZERO);
+        for by in [a2, a2] {
+            sim.players[bi].cooldown = 0.0;
+            sim.hit_player(bi, &bolt(by), Vec3::ZERO);
+        }
+        assert!(!sim.player(b).unwrap().alive());
+        let evs = sim.drain_events();
+        assert!(evs.iter().any(
+            |e| matches!(e, SimEvent::Assist { player, victim } if *player == a && *victim == b)
+        ));
+        assert!(!evs.iter().any(|e| matches!(e, SimEvent::Defended { .. })));
+        let (pa, pa2) = (sim.player(a).unwrap(), sim.player(a2).unwrap());
+        assert_eq!((pa.assists, pa.score), (1, sim.rules.assist_points));
+        assert_eq!(
+            (pa2.tags, pa2.assists, pa2.score),
+            (1, 0, sim.rules.tag_points)
+        );
+        assert_eq!(
+            sim.scores[0],
+            sim.rules.tag_points + sim.rules.assist_points
+        );
+
+        // Tagged out right by Red's own target: a defend for a2.
+        let t = *sim
+            .level
+            .targets
+            .iter()
+            .find(|t| t.team == Team::Red)
+            .unwrap();
+        let bi = pi_of(&sim, b);
+        sim.players[bi].respawn = None;
+        sim.players[bi].hits = 0;
+        sim.players[bi].cooldown = 0.0;
+        sim.players[bi].feet = t.centre().with_y(0.0);
+        for _ in 0..3 {
+            sim.players[bi].cooldown = 0.0;
+            sim.hit_player(bi, &bolt(a2), Vec3::ZERO);
+        }
+        let evs = sim.drain_events();
+        assert!(
+            evs.iter()
+                .any(|e| matches!(e, SimEvent::Defended { player, .. } if *player == a2))
+        );
+        let pa2 = sim.player(a2).unwrap();
+        assert_eq!(pa2.defends, 1);
+        assert_eq!(
+            pa2.score,
+            2 * sim.rules.tag_points + sim.rules.defend_points
+        );
+        // (No assist for a: their hit was on b's previous life.)
+        assert_eq!(sim.player(a).unwrap().assists, 1);
     }
 
     #[test]

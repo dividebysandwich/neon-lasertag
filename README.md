@@ -37,7 +37,9 @@ blaster nose down in the hand by that much from the controller's aim (default 15
 upright handle.
 
 **Rules.** Score by tagging out enemy players (100 points) and by hitting the enemy team's
-targets (100 points per hit). A player is tagged out by the third hit; after every hit they
+targets (100 points per hit). Hitting an enemy whom a team mate tags out within 10 s is an
+assist (50 points), and tagging out an enemy within 12 m of your own team's targets (Megatarget
+mode: of your team's doorway into the megatarget's room) earns 25 points more for defending. A player is tagged out by the third hit; after every hit they
 can't shoot, and can't be hit, for 3 s (they can still move). Tagged-out players wait 5 s to
 15 s to respawn at their base, longer the further from it they were tagged. Stepping onto your
 own team's spawn pads heals all hits. The targets are small
@@ -61,7 +63,7 @@ out, or out of time, you start over; out of time inside the room (or in its door
 tagged out.
 
 Matches last 10 minutes. Then the results show (each player's
-score, tags, times tagged out, accuracy and target hits); a local game goes on to the next
+score, tags, times tagged out, assists, accuracy and target hits); a local game goes on to the next
 match on a new arena after 30 s (or at once with Next match), a server opens its next arena
 itself.
 

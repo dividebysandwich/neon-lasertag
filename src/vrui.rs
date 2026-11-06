@@ -470,7 +470,7 @@ fn build_lobby(b: &mut Builder, choices: &LobbyChoices) -> Vec<Button> {
 }
 
 /// Column right edges (score, tags, out, accuracy, targets) on the end panel.
-const COLUMNS: [f32; 5] = [0.02, 0.13, 0.24, 0.36, 0.46];
+const COLUMNS: [f32; 6] = [-0.06, 0.05, 0.15, 0.25, 0.36, 0.46];
 const ROW: f32 = 0.042;
 
 fn team_block(b: &mut Builder, team: Team, score: u32, rows: &[Row], top: f32, width: f32) -> f32 {
@@ -504,7 +504,10 @@ fn team_block(b: &mut Builder, team: Team, score: u32, rows: &[Row], top: f32, w
     b.strip(Vec2::new(left, y), Vec2::new(right, y), 0.005, &mat);
     y -= 0.03;
     b.text("PLAYER", 0.018, Vec2::new(left, y), Align::Left, &dim, None);
-    for (label, x) in ["SCORE", "TAGS", "OUT", "ACC", "TGT"].iter().zip(COLUMNS) {
+    for (label, x) in ["SCORE", "TAGS", "OUT", "AST", "ACC", "TGT"]
+        .iter()
+        .zip(COLUMNS)
+    {
         b.text(label, 0.018, Vec2::new(x, y), Align::Right, &dim, None);
     }
     y -= ROW;
@@ -524,7 +527,7 @@ fn team_block(b: &mut Builder, team: Team, score: u32, rows: &[Row], top: f32, w
             );
         }
         b.text(
-            &short(&r.name, 12),
+            &short(&r.name, 10),
             0.024,
             Vec2::new(left, y),
             Align::Left,
@@ -536,6 +539,7 @@ fn team_block(b: &mut Builder, team: Team, score: u32, rows: &[Row], top: f32, w
             r.score.to_string(),
             r.tags.to_string(),
             r.tagged.to_string(),
+            r.assists.to_string(),
             acc,
             r.target_hits.to_string(),
         ];

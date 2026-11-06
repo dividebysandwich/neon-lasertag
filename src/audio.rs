@@ -234,6 +234,8 @@ fn play_events(
             SimEvent::TargetHit { by, .. }
             | SimEvent::SecondaryHit { by, .. }
             | SimEvent::TurretOff { by, .. }
+            | SimEvent::Assist { player: by, .. }
+            | SimEvent::Defended { player: by, .. }
                 if Some(by) == me =>
             {
                 play(&mut commands, gain, &sounds.bleep, None, 0.8, 1.0)
