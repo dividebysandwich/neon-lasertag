@@ -1413,7 +1413,9 @@ impl Sim {
             return Claim::Rejected("not judged by the client");
         }
         let Some(ri) = s.shot_log.iter().rposition(|r| r.seq == c.shot) else {
-            return if c.shot > s.cmd.shot {
+            // (The command firing it may be set but not stepped yet: a beam hits within the tick
+            // it's fired, so its claim comes with its command.)
+            return if c.shot >= s.cmd.shot {
                 Claim::Early
             } else {
                 Claim::Rejected("no such shot")

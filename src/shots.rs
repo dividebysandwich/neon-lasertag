@@ -347,10 +347,21 @@ mod tests {
     use lt_sim::sim::{EYE, Sim, look_rot};
     use lt_sim::{Hand, Pose, Team};
 
-    /// A remote shooter's predicted bolts against the server's sim (no delay): what they hit is
-    /// claimed and the claims count; the sim's own copies hit nobody.
-    #[test]
-    fn predicted_hits_are_accepted() {
+    /// A remote shooter (with the charge gun if `charge`, holding the trigger down for `hold`
+    /// ticks) fires once at an enemy 3.5-5 m away; its predicted bolts fly against the server's
+    /// sim (no delay) and their claims are applied. The events made here and the sim's.
+    fn remote_shot(charge: bool, hold: u64) -> (Vec<SimEvent>, Vec<SimEvent>, PlayerId, PlayerId) {
+        remote_shot_lagged(charge, hold, 0, false)
+    }
+
+    /// `remote_shot` with `lag` ticks each way between the client and the sim (commands,
+    /// snapshots and claims all late by that).
+    fn remote_shot_lagged(
+        charge: bool,
+        hold: u64,
+        lag: usize,
+        walk: bool,
+    ) -> (Vec<SimEvent>, Vec<SimEvent>, PlayerId, PlayerId) {
         let rules = Rules {
             pickup_pairs: 0,
             powerup_pairs: 0,
@@ -379,43 +390,107 @@ mod tests {
             .expect("an open line");
         sim.teleport(a, p, lt_sim::sim::yaw_of(q - p));
         sim.teleport(b, q, 0.0);
+        if charge {
+            sim.give(a, lt_sim::PickupKind::Charge);
+        }
+        // The victim strafes across the line of fire.
+        if walk {
+            let side = (q - p).normalize().cross(Vec3::Y);
+            sim.set_cmd(
+                b,
+                PlayerCmd {
+                    stick: bevy::math::Vec2::new(side.x, side.z) * 0.5,
+                    ..Default::default()
+                },
+            );
+        }
         let mut shots = Shots::default();
         let mut events = Vec::new();
         let mut server = Vec::new();
-        for t in 0..60 {
-            let snap = sim.snapshot();
+        let mut snaps: VecDeque<Snapshot> = VecDeque::new();
+        let mut cmds: VecDeque<PlayerCmd> = VecDeque::new();
+        let mut claims: VecDeque<Vec<HitClaim>> = VecDeque::new();
+        let mut early: Vec<HitClaim> = Vec::new();
+        for t in 0..(hold + 60 + 3 * lag as u64) {
+            snaps.push_back(sim.snapshot());
+            if snaps.len() > lag + 1 {
+                snaps.pop_front();
+            }
+            let snap = snaps.front().unwrap().clone();
             let me = snap.players.iter().find(|s| s.id == a).cloned();
             let feet = sim.player(a).unwrap().feet;
             let muzzle = feet + Vec3::Y * (EYE - 0.2);
-            let chest = sim.player(b).unwrap().chest();
+            // (Aimed at the victim as shown.)
+            let chest = snap
+                .players
+                .iter()
+                .find(|s| s.id == b)
+                .map(|s| s.feet + s.head.pos - Vec3::Y * 0.55)
+                .unwrap();
             let mut cmd = PlayerCmd {
                 gun_hand: Some(Hand::Right),
                 muzzle: Pose {
                     pos: muzzle - feet,
                     rot: look_rot(chest - muzzle),
                 },
-                fire: t == 10,
+                fire: (10..10 + hold).contains(&t),
                 view_tick: snap.tick,
                 feet: Some(feet),
                 ..Default::default()
             };
             shots.trigger(&mut cmd, me.as_ref(), feet, &world, &rules, a, &mut events);
-            sim.set_cmd(a, cmd);
+            cmds.push_back(cmd);
+            if cmds.len() > lag {
+                sim.set_cmd(a, cmds.pop_front().unwrap());
+            }
+            // (As the server tries them: before the step, again while too early.)
+            // (Claims sent with a command arrive with it.)
+            let due = if claims.len() >= lag.max(1) {
+                claims.pop_front().unwrap()
+            } else {
+                Vec::new()
+            };
+            for c in std::mem::take(&mut early).into_iter().chain(due) {
+                match sim.claim_hit(a, c) {
+                    lt_sim::sim::Claim::Accepted => {}
+                    lt_sim::sim::Claim::Early => early.push(c),
+                    r => panic!("{r:?}: {c:?} at {}", sim.tick),
+                }
+            }
             sim.step();
-            let snap = sim.snapshot();
+            let view = snap.tick + 1;
+            let snap = snaps.get(1).cloned().unwrap_or_else(|| sim.snapshot());
             shots.fly(
                 &snap,
-                snap.tick as f64,
+                view as f64,
                 &world,
                 &sim.level.clone(),
                 &rules,
                 &mut events,
             );
             server.extend(sim.drain_events());
-            for c in shots.take_claims() {
-                assert_eq!(sim.claim_hit(a, c), lt_sim::sim::Claim::Accepted, "{c:?}");
-            }
+            claims.push_back(shots.take_claims());
         }
+        (events, server, a, b)
+    }
+
+    /// What the sim made of a shot: hits on `b` by `a`, and their damage.
+    fn hits_on(server: &[SimEvent], a: PlayerId, b: PlayerId) -> Vec<u8> {
+        server
+            .iter()
+            .filter_map(|e| match *e {
+                SimEvent::Hit {
+                    player, by, hits, ..
+                } if player == b && by == a => Some(hits),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The predicted bolts' claims count; the sim's own copies hit nobody.
+    #[test]
+    fn predicted_hits_are_accepted() {
+        let (events, server, a, b) = remote_shot(false, 1);
         assert!(events.iter().any(|e| matches!(e, SimEvent::Fired { .. })));
         assert!(
             events
@@ -424,11 +499,42 @@ mod tests {
             "{events:?}"
         );
         // (On a spawn pad the victim is healed again at once.)
-        let hits: Vec<_> = server
-            .iter()
-            .filter(|e| matches!(e, SimEvent::Hit { player, by, .. } if *player == b && *by == a))
-            .collect();
-        assert_eq!(hits.len(), 1, "the claim counted, once: {server:?}");
-        assert_eq!(sim.player(a).unwrap().shots, 1);
+        assert_eq!(
+            hits_on(&server, a, b),
+            [1],
+            "the claim counted, once: {server:?}"
+        );
+    }
+
+    /// Shots over a lagging connection: the claims still count.
+    #[test]
+    fn lagged_claims_count() {
+        for walk in [false, true] {
+            for lag in [2, 6, 12] {
+                let (_, server, a, b) = remote_shot_lagged(false, 1, lag, walk);
+                assert_eq!(hits_on(&server, a, b), [1], "bolt, {lag} ticks: {server:?}");
+                let (_, server, a, b) = remote_shot_lagged(true, 70, lag, walk);
+                assert_eq!(hits_on(&server, a, b), [2], "beam, {lag} ticks: {server:?}");
+            }
+        }
+    }
+
+    /// A fully charged beam's claim counts, with the beam's damage.
+    #[test]
+    fn predicted_beams_hit() {
+        let (events, server, a, b) = remote_shot(true, 70);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, SimEvent::BeamFired { .. })),
+            "{events:?}"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, SimEvent::Hit { player, .. } if *player == b)),
+            "predicted: {events:?}"
+        );
+        assert_eq!(hits_on(&server, a, b), [2], "{server:?}");
     }
 }
