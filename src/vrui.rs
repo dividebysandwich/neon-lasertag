@@ -6,6 +6,8 @@
 //!   choices lit; no typing in VR.
 //! - The menu (the menu button, or B / Y held; see src/vr.rs): Resume, New match (local
 //!   games: the next match on a new arena), Main menu and Quit, floating in front of the player.
+//! - A panel stays where it was placed: in front of the eyes when it opened (the start menu keeps
+//!   its place as its levels change).
 //! - The end of a match: the winner, the scores and each team's players with their score,
 //!   tags, times tagged out, accuracy and target hits (one's own row lit), with the time to
 //!   the next match and a Next match button (local games).
@@ -1025,22 +1027,30 @@ fn panels(
         p.kind == Kind::Lobby
             && (p.shows != Some(lobby_key(&model)) || p.headless && input.head.is_some())
     });
+    // In front of the eyes, level, a little below them.
+    let in_front = || {
+        let head = input
+            .head
+            .unwrap_or(Transform::from_xyz(0.0, lt_sim::sim::EYE, 0.0));
+        let f = head.rotation * Vec3::NEG_Z;
+        let rot = Quat::from_rotation_y(lt_sim::sim::yaw_of(Vec3::new(f.x, 0.0, f.z)));
+        Transform::from_translation(head.translation + rot * Vec3::new(0.0, -0.12, -PANEL_DISTANCE))
+            .with_rotation(rot)
+    };
     if ui.panel.as_ref().map(|p| p.kind) != want || stale {
+        // (The start menu built anew for its choices stays where it was, unless it was placed
+        // before the head was tracked.)
+        let kept = ui
+            .panel
+            .as_ref()
+            .filter(|p| Some(p.kind) == want && !(p.headless && input.head.is_some()))
+            .map(|p| (p.pose, p.headless));
         if let Some(p) = ui.panel.take() {
             commands.entity(p.root).despawn();
         }
         ui.pointed = [None; 2];
         if let Some(kind) = want {
-            // In front of the eyes, level, a little below them.
-            let head = input
-                .head
-                .unwrap_or(Transform::from_xyz(0.0, lt_sim::sim::EYE, 0.0));
-            let f = head.rotation * Vec3::NEG_Z;
-            let rot = Quat::from_rotation_y(lt_sim::sim::yaw_of(Vec3::new(f.x, 0.0, f.z)));
-            let pose = Transform::from_translation(
-                head.translation + rot * Vec3::new(0.0, -0.12, -PANEL_DISTANCE),
-            )
-            .with_rotation(rot);
+            let (pose, headless) = kept.unwrap_or_else(|| (in_front(), input.head.is_none()));
             let root = commands
                 .spawn((Name::new("VR panel"), vr.rig * pose, Visibility::default()))
                 .id();
@@ -1064,7 +1074,7 @@ fn panels(
                 countdown: None,
                 countdown_at,
                 shows: (kind == Kind::Lobby).then(|| lobby_key(&model)),
-                headless: input.head.is_none(),
+                headless,
             });
         }
     }
