@@ -83,11 +83,12 @@ pub fn show(text: &str, digits: &[Digit], vis: &mut Query<&mut Visibility>) {
     }
 }
 
-/// The score board: the scores, 1 m digits, centred this high on the rear walls; the clock
+/// The score board: the scores, 1 m digits, centred this high at the top of the rear walls (the
+/// border is 6 m high); the clock
 /// on a board of its own above it.
-const SCORE_Y: f32 = 3.65;
+const SCORE_Y: f32 = 5.9;
 const SCORE_H: f32 = 1.0;
-const CLOCK_Y: f32 = 5.2;
+const CLOCK_Y: f32 = 7.45;
 const CLOCK_H: f32 = 0.65;
 /// The boards stand this far out from the wall, their panels this thick behind the digits.
 const OUT: f32 = 0.16;
