@@ -10,7 +10,20 @@ use crate::types::PlayerCmd;
 
 /// How far below the eyes the floating chest's top is (src/actors.rs CHEST_DROP).
 pub const CHEST_DROP: f32 = 0.3;
-pub const HEAD_RADIUS: f32 = 0.15;
+/// How much bigger than its model a head is drawn (src/actors.rs), grown about the skull top
+/// (this high above the eyes), so it reaches down towards the chest rather than up.
+pub const HEAD_SCALE: f32 = 1.5;
+pub const HEAD_CROWN: f32 = 0.15;
+/// The head sphere of the model at scale 1 (its centre from the eyes, in the head's frame), and
+/// grown with the drawn head.
+const MODEL_HEAD_CENTRE: Vec3 = Vec3::new(0.0, 0.02, 0.06);
+const MODEL_HEAD_RADIUS: f32 = 0.15;
+pub const HEAD_RADIUS: f32 = MODEL_HEAD_RADIUS * HEAD_SCALE;
+pub const HEAD_CENTRE: Vec3 = Vec3::new(
+    MODEL_HEAD_CENTRE.x * HEAD_SCALE,
+    HEAD_CROWN + (MODEL_HEAD_CENTRE.y - HEAD_CROWN) * HEAD_SCALE,
+    MODEL_HEAD_CENTRE.z * HEAD_SCALE,
+);
 /// The chest box, half extents (x across, y, z front to back).
 pub const CHEST_HALF: Vec3 = Vec3::new(0.22, 0.25, 0.125);
 pub const HAND_RADIUS: f32 = 0.075;
@@ -94,13 +107,7 @@ pub fn first_hit(feet: Vec3, eye: Vec3, cmd: &PlayerCmd, a: Vec3, b: Vec3) -> Op
     };
     let head_rot = unit(cmd.head.rot);
     take(
-        ray_sphere(
-            a,
-            d,
-            eye + head_rot * Vec3::new(0.0, 0.02, 0.06),
-            HEAD_RADIUS,
-            len,
-        ),
+        ray_sphere(a, d, eye + head_rot * HEAD_CENTRE, HEAD_RADIUS, len),
         Part::Head,
     );
     let body = Quat::from_rotation_y(if cmd.yaw.is_finite() { cmd.yaw } else { 0.0 });
@@ -179,11 +186,33 @@ mod tests {
             Some(Part::Gun),
             "the blaster is in front of the glove"
         );
+        // The grown head reaches down towards the chest.
+        assert_eq!(shot(1.45, 0.0), Some(Part::Head));
         // Between the chest and the head, beside the head, below the chest: misses.
-        assert_eq!(shot(1.45, 0.0), None);
+        assert_eq!(shot(1.365, 0.0), None);
         assert_eq!(shot(1.65, 0.25), None);
         assert_eq!(shot(0.5, 0.0), None);
         // Antler height above the head sphere misses.
         assert_eq!(shot(1.95, 0.0), None);
+    }
+
+    #[test]
+    fn head_is_the_skull_only() {
+        // The sphere ends just above the skull top, which the grown head keeps at the crown.
+        let top = HEAD_CENTRE.y + HEAD_RADIUS;
+        assert!(top > HEAD_CROWN && top < HEAD_CROWN + 0.04, "{top}");
+        // Rabbit ears and deer antlers (from 0.25 m above the eyes up) never count.
+        for y in [0.25, 0.32, 0.4, 0.5] {
+            for z in [-0.1, 0.0, 0.1] {
+                let hit = first_hit(
+                    Vec3::ZERO,
+                    Vec3::Y * 1.65,
+                    &cmd(),
+                    Vec3::new(-5.0, 1.65 + y, z),
+                    Vec3::new(5.0, 1.65 + y, z),
+                );
+                assert_eq!(hit, None, "ear height {y}, depth {z}");
+            }
+        }
     }
 }

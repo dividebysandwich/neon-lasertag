@@ -282,8 +282,19 @@ fn spawn_avatar(
         ))
         .id();
     let animal = &models.heads[p.id as usize % models.heads.len()];
+    // Grown about the skull top, so the bigger head reaches down towards the chest, not up (and
+    // hit as big: lt_sim::hitbox).
+    use lt_sim::hitbox::{HEAD_CROWN, HEAD_SCALE};
+    let grown = commands
+        .spawn((
+            Transform::from_xyz(0.0, HEAD_CROWN * (1.0 - HEAD_SCALE), 0.0)
+                .with_scale(Vec3::splat(HEAD_SCALE)),
+            Visibility::default(),
+            ChildOf(head),
+        ))
+        .id();
     spawn_dual(
-        commands, head, animal, palette, team, &ghost_mat, &mut solid, &mut ghost,
+        commands, grown, animal, palette, team, &ghost_mat, &mut solid, &mut ghost,
     );
     let hands = [0, 1].map(|i| {
         let h = commands
