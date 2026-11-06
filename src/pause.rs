@@ -140,12 +140,6 @@ fn show(
                 ))
                 .with_children(|p| {
                     p.spawn(label("MENU", 56.0, Color::srgb(1.0, 0.3, 0.4)));
-                    let note = if multiplayer {
-                        "the match goes on meanwhile"
-                    } else {
-                        "the bots play on meanwhile"
-                    };
-                    p.spawn(label(note, 18.0, Color::srgb(0.6, 0.6, 0.7)));
                     p.spawn(Node {
                         height: Val::Px(12.0),
                         ..default()
