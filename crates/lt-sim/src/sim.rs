@@ -14,7 +14,7 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 
-use crate::collide::{BODY_HEIGHT, BODY_RADIUS, GRAVITY, World, ray_box};
+use crate::collide::{BODY_HEIGHT, BODY_RADIUS, GRAVITY, World};
 use crate::hitbox::first_hit;
 use crate::level::{Ground, Level, MoverKind, Panel};
 use crate::rules::Rules;
@@ -894,12 +894,9 @@ impl Sim {
             self.hit_player(pi, b, at);
             remove = true;
         } else if let Some((q, n)) = hit {
-            let dir = (to - b.pos).normalize_or_zero();
-            let len = (to - b.pos).length();
-            let struck = |min: Vec3, max: Vec3| {
-                ray_box(b.pos, dir, min - 0.01, max + 0.01, len)
-                    .is_some_and(|(tt, _)| (tt / len - t_best).abs() < 0.02)
-            };
+            // Where the bolt struck, on the box (however oblique the shot).
+            let struck =
+                |min: Vec3, max: Vec3| q.cmpge(min - 0.01).all() && q.cmple(max + 0.01).all();
             if self.mega_bolt(b, q, &struck) {
                 return true;
             }
