@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::level::ArenaSize;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Rules {
@@ -41,6 +43,8 @@ pub struct Rules {
     pub grenade_max_speed: f32,
     /// Match length (seconds).
     pub match_time: f32,
+    /// The arena's size (with the seed, all a client needs to build the same arena).
+    pub arena: ArenaSize,
 }
 
 impl Default for Rules {
@@ -71,6 +75,7 @@ impl Default for Rules {
             grenade_restitution: 0.45,
             grenade_max_speed: 16.0,
             match_time: 600.0,
+            arena: ArenaSize::Small,
         }
     }
 }

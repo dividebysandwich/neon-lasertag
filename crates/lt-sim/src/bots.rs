@@ -67,7 +67,7 @@ use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::collide::{BODY_RADIUS, GRAVITY, World};
-use crate::level::{self, Level, MoverKind, cell_at, cell_centre};
+use crate::level::{self, Dims, Level, MoverKind};
 use crate::sim::{EYE, PICKUP_HEIGHT, Player, Sim, TICK, look_rot, yaw_of};
 use crate::types::*;
 
@@ -185,6 +185,7 @@ pub struct Tactics {
 /// The navigation graph and tactical map of one arena, shared by all bots.
 pub struct BotGraph {
     pub seed: u64,
+    pub dims: Dims,
     /// Node positions (floor height) and whether a node is walkable; indices as `level::Nav`.
     pub pos: Vec<Vec3>,
     pub valid: Vec<bool>,
@@ -301,13 +302,14 @@ impl BotGraph {
 
         // Diagonals: a 2x2 block of linked cells on one flat floor, walkable corner to corner.
         let linked = |a: usize, b: usize| nav.links[a].contains(&(b as u32));
-        let wh = level::W * level::H;
+        let dm = level.dims();
+        let wh = dm.cells();
         for floor in 0..2 {
-            let node = |ix: usize, iz: usize| floor * wh + level::idx(ix, iz);
-            for iz in 0..level::H - 1 {
-                for ix in 0..level::W {
+            let node = |ix: usize, iz: usize| floor * wh + dm.idx(ix, iz);
+            for iz in 0..dm.h - 1 {
+                for ix in 0..dm.w {
                     for jx in [ix.wrapping_sub(1), ix + 1] {
-                        if jx >= level::W {
+                        if jx >= dm.w {
                             continue;
                         }
                         let (a, b, o1, o2) = (node(ix, iz), node(jx, iz + 1), node(jx, iz), node(ix, iz + 1));
@@ -364,6 +366,7 @@ impl BotGraph {
         let (comp, comp_open) = (components(false), components(true));
 
         let mut g = BotGraph {
+            dims: level.dims(),
             seed: level.seed,
             pos,
             valid,
@@ -397,7 +400,7 @@ impl BotGraph {
             .iter()
             .filter(|t| t.team == team)
             .map(|t| {
-                let rc = cell_centre(t.rear_cell.0, t.rear_cell.1) + Vec3::Y * CHEST;
+                let rc = level.dims().cell_centre(t.rear_cell.0, t.rear_cell.1) + Vec3::Y * CHEST;
                 (t.id, [rc, rc + t.normal * 4.0])
             })
             .collect();
@@ -520,20 +523,23 @@ impl BotGraph {
                 continue; // a stale entry
             }
             let gi = g[i];
-            let through_doors: Vec<(u32, f32)> = doors.into_iter().flat_map(|(level, tick)| {
-                self.door_links[i].iter().filter_map(move |&(m, l, door)| {
-                    let mover = level.movers.get(door)?;
-                    let eta = (gi / DOOR_ETA_SPEED / TICK) as u64;
-                    let (wait, open_for) = mover.passable_window(tick + eta);
-                    if wait == 0 && open_for >= DOOR_OPEN_MIN {
-                        Some((m, l))
-                    } else if wait > 0 && wait <= DOOR_WAIT_MAX && open_for >= DOOR_OPEN_MIN {
-                        Some((m, l + 2.0 + wait as f32 * TICK * DOOR_ETA_SPEED))
-                    } else {
-                        None
-                    }
+            let through_doors: Vec<(u32, f32)> = doors
+                .into_iter()
+                .flat_map(|(level, tick)| {
+                    self.door_links[i].iter().filter_map(move |&(m, l, door)| {
+                        let mover = level.movers.get(door)?;
+                        let eta = (gi / DOOR_ETA_SPEED / TICK) as u64;
+                        let (wait, open_for) = mover.passable_window(tick + eta);
+                        if wait == 0 && open_for >= DOOR_OPEN_MIN {
+                            Some((m, l))
+                        } else if wait > 0 && wait <= DOOR_WAIT_MAX && open_for >= DOOR_OPEN_MIN {
+                            Some((m, l + 2.0 + wait as f32 * TICK * DOOR_ETA_SPEED))
+                        } else {
+                            None
+                        }
+                    })
                 })
-            }).collect();
+                .collect();
             for (m, l) in self.links[i].iter().copied().chain(through_doors) {
                 let m = m as usize;
                 let ng = g[i] + l;
@@ -579,12 +585,13 @@ impl BotGraph {
     /// neighbouring cells on about the same level, the nearest one that can be walked to
     /// (falling back to the nearest one at all).
     pub fn nearest(&self, world: &World, feet: Vec3) -> Option<usize> {
-        let (cx, cz) = cell_at(feet)?;
+        let dm = self.dims;
+        let (cx, cz) = dm.cell_at(feet)?;
         let mut cands: Vec<(f32, usize)> = Vec::new();
-        for iz in cz.saturating_sub(1)..=(cz + 1).min(level::H - 1) {
-            for ix in cx.saturating_sub(1)..=(cx + 1).min(level::W - 1) {
+        for iz in cz.saturating_sub(1)..=(cz + 1).min(dm.h - 1) {
+            for ix in cx.saturating_sub(1)..=(cx + 1).min(dm.w - 1) {
                 for floor in 0..2 {
-                    let n = floor * level::W * level::H + level::idx(ix, iz);
+                    let n = floor * dm.cells() + dm.idx(ix, iz);
                     let p = self.pos[n];
                     let dy = (p.y - feet.y).abs();
                     if self.valid[n] && dy < 1.6 {
@@ -660,7 +667,7 @@ impl TeamBoard {
     fn staging(&mut self, level: &Level, g: &BotGraph, team: Team) -> Option<usize> {
         if self.staging.is_none() {
             let tac = &g.tactics[team.index()];
-            let wh = level::W * level::H;
+            let wh = level.dims().cells();
             self.staging = (0..wh)
                 .filter(|&n| {
                     let p = g.pos[n];
@@ -984,7 +991,7 @@ impl Bot {
                     continue;
                 }
                 b.hits_seen[t.id as usize] = tick;
-                let opening = cell_centre(t.rear_cell.0, t.rear_cell.1);
+                let opening = sim.level.dims().cell_centre(t.rear_cell.0, t.rear_cell.1);
                 let threat = match sim.player(by).filter(|o| o.alive() && o.team != p.team) {
                     Some(o) => {
                         if o.feet.distance(opening) < 25.0 {
@@ -1006,7 +1013,7 @@ impl Bot {
                     continue;
                 }
                 for t in sim.level.targets.iter().filter(|t| t.team == p.team) {
-                    let opening = cell_centre(t.rear_cell.0, t.rear_cell.1);
+                    let opening = sim.level.dims().cell_centre(t.rear_cell.0, t.rear_cell.1);
                     if feet.distance(opening) < ALARM_NEAR && b.alarm.is_none_or(|a| now - a.at > 2.0) {
                         b.alarm = Some(Alarm { target: t.id, threat: feet, at: now });
                     }
@@ -1062,7 +1069,7 @@ impl Bot {
     fn pick_guard_spot(&mut self, sim: &Sim, g: &BotGraph, p: &Player, t: &level::TargetDef) -> Option<usize> {
         let here = g.nearest(&sim.world, p.feet)?;
         let tac = &g.tactics[p.team.index()];
-        let approach = cell_centre(t.rear_cell.0, t.rear_cell.1) + t.normal * 2.0;
+        let approach = sim.level.dims().cell_centre(t.rear_cell.0, t.rear_cell.1) + t.normal * 2.0;
         let mates: Vec<Vec3> = lock(&self.shared)
             .claims
             .iter()
@@ -1681,7 +1688,7 @@ impl Bot {
                 .targets
                 .iter()
                 .filter(|t| t.team == p.team)
-                .map(|t| cell_centre(t.rear_cell.0, t.rear_cell.1) + t.normal * 3.0)
+                .map(|t| sim.level.dims().cell_centre(t.rear_cell.0, t.rear_cell.1) + t.normal * 3.0)
                 .min_by(|a, b| a.distance(p.feet).total_cmp(&b.distance(p.feet)))
         } else {
             None
@@ -2112,7 +2119,7 @@ mod tests {
     fn bot_graph_is_quick_and_finds_paths() {
         let mut total = std::time::Duration::ZERO;
         for seed in 0..20u64 {
-            let level = Level::generate(seed);
+            let level = Level::generate(seed, level::ArenaSize::Small);
             let world = level.world();
             let t0 = std::time::Instant::now();
             let g = BotGraph::build(&level, &world);
@@ -2194,7 +2201,7 @@ mod tests {
         // One attacker starts out ahead, near the centre line: on its own it would be over
         // long before the others.
         let nav = &sim.level.nav;
-        let ahead = (0..level::W * level::H)
+        let ahead = (0..sim.level.dims().cells())
             .filter(|&n| nav.valid[n] && (4.0..6.0).contains(&nav.pos[n].z) && !sim.level.reloads_at(nav.pos[n]))
             .min_by(|&a, &b| nav.pos[a].x.abs().total_cmp(&nav.pos[b].x.abs()))
             .map(|n| nav.pos[n])
@@ -2261,11 +2268,12 @@ mod tests {
             .iter()
             .filter(|t| t.team == Team::Red)
             .max_by(|a, b| {
-                let at = |t: &level::TargetDef| mean_to(&sim, cell_centre(t.rear_cell.0, t.rear_cell.1));
+                let at =
+                    |t: &level::TargetDef| mean_to(&sim, sim.level.dims().cell_centre(t.rear_cell.0, t.rear_cell.1));
                 at(a).total_cmp(&at(b))
             })
             .unwrap();
-        let opening = cell_centre(t.rear_cell.0, t.rear_cell.1);
+        let opening = sim.level.dims().cell_centre(t.rear_cell.0, t.rear_cell.1);
         let before = mean_to(&sim, opening);
         // Hit by an unknown shooter (nobody plays Blue).
         sim.last_target_hit[t.id as usize] = Some((sim.tick, 200));
@@ -2295,7 +2303,7 @@ mod tests {
     fn routes_use_doors_only_while_open() {
         let mut checked = 0;
         for seed in 0..10u64 {
-            let level = Level::generate(seed);
+            let level = Level::generate(seed, level::ArenaSize::Small);
             let world = level.world();
             let g = BotGraph::build(&level, &world);
             let Some(&(a, b, door)) = level.nav.doors.first() else { continue };
@@ -2339,7 +2347,7 @@ mod tests {
 
     #[test]
     fn throws_land_near_the_aim() {
-        let level = Level::generate(5);
+        let level = Level::generate(5, level::ArenaSize::Small);
         let world = level.world();
         let from = level.base_centre(Team::Red) + Vec3::Y * 1.5;
         let mut found = 0;

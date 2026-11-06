@@ -343,8 +343,8 @@ fn step_game(mut game: ResMut<Game>, mut local: ResMut<LocalCmd>, mut events: Me
                     ClientEvent::Disconnected(why) => game.status = format!("Disconnected: {why}"),
                     // The next match (the server moved everyone into a new arena).
                     ClientEvent::Welcome { id, seed, rules } | ClientEvent::NewLevel { seed, rules, id } => {
-                        if seed != game.level.seed {
-                            game.level = Arc::new(Level::generate(seed));
+                        if seed != game.level.seed || rules.arena != game.rules.arena {
+                            game.level = Arc::new(Level::generate(seed, rules.arena));
                             game.world = Arc::new(game.level.world());
                         }
                         game.rules = rules;

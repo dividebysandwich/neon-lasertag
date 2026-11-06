@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::collide::{BODY_HEIGHT, BODY_RADIUS, GRAVITY, World, ray_box};
 use crate::hitbox::first_hit;
-use crate::level::{self, Ground, Level, MoverKind, Nav};
+use crate::level::{Ground, Level, MoverKind};
 use crate::rules::Rules;
 use crate::types::*;
 
@@ -241,7 +241,7 @@ pub struct Sim {
 
 impl Sim {
     pub fn new(seed: u64, rules: Rules) -> Sim {
-        Self::with_level(Arc::new(Level::generate(seed)), rules)
+        Self::with_level(Arc::new(Level::generate(seed, rules.arena)), rules)
     }
 
     pub fn with_level(level: Arc<Level>, rules: Rules) -> Sim {
@@ -421,13 +421,14 @@ impl Sim {
     fn pickup_spot(&mut self, half: Team) -> Option<Vec3> {
         let nav = &self.level.nav;
         let grid = &self.level.grid;
+        let dm = self.level.dims();
         for _ in 0..60 {
-            let ix = self.rng.random_range(0..level::W);
-            let iz = self.rng.random_range(level::HALF..level::H - 3);
-            let iz = if half == Team::Red { iz } else { level::H - 1 - iz };
+            let ix = self.rng.random_range(0..dm.w);
+            let iz = self.rng.random_range(dm.half()..dm.h - 3);
+            let iz = if half == Team::Red { iz } else { dm.h - 1 - iz };
             let upper = self.rng.random_bool(0.35);
-            let n = if upper { Nav::upper_node(ix, iz) } else { Nav::ground_node(ix, iz) };
-            if !nav.valid[n] || !upper && (grid.ground[level::idx(ix, iz)] != Ground::Open || self.level.on_track(ix, iz)) {
+            let n = if upper { nav.upper_node(ix, iz) } else { nav.ground_node(ix, iz) };
+            if !nav.valid[n] || !upper && (grid.ground[dm.idx(ix, iz)] != Ground::Open || self.level.on_track(ix, iz)) {
                 continue;
             }
             let pos = nav.pos[n] + Vec3::Y * PICKUP_HEIGHT;
@@ -1139,7 +1140,7 @@ mod tests {
     }
 
     fn lt_level_half() -> f32 {
-        crate::level::HALF_LENGTH
+        crate::level::ArenaSize::Small.dims().half_length()
     }
 
     #[test]
@@ -1158,7 +1159,7 @@ mod tests {
         let blue = sim.add_player("b", Some(Team::Blue), false).unwrap();
         let red = sim.add_player("r", Some(Team::Red), false).unwrap();
         let t = *sim.level.targets.iter().find(|t| t.team == Team::Red).unwrap();
-        let spot = crate::level::cell_centre(t.rear_cell.0, t.rear_cell.1) + t.normal * 0.6;
+        let spot = sim.level.dims().cell_centre(t.rear_cell.0, t.rear_cell.1) + t.normal * 0.6;
         for (who, expect) in [(red, [0, 0]), (blue, [0, 100])] {
             let pi = sim.players.iter().position(|p| p.id == who).unwrap();
             sim.players[pi].feet = spot;
@@ -1395,13 +1396,13 @@ mod tests {
         // Somewhere open: the target walks 3 m along x in plain sight of the shooter.
         let start = Vec3::new(-2.5, 0.0, -3.0);
         let world = sim.level.world();
-        let shooter = (0..level::W * level::H)
+        let shooter = (0..sim.level.dims().cells())
             .map(|n| sim.level.nav.pos[n])
             .find(|&p| {
                 let eye = p + Vec3::Y * EYE;
                 (0..=14).all(|k| {
                     let q = p + start + Vec3::X * (k as f32 * 0.25);
-                    level::cell_at(q).is_some_and(|(x, z)| sim.level.nav.valid[level::idx(x, z)])
+                    sim.level.dims().cell_at(q).is_some_and(|(x, z)| sim.level.nav.valid[sim.level.dims().idx(x, z)])
                         && world.clear(eye, q + Vec3::Y * 1.2)
                         && world.clear(q + Vec3::Y * 0.5, q + Vec3::new(0.6, 0.5, 0.0))
                         && world.clear(q + Vec3::Y * 0.5, q + Vec3::new(0.0, 0.5, 0.6))

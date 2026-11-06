@@ -1,6 +1,7 @@
 //! Procedural arenas: a 2 m grid, at most two floors, generated for Red's half (+z) and
-//! turned half way round the centre for Blue's (cell (x, z) becomes (W-1-x, H-1-z)), so the two
-//! bases are in opposite corners.
+//! turned half way round the centre for Blue's (cell (x, z) becomes (w-1-x, h-1-z)), so the two
+//! bases are in opposite corners. Arenas come in three sizes (`ArenaSize`); in bigger ones
+//! the generator places more of everything, in proportion to the floor.
 //!
 //! Each team's half has: its base (a small corner of spawn pads, walled with a gate on each
 //! open side), one or two team targets in the rear quarter (each hanging from a roof over the
@@ -37,21 +38,192 @@ use crate::collide::{Collider, World};
 use crate::kit::{self, CELL, PieceKind, STOREY};
 use crate::types::Team;
 
-/// Cells across (x).
-pub const W: usize = 14;
-/// Cells along (z), both halves.
-pub const H: usize = 28;
-pub const HALF: usize = H / 2;
-/// Upper floors are allowed in Red's rows HALF..=UPPER_MAX (not over the bases).
-const UPPER_MAX: usize = HALF + 9;
-/// The first row of Red's base (its spawn pads: `BASE_W` cells in a corner, rows BASE_ROW..H).
-const BASE_ROW: usize = H - 2;
-const BASE_W: usize = 3;
-/// The row of Red's targets: the first of its rear quarter.
-const TARGET_ROW: usize = H * 3 / 4;
+/// How big an arena is: Small is 14 x 28 cells (28 m x 56 m), Medium about 25 % more each way
+/// (18 x 34, half as much floor again), Large about 50 % more (21 x 42).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ArenaSize {
+    #[default]
+    Small,
+    Medium,
+    Large,
+}
 
-pub const HALF_WIDTH: f32 = W as f32 * CELL / 2.0;
-pub const HALF_LENGTH: f32 = H as f32 * CELL / 2.0;
+impl ArenaSize {
+    pub const ALL: [ArenaSize; 3] = [ArenaSize::Small, ArenaSize::Medium, ArenaSize::Large];
+
+    pub fn dims(self) -> Dims {
+        match self {
+            ArenaSize::Small => Dims { w: 14, h: 28 },
+            ArenaSize::Medium => Dims { w: 18, h: 34 },
+            ArenaSize::Large => Dims { w: 21, h: 42 },
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            ArenaSize::Small => "small",
+            ArenaSize::Medium => "medium",
+            ArenaSize::Large => "large",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<ArenaSize> {
+        ArenaSize::ALL.into_iter().find(|a| a.name().eq_ignore_ascii_case(s))
+    }
+}
+
+/// The host's choice of arena size: one size, or a random one for every match.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SizeChoice {
+    #[default]
+    Small,
+    Medium,
+    Large,
+    Random,
+}
+
+impl SizeChoice {
+    pub const ALL: [SizeChoice; 4] = [SizeChoice::Small, SizeChoice::Medium, SizeChoice::Large, SizeChoice::Random];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            SizeChoice::Small => "small",
+            SizeChoice::Medium => "medium",
+            SizeChoice::Large => "large",
+            SizeChoice::Random => "random",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<SizeChoice> {
+        SizeChoice::ALL.into_iter().find(|a| a.name().eq_ignore_ascii_case(s))
+    }
+
+    /// The size for the next match (`Random`: any of them, from `r` in 0..1).
+    pub fn pick(self, r: f32) -> ArenaSize {
+        match self {
+            SizeChoice::Small => ArenaSize::Small,
+            SizeChoice::Medium => ArenaSize::Medium,
+            SizeChoice::Large => ArenaSize::Large,
+            SizeChoice::Random => ArenaSize::ALL[((r * 3.0) as usize).min(2)],
+        }
+    }
+}
+
+/// An arena's grid: `w` cells across (x), `h` along (z, both halves; even). The rows of Red's
+/// half are h/2..h; its base is in the last two, its targets in the first row of its rear
+/// quarter, and upper floors are allowed up to five rows from the rear (not over the base).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Dims {
+    pub w: usize,
+    pub h: usize,
+}
+
+impl Default for Dims {
+    fn default() -> Self {
+        ArenaSize::Small.dims()
+    }
+}
+
+/// Spawn pads across a base.
+const BASE_W: usize = 3;
+
+impl Dims {
+    pub fn half(self) -> usize {
+        self.h / 2
+    }
+
+    /// The last row of Red's half that may have an upper floor.
+    fn upper_max(self) -> usize {
+        self.h - 5
+    }
+
+    /// The first row of Red's base (its spawn pads: `BASE_W` cells in a corner, rows base_row..h).
+    fn base_row(self) -> usize {
+        self.h - 2
+    }
+
+    /// The row of Red's targets: the first of its rear quarter.
+    fn target_row(self) -> usize {
+        self.h * 3 / 4
+    }
+
+    /// Half the arena's width and length (m).
+    pub fn half_width(self) -> f32 {
+        self.w as f32 * CELL / 2.0
+    }
+
+    pub fn half_length(self) -> f32 {
+        self.h as f32 * CELL / 2.0
+    }
+
+    /// Cells in a floor.
+    pub fn cells(self) -> usize {
+        self.w * self.h
+    }
+
+    /// How much floor the arena has against a small one (for numbers of things placed).
+    fn area_scale(self) -> f32 {
+        self.cells() as f32 / ArenaSize::Small.dims().cells() as f32
+    }
+
+    /// `n` scaled by the arena's floor (at least `n` itself).
+    fn scaled(self, n: usize) -> usize {
+        ((n as f32 * self.area_scale()).round() as usize).max(n)
+    }
+
+    /// `n` (columns, for a small arena) scaled by the arena's width.
+    fn across(self, n: usize) -> usize {
+        (n as f32 * self.w as f32 / 14.0).round() as usize
+    }
+
+    /// `n` (rows, for a small arena) scaled by the arena's length.
+    fn along(self, n: usize) -> usize {
+        (n as f32 * self.h as f32 / 28.0).round() as usize
+    }
+
+    pub fn idx(self, ix: usize, iz: usize) -> usize {
+        iz * self.w + ix
+    }
+
+    /// The cell's counterpart in the other half (the arena turned half way round its centre).
+    pub fn mirror_cell(self, ix: usize, iz: usize) -> (usize, usize) {
+        (self.w - 1 - ix, self.h - 1 - iz)
+    }
+
+    pub fn cell_centre(self, ix: usize, iz: usize) -> Vec3 {
+        Vec3::new((ix as f32 + 0.5) * CELL - self.half_width(), 0.0, (iz as f32 + 0.5) * CELL - self.half_length())
+    }
+
+    /// The cell containing a point, if inside the arena.
+    pub fn cell_at(self, p: Vec3) -> Option<(usize, usize)> {
+        let x = ((p.x + self.half_width()) / CELL).floor();
+        let z = ((p.z + self.half_length()) / CELL).floor();
+        if x < 0.0 || z < 0.0 || x >= self.w as f32 || z >= self.h as f32 {
+            return None;
+        }
+        Some((x as usize, z as usize))
+    }
+
+    /// The cell `n` steps from (ix, iz) towards `dir`, if inside the arena.
+    pub fn step(self, ix: usize, iz: usize, dir: u8, n: i32) -> Option<(usize, usize)> {
+        let (dx, dz) = DIRS[dir as usize % 4];
+        let x = ix as i32 + dx * n;
+        let z = iz as i32 + dz * n;
+        if x < 0 || z < 0 || x >= self.w as i32 || z >= self.h as i32 {
+            return None;
+        }
+        Some((x as usize, z as usize))
+    }
+
+    /// Navigation nodes: the ground's cells, then the upper floor's.
+    pub fn ground_node(self, ix: usize, iz: usize) -> usize {
+        self.idx(ix, iz)
+    }
+
+    pub fn upper_node(self, ix: usize, iz: usize) -> usize {
+        self.cells() + self.idx(ix, iz)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Ground {
@@ -119,55 +291,19 @@ pub const DIRS: [(i32, i32); 4] = [(0, 1), (1, 0), (0, -1), (-1, 0)];
 /// The arena's layout.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Grid {
+    pub dims: Dims,
     pub ground: Vec<Ground>,
     pub upper: Vec<bool>,
     pub upper_block: Vec<bool>,
-    /// Walls on the lines of constant z, per floor: index `l * W + ix`, line `l` in 0..=H.
+    /// Walls on the lines of constant z, per floor: index `l * dm.w + ix`, line `l` in 0..=dm.h.
     pub hwall: [Vec<Wall>; 2],
-    /// Walls on the lines of constant x, per floor: index `iz * (W + 1) + l`, line `l` in 0..=W.
+    /// Walls on the lines of constant x, per floor: index `iz * (dm.w + 1) + l`, line `l` in 0..=dm.w.
     pub vwall: [Vec<Wall>; 2],
-}
-
-pub fn idx(ix: usize, iz: usize) -> usize {
-    iz * W + ix
-}
-
-/// The cell's counterpart in the other half (the arena turned half way round its centre).
-pub fn mirror_cell(ix: usize, iz: usize) -> (usize, usize) {
-    (W - 1 - ix, H - 1 - iz)
 }
 
 /// A point's counterpart in the other half.
 pub fn mirror_point(p: Vec3) -> Vec3 {
     Vec3::new(-p.x, p.y, -p.z)
-}
-
-pub fn cell_centre(ix: usize, iz: usize) -> Vec3 {
-    Vec3::new(
-        (ix as f32 + 0.5) * CELL - HALF_WIDTH,
-        0.0,
-        (iz as f32 + 0.5) * CELL - HALF_LENGTH,
-    )
-}
-
-/// The cell containing a point, if inside the arena.
-pub fn cell_at(p: Vec3) -> Option<(usize, usize)> {
-    let x = ((p.x + HALF_WIDTH) / CELL).floor();
-    let z = ((p.z + HALF_LENGTH) / CELL).floor();
-    if x < 0.0 || z < 0.0 || x >= W as f32 || z >= H as f32 {
-        return None;
-    }
-    Some((x as usize, z as usize))
-}
-
-fn step(ix: usize, iz: usize, dir: u8, n: i32) -> Option<(usize, usize)> {
-    let (dx, dz) = DIRS[dir as usize % 4];
-    let x = ix as i32 + dx * n;
-    let z = iz as i32 + dz * n;
-    if x < 0 || z < 0 || x >= W as i32 || z >= H as i32 {
-        return None;
-    }
-    Some((x as usize, z as usize))
 }
 
 /// An edge of the grid: horizontal line (constant z) or vertical line (constant x).
@@ -188,13 +324,14 @@ fn edge(ix: usize, iz: usize, dir: u8) -> Edge {
 }
 
 impl Grid {
-    fn new() -> Grid {
+    fn new(dm: Dims) -> Grid {
         Grid {
-            ground: vec![Ground::Open; W * H],
-            upper: vec![false; W * H],
-            upper_block: vec![false; W * H],
-            hwall: [vec![Wall::None; W * (H + 1)], vec![Wall::None; W * (H + 1)]],
-            vwall: [vec![Wall::None; (W + 1) * H], vec![Wall::None; (W + 1) * H]],
+            dims: dm,
+            ground: vec![Ground::Open; dm.w * dm.h],
+            upper: vec![false; dm.w * dm.h],
+            upper_block: vec![false; dm.w * dm.h],
+            hwall: [vec![Wall::None; dm.w * (dm.h + 1)], vec![Wall::None; dm.w * (dm.h + 1)]],
+            vwall: [vec![Wall::None; (dm.w + 1) * dm.h], vec![Wall::None; (dm.w + 1) * dm.h]],
         }
     }
 
@@ -203,41 +340,46 @@ impl Grid {
     }
 
     fn edge_wall(&self, floor: usize, e: Edge) -> Wall {
+        let dm = self.dims;
         match e {
-            Edge::H { l, ix } => self.hwall[floor][l * W + ix],
-            Edge::V { l, iz } => self.vwall[floor][iz * (W + 1) + l],
+            Edge::H { l, ix } => self.hwall[floor][l * dm.w + ix],
+            Edge::V { l, iz } => self.vwall[floor][iz * (dm.w + 1) + l],
         }
     }
 
     // Setters writing Red's half and its mirror image in Blue's.
 
     fn set_ground(&mut self, ix: usize, iz: usize, g: Ground) {
-        self.ground[idx(ix, iz)] = g;
-        let (mx, mz) = mirror_cell(ix, iz);
-        self.ground[idx(mx, mz)] = g.mirrored();
+        let dm = self.dims;
+        self.ground[dm.idx(ix, iz)] = g;
+        let (mx, mz) = dm.mirror_cell(ix, iz);
+        self.ground[dm.idx(mx, mz)] = g.mirrored();
     }
 
     fn set_upper(&mut self, ix: usize, iz: usize, v: bool) {
-        self.upper[idx(ix, iz)] = v;
-        let (mx, mz) = mirror_cell(ix, iz);
-        self.upper[idx(mx, mz)] = v;
+        let dm = self.dims;
+        self.upper[dm.idx(ix, iz)] = v;
+        let (mx, mz) = dm.mirror_cell(ix, iz);
+        self.upper[dm.idx(mx, mz)] = v;
     }
 
     fn set_upper_block(&mut self, ix: usize, iz: usize, v: bool) {
-        self.upper_block[idx(ix, iz)] = v;
-        let (mx, mz) = mirror_cell(ix, iz);
-        self.upper_block[idx(mx, mz)] = v;
+        let dm = self.dims;
+        self.upper_block[dm.idx(ix, iz)] = v;
+        let (mx, mz) = dm.mirror_cell(ix, iz);
+        self.upper_block[dm.idx(mx, mz)] = v;
     }
 
     fn set_wall(&mut self, floor: usize, e: Edge, w: Wall) {
+        let dm = self.dims;
         match e {
             Edge::H { l, ix } => {
-                self.hwall[floor][l * W + ix] = w;
-                self.hwall[floor][(H - l) * W + W - 1 - ix] = w;
+                self.hwall[floor][l * dm.w + ix] = w;
+                self.hwall[floor][(dm.h - l) * dm.w + dm.w - 1 - ix] = w;
             }
             Edge::V { l, iz } => {
-                self.vwall[floor][iz * (W + 1) + l] = w;
-                self.vwall[floor][(H - 1 - iz) * (W + 1) + W - l] = w;
+                self.vwall[floor][iz * (dm.w + 1) + l] = w;
+                self.vwall[floor][(dm.h - 1 - iz) * (dm.w + 1) + dm.w - l] = w;
             }
         }
     }
@@ -249,6 +391,7 @@ impl Grid {
 
 /// Bookkeeping while generating: cells and edges that must stay clear.
 struct Reserve {
+    dims: Dims,
     cells: Vec<bool>,
     /// Edges that get no walls (either floor), keyed as in `Grid`.
     hedges: Vec<bool>,
@@ -257,33 +400,37 @@ struct Reserve {
 
 impl Reserve {
     fn cell(&mut self, ix: usize, iz: usize) {
-        self.cells[idx(ix, iz)] = true;
-        let (mx, mz) = mirror_cell(ix, iz);
-        self.cells[idx(mx, mz)] = true;
+        let dm = self.dims;
+        self.cells[dm.idx(ix, iz)] = true;
+        let (mx, mz) = dm.mirror_cell(ix, iz);
+        self.cells[dm.idx(mx, mz)] = true;
     }
 
     fn edge(&mut self, e: Edge) {
+        let dm = self.dims;
         match e {
             Edge::H { l, ix } => {
-                self.hedges[l * W + ix] = true;
-                self.hedges[(H - l) * W + W - 1 - ix] = true;
+                self.hedges[l * dm.w + ix] = true;
+                self.hedges[(dm.h - l) * dm.w + dm.w - 1 - ix] = true;
             }
             Edge::V { l, iz } => {
-                self.vedges[iz * (W + 1) + l] = true;
-                self.vedges[(H - 1 - iz) * (W + 1) + W - l] = true;
+                self.vedges[iz * (dm.w + 1) + l] = true;
+                self.vedges[(dm.h - 1 - iz) * (dm.w + 1) + dm.w - l] = true;
             }
         }
     }
 
     fn has_edge(&self, e: Edge) -> bool {
+        let dm = self.dims;
         match e {
-            Edge::H { l, ix } => self.hedges[l * W + ix],
-            Edge::V { l, iz } => self.vedges[iz * (W + 1) + l],
+            Edge::H { l, ix } => self.hedges[l * dm.w + ix],
+            Edge::V { l, iz } => self.vedges[iz * (dm.w + 1) + l],
         }
     }
 
     fn has(&self, ix: usize, iz: usize) -> bool {
-        self.cells[idx(ix, iz)]
+        let dm = self.dims;
+        self.cells[dm.idx(ix, iz)]
     }
 }
 
@@ -428,6 +575,7 @@ impl Mover {
 /// Walkable places for bots: cell centres on the ground, on ramps and on the upper floor.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Nav {
+    pub dims: Dims,
     pub pos: Vec<Vec3>,
     pub valid: Vec<bool>,
     /// Links that are always there.
@@ -438,19 +586,20 @@ pub struct Nav {
 }
 
 impl Nav {
-    pub fn ground_node(ix: usize, iz: usize) -> usize {
-        idx(ix, iz)
+    pub fn ground_node(&self, ix: usize, iz: usize) -> usize {
+        self.dims.ground_node(ix, iz)
     }
 
-    pub fn upper_node(ix: usize, iz: usize) -> usize {
-        W * H + idx(ix, iz)
+    pub fn upper_node(&self, ix: usize, iz: usize) -> usize {
+        self.dims.upper_node(ix, iz)
     }
 
     /// The nearest valid node to a point (by cell, then by height).
     pub fn node_at(&self, p: Vec3) -> Option<usize> {
-        let (ix, iz) = cell_at(p)?;
-        let g = Self::ground_node(ix, iz);
-        let u = Self::upper_node(ix, iz);
+        let dm = self.dims;
+        let (ix, iz) = dm.cell_at(p)?;
+        let g = self.ground_node(ix, iz);
+        let u = self.upper_node(ix, iz);
         let pick = |a: usize, b: usize| {
             let da = (self.pos[a].y - p.y).abs();
             let db = (self.pos[b].y - p.y).abs();
@@ -539,11 +688,12 @@ pub struct Level {
 }
 
 impl Level {
-    /// The arena for `seed` (the same on every machine).
-    pub fn generate(seed: u64) -> Level {
+    /// The arena for `seed` and `size` (the same on every machine).
+    pub fn generate(seed: u64, size: ArenaSize) -> Level {
+        let dm = size.dims();
         for attempt in 0..500u64 {
             let mut rng = ChaCha8Rng::seed_from_u64(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ attempt);
-            if let Some(mut grid) = try_grid(&mut rng) {
+            if let Some(mut grid) = try_grid(&mut rng, dm) {
                 let nav = build_nav(&grid);
                 if validate(&grid, &nav) {
                     // Movers only turn existing walls into doors and use open cells, so the
@@ -562,7 +712,12 @@ impl Level {
                 }
             }
         }
-        panic!("no valid arena for seed {seed}");
+        panic!("no valid {} arena for seed {seed}", size.name());
+    }
+
+    /// The arena's grid size.
+    pub fn dims(&self) -> Dims {
+        self.grid.dims
     }
 
     /// The static arena (no movers).
@@ -589,7 +744,8 @@ impl Level {
 
     /// Whether the cell is on a sliding panel's track (nothing should be put there).
     pub fn on_track(&self, ix: usize, iz: usize) -> bool {
-        let c = cell_centre(ix, iz);
+        let dm = self.grid.dims;
+        let c = dm.cell_centre(ix, iz);
         self.movers.iter().filter(|m| m.kind == MoverKind::Panel).any(|m| {
             let (a, b) = (m.pos, m.pos + m.travel);
             let (lo, hi) = (a.min(b), a.max(b));
@@ -600,6 +756,7 @@ impl Level {
     /// How many places on the ground and on the upper floor (walkable cell centres, reached
     /// from the bases) a standing player can hit target `t` from.
     pub fn target_spots(&self, t: &TargetDef) -> [usize; 2] {
+        let dm = self.grid.dims;
         let world = self.world();
         let Some(start) = self.spawns[0].first().and_then(|s| self.nav.node_at(s.pos)) else { return [0, 0] };
         let seen = self.nav.reach(start);
@@ -609,7 +766,7 @@ impl Level {
                 continue;
             }
             if target_seen(&world, *p + Vec3::Y * crate::sim::EYE, t, t.centre()) {
-                out[(n >= W * H) as usize] += 1;
+                out[(n >= dm.w * dm.h) as usize] += 1;
             }
         }
         out
@@ -623,37 +780,42 @@ impl Level {
 
     /// Whether a player standing at `feet` is refilling: on a reload station or a spawn pad.
     pub fn reloads_at(&self, feet: Vec3) -> bool {
+        let dm = self.grid.dims;
         if feet.y > 0.5 {
             return false;
         }
-        cell_at(feet).is_some_and(|(ix, iz)| matches!(self.grid.ground[idx(ix, iz)], Ground::Reload | Ground::Spawn))
+        dm.cell_at(feet)
+            .is_some_and(|(ix, iz)| matches!(self.grid.ground[dm.idx(ix, iz)], Ground::Reload | Ground::Spawn))
     }
 }
 
 /// The cells around a target's opening: the target's own (under the upper floor), the opening
 /// behind it and the upper floor around the opening (3 x 3 cells).
-fn target_surround(ix: usize) -> Vec<(usize, usize)> {
-    (TARGET_ROW..TARGET_ROW + 3).flat_map(|z| (ix.saturating_sub(1)..=(ix + 1).min(W - 1)).map(move |x| (x, z))).collect()
+fn target_surround(dm: Dims, ix: usize) -> Vec<(usize, usize)> {
+    (dm.target_row()..dm.target_row() + 3)
+        .flat_map(|z| (ix.saturating_sub(1)..=(ix + 1).min(dm.w - 1)).map(move |x| (x, z)))
+        .collect()
 }
 
 /// Whether upper-floor cells `a` and `b` are joined by upper floor (walls aside).
 fn upper_joined(g: &Grid, a: (usize, usize), b: (usize, usize)) -> bool {
-    if !g.upper[idx(a.0, a.1)] {
+    let dm = g.dims;
+    if !g.upper[dm.idx(a.0, a.1)] {
         return false;
     }
-    let mut seen = vec![false; W * H];
+    let mut seen = vec![false; dm.w * dm.h];
     let mut stack = vec![a];
-    seen[idx(a.0, a.1)] = true;
+    seen[dm.idx(a.0, a.1)] = true;
     while let Some((x, z)) = stack.pop() {
         if (x, z) == b {
             return true;
         }
         for d in 0..4 {
-            if let Some((nx, nz)) = step(x, z, d, 1)
-                && g.upper[idx(nx, nz)]
-                && !seen[idx(nx, nz)]
+            if let Some((nx, nz)) = dm.step(x, z, d, 1)
+                && g.upper[dm.idx(nx, nz)]
+                && !seen[dm.idx(nx, nz)]
             {
-                seen[idx(nx, nz)] = true;
+                seen[dm.idx(nx, nz)] = true;
                 stack.push((nx, nz));
             }
         }
@@ -664,10 +826,13 @@ fn upper_joined(g: &Grid, a: (usize, usize), b: (usize, usize)) -> bool {
 /// Whether one can walk on the upper level alone (no ramps, through no walls) from around one
 /// team's target to around the other's.
 fn upper_crosses(g: &Grid, nav: &Nav) -> bool {
-    let Some(ix) = (0..W).find(|&ix| matches!(g.ground[idx(ix, TARGET_ROW)], Ground::Alcove { .. })) else { return false };
-    let from = Nav::upper_node(ix, TARGET_ROW + 2);
-    let (mx, mz) = mirror_cell(ix, TARGET_ROW + 2);
-    let to = Nav::upper_node(mx, mz);
+    let dm = g.dims;
+    let Some(ix) = (0..dm.w).find(|&ix| matches!(g.ground[dm.idx(ix, dm.target_row())], Ground::Alcove { .. })) else {
+        return false;
+    };
+    let from = dm.upper_node(ix, dm.target_row() + 2);
+    let (mx, mz) = dm.mirror_cell(ix, dm.target_row() + 2);
+    let to = dm.upper_node(mx, mz);
     let mut seen = vec![false; nav.pos.len()];
     let mut stack = vec![from];
     seen[from] = true;
@@ -677,7 +842,7 @@ fn upper_crosses(g: &Grid, nav: &Nav) -> bool {
         }
         for &m in &nav.links[n] {
             let m = m as usize;
-            if m >= W * H && !seen[m] {
+            if m >= dm.w * dm.h && !seen[m] {
                 seen[m] = true;
                 stack.push(m);
             }
@@ -686,42 +851,45 @@ fn upper_crosses(g: &Grid, nav: &Nav) -> bool {
     false
 }
 
-fn try_grid(rng: &mut ChaCha8Rng) -> Option<Grid> {
-    let mut g = Grid::new();
+fn try_grid(rng: &mut ChaCha8Rng, dm: Dims) -> Option<Grid> {
+    let mut g = Grid::new(dm);
     let mut res = Reserve {
-        cells: vec![false; W * H],
-        hedges: vec![false; W * (H + 1)],
-        vedges: vec![false; (W + 1) * H],
+        dims: dm,
+        cells: vec![false; dm.w * dm.h],
+        hedges: vec![false; dm.w * (dm.h + 1)],
+        vedges: vec![false; (dm.w + 1) * dm.h],
     };
 
     // 1. The base: a small corner of spawn pads (Red's in a rear corner, Blue's in the
     //    opposite one), walled off with a gate on each open side.
     let left = rng.random_bool(0.5);
-    let pad_x: Vec<usize> = if left { (0..BASE_W).collect() } else { (W - BASE_W..W).collect() };
+    let pad_x: Vec<usize> = if left { (0..BASE_W).collect() } else { (dm.w - BASE_W..dm.w).collect() };
     // The wall along x: on the line between the base's columns and the arena's.
-    let side_line = if left { BASE_W } else { W - BASE_W };
-    for iz in BASE_ROW - 1..H {
-        for ix in pad_x[0].saturating_sub(1)..(pad_x[BASE_W - 1] + 2).min(W) {
+    let side_line = if left { BASE_W } else { dm.w - BASE_W };
+    for iz in dm.base_row() - 1..dm.h {
+        for ix in pad_x[0].saturating_sub(1)..(pad_x[BASE_W - 1] + 2).min(dm.w) {
             res.cell(ix, iz);
         }
     }
-    for iz in BASE_ROW..H {
+    for iz in dm.base_row()..dm.h {
         for &ix in &pad_x {
             g.set_ground(ix, iz, Ground::Spawn);
         }
     }
-    let wall = |rng: &mut ChaCha8Rng| if rng.random_bool(0.4) { Wall::Window } else { Wall::Full };
+    let wall = |rng: &mut ChaCha8Rng| {
+        if rng.random_bool(0.4) { Wall::Window } else { Wall::Full }
+    };
     let gate_x = pad_x[rng.random_range(0..BASE_W)];
     for &ix in &pad_x {
-        let e = Edge::H { l: BASE_ROW, ix };
+        let e = Edge::H { l: dm.base_row(), ix };
         if ix == gate_x {
             res.edge(e);
         } else {
             g.set_wall(0, e, wall(rng));
         }
     }
-    let gate_z = rng.random_range(BASE_ROW..H);
-    for iz in BASE_ROW..H {
+    let gate_z = rng.random_range(dm.base_row()..dm.h);
+    for iz in dm.base_row()..dm.h {
         let e = Edge::V { l: side_line, iz };
         if iz == gate_z {
             res.edge(e);
@@ -736,34 +904,34 @@ fn try_grid(rng: &mut ChaCha8Rng) -> Option<Grid> {
     //    under and behind it, and from the upper floor around that opening (always there).
     let two = rng.random_bool(0.5);
     let cols: Vec<usize> = if two {
-        let c = rng.random_range(2..=3usize);
-        vec![c, W - 1 - c]
+        let c = rng.random_range(dm.across(2)..=dm.across(3));
+        vec![c, dm.w - 1 - c]
     } else {
         // Not in front of the own base.
-        let c = rng.random_range(4..=5usize);
-        vec![if left { W - 1 - c } else { c }]
+        let c = rng.random_range(dm.across(4)..=dm.across(5));
+        vec![if left { dm.w - 1 - c } else { c }]
     };
     for &ix in &cols {
-        g.set_ground(ix, TARGET_ROW, Ground::Alcove { facing: 0 });
+        g.set_ground(ix, dm.target_row(), Ground::Alcove { facing: 0 });
         for d in [1u8, 2, 3] {
-            g.set_wall(0, edge(ix, TARGET_ROW, d), Wall::Full);
+            g.set_wall(0, edge(ix, dm.target_row(), d), Wall::Full);
         }
-        for (x, z) in target_surround(ix) {
+        for (x, z) in target_surround(dm, ix) {
             res.cell(x, z);
-            if x != ix || z == TARGET_ROW + 2 {
+            if x != ix || z == dm.target_row() + 2 {
                 g.set_upper(x, z, true);
             }
         }
-        res.cell(ix, TARGET_ROW + 3);
-        res.edge(edge(ix, TARGET_ROW, 0));
+        res.cell(ix, dm.target_row() + 3);
+        res.edge(edge(ix, dm.target_row(), 0));
         for d in 0..4 {
-            res.edge(edge(ix, TARGET_ROW + 1, d));
+            res.edge(edge(ix, dm.target_row() + 1, d));
         }
         // Nothing on the upper floor around the opening.
-        for (x, z) in target_surround(ix) {
+        for (x, z) in target_surround(dm, ix) {
             for d in 0..4 {
-                if let Some((nx, nz)) = step(x, z, d, 1)
-                    && target_surround(ix).contains(&(nx, nz))
+                if let Some((nx, nz)) = dm.step(x, z, d, 1)
+                    && target_surround(dm, ix).contains(&(nx, nz))
                 {
                     res.edge(edge(x, z, d));
                 }
@@ -773,14 +941,14 @@ fn try_grid(rng: &mut ChaCha8Rng) -> Option<Grid> {
 
     // 2b. A reload station in the middle third, open along z, walled with windows along x.
     {
-        let rz = HALF + rng.random_range(2..=5usize);
-        let rx = rng.random_range(2..=W - 3);
+        let rz = dm.half() + rng.random_range(dm.along(2)..=dm.along(5));
+        let rx = rng.random_range(2..=dm.w - 3);
         g.set_ground(rx, rz, Ground::Reload);
         res.cell(rx, rz);
         for d in [0u8, 2] {
             res.edge(edge(rx, rz, d));
-            if let Some((x, z)) = step(rx, rz, d, 1)
-                && z >= HALF
+            if let Some((x, z)) = dm.step(rx, rz, d, 1)
+                && z >= dm.half()
             {
                 res.cell(x, z);
             }
@@ -793,47 +961,49 @@ fn try_grid(rng: &mut ChaCha8Rng) -> Option<Grid> {
 
     // 3. The upper floor: a bridge over the centre line, side galleries, a few more platforms.
     let rect = |g: &mut Grid, res: &Reserve, x0: usize, z0: usize, w: usize, l: usize| {
-        for iz in z0..(z0 + l).min(UPPER_MAX + 1) {
-            for ix in x0..(x0 + w).min(W) {
-                if !res.has(ix, iz) && iz < BASE_ROW {
+        for iz in z0..(z0 + l).min(dm.upper_max() + 1) {
+            for ix in x0..(x0 + w).min(dm.w) {
+                if !res.has(ix, iz) && iz < dm.base_row() {
                     g.set_upper(ix, iz, true);
                 }
             }
         }
     };
     let bw = rng.random_range(2..=4usize);
-    let bx = rng.random_range(2..=W - 2 - bw);
-    rect(&mut g, &res, bx, HALF, bw, rng.random_range(2..=4));
+    let bx = rng.random_range(2..=dm.w - 2 - bw);
+    rect(&mut g, &res, bx, dm.half(), bw, rng.random_range(2..=4));
     // Its other end over the centre line (Blue's half is turned round: this joins the two).
     for ix in bx..bx + bw {
-        if !res.has(ix, HALF - 1) {
-            g.set_upper(ix, HALF - 1, true);
+        if !res.has(ix, dm.half() - 1) {
+            g.set_upper(ix, dm.half() - 1, true);
         }
     }
     for left in [true, false] {
         if rng.random_bool(0.7) {
-            let x0 = if left { 0 } else { W - 2 };
-            let z0 = HALF + rng.random_range(1..=4usize);
-            rect(&mut g, &res, x0, z0, 2, rng.random_range(4..=7));
+            let x0 = if left { 0 } else { dm.w - 2 };
+            let z0 = dm.half() + rng.random_range(1..=dm.along(4));
+            rect(&mut g, &res, x0, z0, 2, rng.random_range(dm.along(4)..=dm.along(7)));
         }
     }
-    for _ in 0..rng.random_range(1..=3) {
+    for _ in 0..rng.random_range(dm.scaled(1)..=dm.scaled(3)) {
         let (w, l) = (rng.random_range(2..=4usize), rng.random_range(2..=4usize));
-        let x0 = rng.random_range(0..=W - w);
-        let z0 = rng.random_range(HALF + 1..=UPPER_MAX + 1 - l);
+        let x0 = rng.random_range(0..=dm.w - w);
+        let z0 = rng.random_range(dm.half() + 1..=dm.upper_max() + 1 - l);
         rect(&mut g, &res, x0, z0, w, l);
     }
-    let red_cells = (UPPER_MAX + 1 - HALF) * W;
+    let red_cells = (dm.upper_max() + 1 - dm.half()) * dm.w;
     let coverage = |g: &Grid| {
-        (HALF..=UPPER_MAX).flat_map(|iz| (0..W).map(move |ix| (ix, iz))).filter(|&(ix, iz)| g.upper[idx(ix, iz)]).count()
-            as f32
+        (dm.half()..=dm.upper_max())
+            .flat_map(|iz| (0..dm.w).map(move |ix| (ix, iz)))
+            .filter(|&(ix, iz)| g.upper[dm.idx(ix, iz)])
+            .count() as f32
             / red_cells as f32
     };
     let mut tries = 0;
-    while coverage(&g) < 0.40 && tries < 8 {
+    while coverage(&g) < 0.40 && tries < dm.scaled(8) {
         let (w, l) = (rng.random_range(2..=4usize), rng.random_range(2..=4usize));
-        let x0 = rng.random_range(0..=W - w);
-        let z0 = rng.random_range(HALF..=UPPER_MAX + 1 - l);
+        let x0 = rng.random_range(0..=dm.w - w);
+        let z0 = rng.random_range(dm.half()..=dm.upper_max() + 1 - l);
         rect(&mut g, &res, x0, z0, w, l);
         tries += 1;
     }
@@ -843,37 +1013,37 @@ fn try_grid(rng: &mut ChaCha8Rng) -> Option<Grid> {
     // A walkway on the upper level from each target's surroundings to the bridge, where the
     // upper level doesn't join them already: the upper level always crosses the arena.
     for &ix in &cols {
-        if upper_joined(&g, (ix + 1, TARGET_ROW + 2), (bx, HALF)) {
+        if upper_joined(&g, (ix + 1, dm.target_row() + 2), (bx, dm.half())) {
             continue;
         }
         // Along z beside the target, on the side towards the bridge, then along x.
         let x = if bx + bw / 2 < ix { ix - 1 } else { ix + 1 };
-        for z in (HALF..TARGET_ROW).rev() {
-            if res.has(x, z) && !g.upper[idx(x, z)] {
+        for z in (dm.half()..dm.target_row()).rev() {
+            if res.has(x, z) && !g.upper[dm.idx(x, z)] {
                 return None;
             }
             g.set_upper(x, z, true);
         }
         let (lo, hi) = if x < bx { (x, bx) } else { (bx + bw - 1, x) };
         for xx in lo..=hi {
-            if res.has(xx, HALF) && !g.upper[idx(xx, HALF)] {
+            if res.has(xx, dm.half()) && !g.upper[dm.idx(xx, dm.half())] {
                 return None;
             }
-            g.set_upper(xx, HALF, true);
+            g.set_upper(xx, dm.half(), true);
         }
     }
 
     // Holes to shoot through, inside the platforms.
-    let mut interior: Vec<(usize, usize)> = (HALF + 1..=UPPER_MAX)
-        .flat_map(|iz| (0..W).map(move |ix| (ix, iz)))
+    let mut interior: Vec<(usize, usize)> = (dm.half() + 1..=dm.upper_max())
+        .flat_map(|iz| (0..dm.w).map(move |ix| (ix, iz)))
         .filter(|&(ix, iz)| {
-            g.upper[idx(ix, iz)]
+            g.upper[dm.idx(ix, iz)]
                 && !res.has(ix, iz)
-                && !matches!(g.ground[idx(ix, iz)], Ground::Alcove { .. })
-                && (0..4).all(|d| step(ix, iz, d, 1).is_some_and(|(x, z)| g.upper[idx(x, z)]))
+                && !matches!(g.ground[dm.idx(ix, iz)], Ground::Alcove { .. })
+                && (0..4).all(|d| dm.step(ix, iz, d, 1).is_some_and(|(x, z)| g.upper[dm.idx(x, z)]))
         })
         .collect();
-    let holes = rng.random_range(2..=4usize);
+    let holes = rng.random_range(dm.scaled(2)..=dm.scaled(4));
     for _ in 0..holes {
         if interior.is_empty() {
             break;
@@ -885,17 +1055,15 @@ fn try_grid(rng: &mut ChaCha8Rng) -> Option<Grid> {
     // Also open a hole at the edge of the bridge sometimes, so the centre can be shot down into.
     if rng.random_bool(0.5) {
         let ix = rng.random_range(bx..bx + bw);
-        if g.upper[idx(ix, HALF)] {
-            g.set_upper(ix, HALF, false);
+        if g.upper[dm.idx(ix, dm.half())] {
+            g.set_upper(ix, dm.half(), false);
         }
     }
 
     // 4. Ramps: each platform gets one, the largest two; at least two per half.
     let comps = components(&g);
-    let mut comps: Vec<Vec<(usize, usize)>> = comps
-        .into_iter()
-        .filter(|c| c.iter().any(|&(_, iz)| iz >= HALF))
-        .collect();
+    let mut comps: Vec<Vec<(usize, usize)>> =
+        comps.into_iter().filter(|c| c.iter().any(|&(_, iz)| iz >= dm.half())).collect();
     comps.sort_by_key(|c| std::cmp::Reverse(c.len()));
     let mut ramps = 0;
     for (n, comp) in comps.iter().enumerate() {
@@ -911,7 +1079,7 @@ fn try_grid(rng: &mut ChaCha8Rng) -> Option<Grid> {
         if placed == 0 {
             // A platform no one can climb onto: remove it.
             for &(ix, iz) in comp {
-                if iz >= HALF {
+                if iz >= dm.half() {
                     g.set_upper(ix, iz, false);
                 }
             }
@@ -923,15 +1091,17 @@ fn try_grid(rng: &mut ChaCha8Rng) -> Option<Grid> {
     }
 
     // 5. Railings around the upper floor (except where ramps arrive).
-    for iz in HALF..=UPPER_MAX {
-        for ix in 0..W {
-            if !g.upper[idx(ix, iz)] {
+    for iz in dm.half()..=dm.upper_max() {
+        for ix in 0..dm.w {
+            if !g.upper[dm.idx(ix, iz)] {
                 continue;
             }
             for d in 0..4u8 {
-                let Some((nx, nz)) = step(ix, iz, d, 1) else { continue };
+                let Some((nx, nz)) = dm.step(ix, iz, d, 1) else {
+                    continue;
+                };
                 let e = edge(ix, iz, d);
-                if g.upper[idx(nx, nz)] || res.has_edge(e) && is_ramp_top(&g, ix, iz, d) {
+                if g.upper[dm.idx(nx, nz)] || res.has_edge(e) && is_ramp_top(&g, ix, iz, d) {
                     continue;
                 }
                 g.set_wall(1, e, Wall::Rail);
@@ -940,31 +1110,31 @@ fn try_grid(rng: &mut ChaCha8Rng) -> Option<Grid> {
     }
 
     // The target's cell walled on the upper level too (where the railings would be).
-    for ix in 0..W {
-        if let Ground::Alcove { .. } = g.ground[idx(ix, TARGET_ROW)] {
+    for ix in 0..dm.w {
+        if let Ground::Alcove { .. } = g.ground[dm.idx(ix, dm.target_row())] {
             for d in [1u8, 2, 3] {
-                g.set_wall(1, edge(ix, TARGET_ROW, d), Wall::Full);
+                g.set_wall(1, edge(ix, dm.target_row(), d), Wall::Full);
             }
         }
     }
 
     // 6. Cover on the upper floor.
     let mut upper_edges = Vec::new();
-    for iz in HALF..=UPPER_MAX {
-        for ix in 0..W {
+    for iz in dm.half()..=dm.upper_max() {
+        for ix in 0..dm.w {
             for d in [0u8, 1] {
-                if let Some((nx, nz)) = step(ix, iz, d, 1)
-                    && g.upper[idx(ix, iz)]
-                    && g.upper[idx(nx, nz)]
-                    && nz <= UPPER_MAX
-                    && !(d == 0 && iz == HALF - 1)
+                if let Some((nx, nz)) = dm.step(ix, iz, d, 1)
+                    && g.upper[dm.idx(ix, iz)]
+                    && g.upper[dm.idx(nx, nz)]
+                    && nz <= dm.upper_max()
+                    && !(d == 0 && iz == dm.half() - 1)
                 {
                     upper_edges.push(edge(ix, iz, d));
                 }
             }
         }
     }
-    for _ in 0..rng.random_range(2..=4) {
+    for _ in 0..rng.random_range(dm.scaled(2)..=dm.scaled(4)) {
         if upper_edges.is_empty() {
             break;
         }
@@ -979,10 +1149,10 @@ fn try_grid(rng: &mut ChaCha8Rng) -> Option<Grid> {
         };
         g.set_wall(1, e, w);
     }
-    for _ in 0..rng.random_range(0..=2) {
-        let ix = rng.random_range(0..W);
-        let iz = rng.random_range(HALF + 1..=UPPER_MAX);
-        if g.upper[idx(ix, iz)] && !res.has(ix, iz) && (0..4).all(|d| !is_ramp_top(&g, ix, iz, d)) {
+    for _ in 0..rng.random_range(0..=dm.scaled(2)) {
+        let ix = rng.random_range(0..dm.w);
+        let iz = rng.random_range(dm.half() + 1..=dm.upper_max());
+        if g.upper[dm.idx(ix, iz)] && !res.has(ix, iz) && (0..4).all(|d| !is_ramp_top(&g, ix, iz, d)) {
             g.set_upper_block(ix, iz, true);
         }
     }
@@ -994,13 +1164,13 @@ fn try_grid(rng: &mut ChaCha8Rng) -> Option<Grid> {
         }
         let cells: [(i32, i32); 2] = match e {
             Edge::H { l, ix } => {
-                if l == 0 || l >= H {
+                if l == 0 || l >= dm.h {
                     return false;
                 }
                 [(ix as i32, l as i32 - 1), (ix as i32, l as i32)]
             }
             Edge::V { l, iz } => {
-                if l == 0 || l >= W {
+                if l == 0 || l >= dm.w {
                     return false;
                 }
                 [(l as i32 - 1, iz as i32), (l as i32, iz as i32)]
@@ -1008,10 +1178,10 @@ fn try_grid(rng: &mut ChaCha8Rng) -> Option<Grid> {
         };
         cells.iter().all(|&(x, z)| {
             let (x, z) = (x as usize, z as usize);
-            !res.has(x, z) && g.ground[idx(x, z)] == Ground::Open
+            !res.has(x, z) && g.ground[dm.idx(x, z)] == Ground::Open
         }) && g.edge_wall(0, e) == Wall::None
     };
-    for _ in 0..rng.random_range(10..=14) {
+    for _ in 0..rng.random_range(dm.scaled(10)..=dm.scaled(14)) {
         let horizontal = rng.random_bool(0.5);
         let len = rng.random_range(1..=3usize);
         let wall = match rng.random_range(0..10) {
@@ -1019,8 +1189,8 @@ fn try_grid(rng: &mut ChaCha8Rng) -> Option<Grid> {
             3..=6 => Wall::Window,
             _ => Wall::Half,
         };
-        let ix = rng.random_range(0..W);
-        let iz = rng.random_range(HALF..H - 1);
+        let ix = rng.random_range(0..dm.w);
+        let iz = rng.random_range(dm.half()..dm.h - 1);
         for k in 0..len {
             let e = if horizontal {
                 Edge::H { l: iz + 1, ix: ix + k }
@@ -1028,8 +1198,8 @@ fn try_grid(rng: &mut ChaCha8Rng) -> Option<Grid> {
                 Edge::V { l: ix + 1, iz: iz + k }
             };
             let in_bounds = match e {
-                Edge::H { ix, .. } => ix < W,
-                Edge::V { iz, .. } => iz < H,
+                Edge::H { ix, .. } => ix < dm.w,
+                Edge::V { iz, .. } => iz < dm.h,
             };
             if !in_bounds || !free_edge(&g, &res, e) {
                 break;
@@ -1038,22 +1208,25 @@ fn try_grid(rng: &mut ChaCha8Rng) -> Option<Grid> {
         }
     }
     // Half walls across the centre line.
-    for _ in 0..rng.random_range(1..=2) {
-        let ix = rng.random_range(1..W / 2);
-        for x in [ix, W - 1 - ix] {
-            let e = Edge::H { l: HALF, ix: x };
+    for _ in 0..rng.random_range(dm.across(1)..=dm.across(2)) {
+        let ix = rng.random_range(1..dm.w / 2);
+        for x in [ix, dm.w - 1 - ix] {
+            let e = Edge::H { l: dm.half(), ix: x };
             if free_edge(&g, &res, e) {
                 g.set_wall(0, e, Wall::Half);
             }
         }
     }
     let open_cells = |g: &Grid, res: &Reserve| -> Vec<(usize, usize)> {
-        (HALF..H)
-            .flat_map(|iz| (0..W).map(move |ix| (ix, iz)))
-            .filter(|&(ix, iz)| g.ground[idx(ix, iz)] == Ground::Open && !res.has(ix, iz))
+        (dm.half()..dm.h)
+            .flat_map(|iz| (0..dm.w).map(move |ix| (ix, iz)))
+            .filter(|&(ix, iz)| g.ground[dm.idx(ix, iz)] == Ground::Open && !res.has(ix, iz))
             .collect()
     };
-    for (kind, n) in [(Ground::Pillar, rng.random_range(3..=5)), (Ground::Block, rng.random_range(4..=7))] {
+    for (kind, n) in [
+        (Ground::Pillar, rng.random_range(dm.scaled(3)..=dm.scaled(5))),
+        (Ground::Block, rng.random_range(dm.scaled(4)..=dm.scaled(7))),
+    ] {
         for _ in 0..n {
             let cells = open_cells(&g, &res);
             if cells.is_empty() {
@@ -1061,7 +1234,7 @@ fn try_grid(rng: &mut ChaCha8Rng) -> Option<Grid> {
             }
             let (ix, iz) = cells[rng.random_range(0..cells.len())];
             // Pillars under the upper floor look like supports.
-            if kind == Ground::Pillar && !g.upper[idx(ix, iz)] && rng.random_bool(0.6) {
+            if kind == Ground::Pillar && !g.upper[dm.idx(ix, iz)] && rng.random_bool(0.6) {
                 continue;
             }
             g.set_ground(ix, iz, kind);
@@ -1069,10 +1242,12 @@ fn try_grid(rng: &mut ChaCha8Rng) -> Option<Grid> {
     }
 
     // 8. Break up long open lanes along z (base to base) and along x.
-    for _ in 0..40 {
-        let Some((ix, iz)) = long_lane(&g, &res) else { break };
-        let (ix, iz) = if iz < HALF { mirror_cell(ix, iz) } else { (ix, iz) };
-        if g.ground[idx(ix, iz)] == Ground::Open && !res.has(ix, iz) {
+    for _ in 0..dm.scaled(40) {
+        let Some((ix, iz)) = long_lane(&g, &res) else {
+            break;
+        };
+        let (ix, iz) = if iz < dm.half() { dm.mirror_cell(ix, iz) } else { (ix, iz) };
+        if g.ground[dm.idx(ix, iz)] == Ground::Open && !res.has(ix, iz) {
             g.set_ground(ix, iz, if rng.random_bool(0.3) { Ground::Pillar } else { Ground::Block });
         } else {
             // Can't block here: reserve it so the next search picks another cell.
@@ -1084,33 +1259,36 @@ fn try_grid(rng: &mut ChaCha8Rng) -> Option<Grid> {
 
 /// Is the edge from upper cell (ix, iz) towards `dir` the top of a ramp?
 fn is_ramp_top(g: &Grid, ix: usize, iz: usize, dir: u8) -> bool {
-    step(ix, iz, dir, 1).is_some_and(|(x, z)| {
-        matches!(g.ground[idx(x, z)], Ground::Ramp { dir: up, seg: 2 } if up == (dir + 2) % 4)
-    })
+    let dm = g.dims;
+    dm.step(ix, iz, dir, 1)
+        .is_some_and(|(x, z)| matches!(g.ground[dm.idx(x, z)], Ground::Ramp { dir: up, seg: 2 } if up == (dir + 2) % 4))
 }
 
 /// Places a ramp climbing onto platform `comp` from Red's half. True if one was placed.
 fn place_ramp(g: &mut Grid, res: &mut Reserve, rng: &mut ChaCha8Rng, comp: &[(usize, usize)]) -> bool {
+    let dm = g.dims;
     let mut options = Vec::new();
     for &(ix, iz) in comp {
-        if iz < HALF || !g.upper[idx(ix, iz)] || g.upper_block[idx(ix, iz)] {
+        if iz < dm.half() || !g.upper[dm.idx(ix, iz)] || g.upper_block[dm.idx(ix, iz)] {
             continue;
         }
         'dirs: for d in 0..4u8 {
             let mut cells = Vec::new();
             for k in 1..=4 {
-                let Some((x, z)) = step(ix, iz, d, k) else { continue 'dirs };
-                if !(HALF..H).contains(&z) || g.ground[idx(x, z)] != Ground::Open {
+                let Some((x, z)) = dm.step(ix, iz, d, k) else {
+                    continue 'dirs;
+                };
+                if !(dm.half()..dm.h).contains(&z) || g.ground[dm.idx(x, z)] != Ground::Open {
                     continue 'dirs;
                 }
                 // The ramp itself: clear, nothing above it, not reserved.
-                if k <= 3 && (g.upper[idx(x, z)] || res.has(x, z)) {
+                if k <= 3 && (g.upper[dm.idx(x, z)] || res.has(x, z)) {
                     continue 'dirs;
                 }
                 cells.push((x, z));
             }
             // Ramps along x in the centre row would collide with their own mirror image.
-            if z_row_conflict(&cells) {
+            if z_row_conflict(dm, &cells) {
                 continue;
             }
             options.push((ix, iz, d, cells));
@@ -1134,30 +1312,31 @@ fn place_ramp(g: &mut Grid, res: &mut Reserve, rng: &mut ChaCha8Rng, comp: &[(us
     true
 }
 
-fn z_row_conflict(cells: &[(usize, usize)]) -> bool {
-    cells.iter().take(3).any(|&(_, z)| z == HALF - 1 || z < HALF)
+fn z_row_conflict(dm: Dims, cells: &[(usize, usize)]) -> bool {
+    cells.iter().take(3).any(|&(_, z)| z == dm.half() - 1 || z < dm.half())
 }
 
 /// Connected groups of upper-floor cells (over the whole arena).
 fn components(g: &Grid) -> Vec<Vec<(usize, usize)>> {
-    let mut seen = vec![false; W * H];
+    let dm = g.dims;
+    let mut seen = vec![false; dm.w * dm.h];
     let mut out = Vec::new();
-    for iz in 0..H {
-        for ix in 0..W {
-            if !g.upper[idx(ix, iz)] || seen[idx(ix, iz)] {
+    for iz in 0..dm.h {
+        for ix in 0..dm.w {
+            if !g.upper[dm.idx(ix, iz)] || seen[dm.idx(ix, iz)] {
                 continue;
             }
             let mut comp = Vec::new();
             let mut stack = vec![(ix, iz)];
-            seen[idx(ix, iz)] = true;
+            seen[dm.idx(ix, iz)] = true;
             while let Some((x, z)) = stack.pop() {
                 comp.push((x, z));
                 for d in 0..4 {
-                    if let Some((nx, nz)) = step(x, z, d, 1)
-                        && g.upper[idx(nx, nz)]
-                        && !seen[idx(nx, nz)]
+                    if let Some((nx, nz)) = dm.step(x, z, d, 1)
+                        && g.upper[dm.idx(nx, nz)]
+                        && !seen[dm.idx(nx, nz)]
                     {
-                        seen[idx(nx, nz)] = true;
+                        seen[dm.idx(nx, nz)] = true;
                         stack.push((nx, nz));
                     }
                 }
@@ -1170,12 +1349,13 @@ fn components(g: &Grid) -> Vec<Vec<(usize, usize)>> {
 
 /// A cell in the middle of an open ground lane longer than allowed, if any.
 fn long_lane(g: &Grid, res: &Reserve) -> Option<(usize, usize)> {
-    let open = |ix: usize, iz: usize| matches!(g.ground[idx(ix, iz)], Ground::Open | Ground::Spawn);
+    let dm = g.dims;
+    let open = |ix: usize, iz: usize| matches!(g.ground[dm.idx(ix, iz)], Ground::Open | Ground::Spawn);
     // Along z, across the whole arena.
-    for ix in 0..W {
+    for ix in 0..dm.w {
         let mut start = 0;
         let mut run = 0;
-        for iz in 0..H {
+        for iz in 0..dm.h {
             let wall = iz > 0 && g.edge_wall(0, Edge::H { l: iz, ix }) != Wall::None;
             if !open(ix, iz) || wall {
                 run = 0;
@@ -1195,8 +1375,8 @@ fn long_lane(g: &Grid, res: &Reserve) -> Option<(usize, usize)> {
                         continue;
                     }
                     let z = z as usize;
-                    let (rx, rz) = if z < HALF { mirror_cell(ix, z) } else { (ix, z) };
-                    if g.ground[idx(rx, rz)] == Ground::Open && !res.has(rx, rz) {
+                    let (rx, rz) = if z < dm.half() { dm.mirror_cell(ix, z) } else { (ix, z) };
+                    if g.ground[dm.idx(rx, rz)] == Ground::Open && !res.has(rx, rz) {
                         return Some((rx, rz));
                     }
                 }
@@ -1205,10 +1385,10 @@ fn long_lane(g: &Grid, res: &Reserve) -> Option<(usize, usize)> {
         }
     }
     // Along x, in Red's half.
-    for iz in HALF..H {
+    for iz in dm.half()..dm.h {
         let mut run = 0;
         let mut start = 0;
-        for ix in 0..W {
+        for ix in 0..dm.w {
             let wall = ix > 0 && g.edge_wall(0, Edge::V { l: ix, iz }) != Wall::None;
             if !open(ix, iz) || wall {
                 run = 0;
@@ -1221,8 +1401,8 @@ fn long_lane(g: &Grid, res: &Reserve) -> Option<(usize, usize)> {
             run += 1;
             if run > 9 {
                 for x in start..start + run {
-                    let x = (x + run / 3) % W;
-                    if g.ground[idx(x, iz)] == Ground::Open && !res.has(x, iz) {
+                    let x = (x + run / 3) % dm.w;
+                    if g.ground[dm.idx(x, iz)] == Ground::Open && !res.has(x, iz) {
                         return Some((x, iz));
                     }
                 }
@@ -1234,42 +1414,49 @@ fn long_lane(g: &Grid, res: &Reserve) -> Option<(usize, usize)> {
 }
 
 fn build_nav(g: &Grid) -> Nav {
-    let n = 2 * W * H;
-    let mut nav = Nav { pos: vec![Vec3::ZERO; n], valid: vec![false; n], links: vec![Vec::new(); n], doors: Vec::new() };
-    for iz in 0..H {
-        for ix in 0..W {
-            let i = idx(ix, iz);
-            let c = cell_centre(ix, iz);
-            let gn = Nav::ground_node(ix, iz);
+    let dm = g.dims;
+    let n = 2 * dm.w * dm.h;
+    let mut nav = Nav {
+        dims: dm,
+        pos: vec![Vec3::ZERO; n],
+        valid: vec![false; n],
+        links: vec![Vec::new(); n],
+        doors: Vec::new(),
+    };
+    for iz in 0..dm.h {
+        for ix in 0..dm.w {
+            let i = dm.idx(ix, iz);
+            let c = dm.cell_centre(ix, iz);
+            let gn = dm.ground_node(ix, iz);
             nav.pos[gn] = match g.ground[i] {
                 Ground::Ramp { seg, .. } => c + Vec3::Y * (seg as f32 + 0.5) / 3.0 * STOREY,
                 _ => c,
             };
             nav.valid[gn] = g.ground[i].walkable();
-            let un = Nav::upper_node(ix, iz);
+            let un = dm.upper_node(ix, iz);
             nav.pos[un] = c + Vec3::Y * STOREY;
             nav.valid[un] = g.upper_walkable(i);
         }
     }
-    for iz in 0..H {
-        for ix in 0..W {
-            let i = idx(ix, iz);
-            let gn = Nav::ground_node(ix, iz);
+    for iz in 0..dm.h {
+        for ix in 0..dm.w {
+            let i = dm.idx(ix, iz);
+            let gn = dm.ground_node(ix, iz);
             match g.ground[i] {
                 Ground::Ramp { dir, seg } => {
                     // Along the ramp only: down from the low end, up from the high end.
-                    if let Some((x, z)) = step(ix, iz, dir, 1) {
-                        let next = if seg == 2 { Nav::upper_node(x, z) } else { Nav::ground_node(x, z) };
+                    if let Some((x, z)) = dm.step(ix, iz, dir, 1) {
+                        let next = if seg == 2 { dm.upper_node(x, z) } else { dm.ground_node(x, z) };
                         if nav.valid[next] {
                             nav.links[gn].push(next as u32);
                             nav.links[next].push(gn as u32);
                         }
                     }
                     if seg == 0
-                        && let Some((x, z)) = step(ix, iz, (dir + 2) % 4, 1)
+                        && let Some((x, z)) = dm.step(ix, iz, (dir + 2) % 4, 1)
                     {
-                        let prev = Nav::ground_node(x, z);
-                        if nav.valid[prev] && !matches!(g.ground[idx(x, z)], Ground::Ramp { .. }) {
+                        let prev = dm.ground_node(x, z);
+                        if nav.valid[prev] && !matches!(g.ground[dm.idx(x, z)], Ground::Ramp { .. }) {
                             nav.links[gn].push(prev as u32);
                             nav.links[prev].push(gn as u32);
                         }
@@ -1277,13 +1464,15 @@ fn build_nav(g: &Grid) -> Nav {
                 }
                 gr if gr.walkable() => {
                     for d in [0u8, 1] {
-                        let Some((x, z)) = step(ix, iz, d, 1) else { continue };
-                        let other = g.ground[idx(x, z)];
+                        let Some((x, z)) = dm.step(ix, iz, d, 1) else {
+                            continue;
+                        };
+                        let other = g.ground[dm.idx(x, z)];
                         if other.walkable()
                             && !matches!(other, Ground::Ramp { .. })
                             && g.wall(0, ix, iz, d) == Wall::None
                         {
-                            let m = Nav::ground_node(x, z);
+                            let m = dm.ground_node(x, z);
                             nav.links[gn].push(m as u32);
                             nav.links[m].push(gn as u32);
                         }
@@ -1291,11 +1480,13 @@ fn build_nav(g: &Grid) -> Nav {
                 }
                 _ => {}
             }
-            let un = Nav::upper_node(ix, iz);
+            let un = dm.upper_node(ix, iz);
             if nav.valid[un] {
                 for d in [0u8, 1] {
-                    let Some((x, z)) = step(ix, iz, d, 1) else { continue };
-                    let m = Nav::upper_node(x, z);
+                    let Some((x, z)) = dm.step(ix, iz, d, 1) else {
+                        continue;
+                    };
+                    let m = dm.upper_node(x, z);
                     if nav.valid[m] && g.wall(1, ix, iz, d) == Wall::None {
                         nav.links[un].push(m as u32);
                         nav.links[m].push(un as u32);
@@ -1309,31 +1500,37 @@ fn build_nav(g: &Grid) -> Nav {
 
 /// A spawn pad's cell of `team`.
 fn spawn_cell(g: &Grid, team: Team) -> Option<(usize, usize)> {
-    (0..H)
-        .flat_map(|iz| (0..W).map(move |ix| (ix, iz)))
-        .find(|&(ix, iz)| g.ground[idx(ix, iz)] == Ground::Spawn && Team::of_z(cell_centre(ix, iz).z) == team)
+    let dm = g.dims;
+    (0..dm.h)
+        .flat_map(|iz| (0..dm.w).map(move |ix| (ix, iz)))
+        .find(|&(ix, iz)| g.ground[dm.idx(ix, iz)] == Ground::Spawn && Team::of_z(dm.cell_centre(ix, iz).z) == team)
 }
 
 fn validate(g: &Grid, nav: &Nav) -> bool {
-    let (Some(red), Some(blue)) = (spawn_cell(g, Team::Red), spawn_cell(g, Team::Blue)) else { return false };
+    let dm = g.dims;
+    let (Some(red), Some(blue)) = (spawn_cell(g, Team::Red), spawn_cell(g, Team::Blue)) else {
+        return false;
+    };
     let spawn = |team: Team| -> usize {
         let (ix, iz) = if team == Team::Red { red } else { blue };
-        Nav::ground_node(ix, iz)
+        dm.ground_node(ix, iz)
     };
     let seen = nav.reach(spawn(Team::Red));
     if !seen[spawn(Team::Blue)] {
         return false;
     }
     // Both target rears (Blue's targets are what Red has to reach).
-    for iz in 0..H {
-        for ix in 0..W {
-            if let Ground::Alcove { facing } = g.ground[idx(ix, iz)] {
-                let Some((x, z)) = step(ix, iz, facing, 1) else { return false };
-                if !seen[Nav::ground_node(x, z)] {
+    for iz in 0..dm.h {
+        for ix in 0..dm.w {
+            if let Ground::Alcove { facing } = g.ground[dm.idx(ix, iz)] {
+                let Some((x, z)) = dm.step(ix, iz, facing, 1) else {
+                    return false;
+                };
+                if !seen[dm.ground_node(x, z)] {
                     return false;
                 }
             }
-            if matches!(g.ground[idx(ix, iz)], Ground::Ramp { .. }) && !seen[Nav::ground_node(ix, iz)] {
+            if matches!(g.ground[dm.idx(ix, iz)], Ground::Ramp { .. }) && !seen[dm.ground_node(ix, iz)] {
                 return false;
             }
         }
@@ -1343,10 +1540,10 @@ fn validate(g: &Grid, nav: &Nav) -> bool {
     }
     let total = nav.valid.iter().filter(|v| **v).count();
     let reached = nav.valid.iter().zip(&seen).filter(|(v, s)| **v && **s).count();
-    let upper_total = (0..W * H).filter(|&i| nav.valid[W * H + i]).count();
-    let upper_reached = (0..W * H).filter(|&i| nav.valid[W * H + i] && seen[W * H + i]).count();
+    let upper_total = (0..dm.w * dm.h).filter(|&i| nav.valid[dm.w * dm.h + i]).count();
+    let upper_reached = (0..dm.w * dm.h).filter(|&i| nav.valid[dm.w * dm.h + i] && seen[dm.w * dm.h + i]).count();
     // The centre is reachable on the ground.
-    let centre = (0..W).any(|ix| seen[Nav::ground_node(ix, HALF)]);
+    let centre = (0..dm.w).any(|ix| seen[dm.ground_node(ix, dm.half())]);
     centre
         && reached as f32 >= 0.9 * total as f32
         && upper_total > 0
@@ -1366,30 +1563,36 @@ type CellXZ = (usize, usize);
 /// Picks the doors and sliding panels for Red's half (and mirrors them): marks the doors in
 /// the grid (`Wall::Door`) and returns the movers.
 fn place_movers(g: &mut Grid, nav: &Nav, rng: &mut ChaCha8Rng) -> Vec<Mover> {
+    let dm = g.dims;
     let near_alcove = |ix: usize, iz: usize| -> bool {
-        (iz.saturating_sub(1)..=(iz + 1).min(H - 1))
-            .any(|z| (ix.saturating_sub(1)..=(ix + 1).min(W - 1)).any(|x| matches!(g.ground[idx(x, z)], Ground::Alcove { .. })))
+        (iz.saturating_sub(1)..=(iz + 1).min(dm.h - 1)).any(|z| {
+            (ix.saturating_sub(1)..=(ix + 1).min(dm.w - 1))
+                .any(|x| matches!(g.ground[dm.idx(x, z)], Ground::Alcove { .. }))
+        })
     };
     let near_kind = |ix: usize, iz: usize, f: &dyn Fn(Ground) -> bool| -> bool {
-        f(g.ground[idx(ix, iz)]) || (0..4).any(|d| step(ix, iz, d, 1).is_some_and(|(x, z)| f(g.ground[idx(x, z)])))
+        f(g.ground[dm.idx(ix, iz)])
+            || (0..4).any(|d| dm.step(ix, iz, d, 1).is_some_and(|(x, z)| f(g.ground[dm.idx(x, z)])))
     };
-    let open = |ix: usize, iz: usize| g.ground[idx(ix, iz)] == Ground::Open;
+    let open = |ix: usize, iz: usize| g.ground[dm.idx(ix, iz)] == Ground::Open;
 
     // Doors: walls between two open cells of Red's half, outside the base, away from the
     // targets, where walking around takes a while (the door makes a real shortcut).
     let mut cands: Vec<(f32, Edge, CellXZ, CellXZ)> = Vec::new();
-    for iz in HALF + 1..BASE_ROW - 1 {
-        for ix in 0..W {
+    for iz in dm.half() + 1..dm.base_row() - 1 {
+        for ix in 0..dm.w {
             for d in [0u8, 1] {
-                let Some((nx, nz)) = step(ix, iz, d, 1) else { continue };
+                let Some((nx, nz)) = dm.step(ix, iz, d, 1) else {
+                    continue;
+                };
                 let e = edge(ix, iz, d);
-                if nz >= BASE_ROW - 1 || !matches!(g.edge_wall(0, e), Wall::Full | Wall::Window | Wall::Half) {
+                if nz >= dm.base_row() - 1 || !matches!(g.edge_wall(0, e), Wall::Full | Wall::Window | Wall::Half) {
                     continue;
                 }
                 if !open(ix, iz) || !open(nx, nz) || near_alcove(ix, iz) || near_alcove(nx, nz) {
                     continue;
                 }
-                let (a, b) = (Nav::ground_node(ix, iz), Nav::ground_node(nx, nz));
+                let (a, b) = (dm.ground_node(ix, iz), dm.ground_node(nx, nz));
                 let Some(path) = nav.path(a, b) else { continue };
                 let detour = path.len() as f32 - 1.0;
                 if detour < 3.0 {
@@ -1400,7 +1603,7 @@ fn place_movers(g: &mut Grid, nav: &Nav, rng: &mut ChaCha8Rng) -> Vec<Mover> {
         }
     }
     cands.sort_by(|a, b| b.0.total_cmp(&a.0));
-    let want = rng.random_range(2..=3usize);
+    let want = rng.random_range(dm.scaled(2)..=dm.scaled(3));
     let mut chosen: Vec<(Edge, CellXZ, CellXZ)> = Vec::new();
     for &(_, e, a, b) in &cands {
         if chosen.len() >= want {
@@ -1417,11 +1620,15 @@ fn place_movers(g: &mut Grid, nav: &Nav, rng: &mut ChaCha8Rng) -> Vec<Mover> {
     let start = rng.random_range(0..period);
     for (k, &(e, a, b)) in chosen.iter().enumerate() {
         let (pos, rot) = match e {
-            Edge::H { l, ix } => (Vec3::new((ix as f32 + 0.5) * CELL - HALF_WIDTH, 0.0, l as f32 * CELL - HALF_LENGTH), 0),
-            Edge::V { l, iz } => (Vec3::new(l as f32 * CELL - HALF_WIDTH, 0.0, (iz as f32 + 0.5) * CELL - HALF_LENGTH), 1),
+            Edge::H { l, ix } => {
+                (Vec3::new((ix as f32 + 0.5) * CELL - dm.half_width(), 0.0, l as f32 * CELL - dm.half_length()), 0)
+            }
+            Edge::V { l, iz } => {
+                (Vec3::new(l as f32 * CELL - dm.half_width(), 0.0, (iz as f32 + 0.5) * CELL - dm.half_length()), 1)
+            }
         };
         let phase = (start + k as u32 * period / n_pairs) % period;
-        let mirror = |(x, z): (usize, usize)| mirror_cell(x, z);
+        let mirror = |(x, z): (usize, usize)| dm.mirror_cell(x, z);
         for (pos, a, b) in [(pos, a, b), (mirror_point(pos), mirror(a), mirror(b))] {
             movers.push(Mover {
                 kind: MoverKind::Door,
@@ -1432,7 +1639,7 @@ fn place_movers(g: &mut Grid, nav: &Nav, rng: &mut ChaCha8Rng) -> Vec<Mover> {
                 hold: DOOR_HOLD,
                 move_ticks: DOOR_MOVE,
                 phase,
-                link: Some((Nav::ground_node(a.0, a.1) as u32, Nav::ground_node(b.0, b.1) as u32)),
+                link: Some((dm.ground_node(a.0, a.1) as u32, dm.ground_node(b.0, b.1) as u32)),
             });
         }
     }
@@ -1440,17 +1647,19 @@ fn place_movers(g: &mut Grid, nav: &Nav, rng: &mut ChaCha8Rng) -> Vec<Mover> {
     // Sliding panels: a straight track of 2-3 open cells with open cells past both ends and
     // nothing in the way, in the open (not by ramps, stations or targets).
     let mut tracks: Vec<(f32, Vec<CellXZ>, u8)> = Vec::new();
-    for iz in HALF + 1..BASE_ROW - 1 {
-        for ix in 0..W {
+    for iz in dm.half() + 1..dm.base_row() - 1 {
+        for ix in 0..dm.w {
             for d in [0u8, 1] {
                 for len in 2..=3i32 {
-                    let cells: Option<Vec<(usize, usize)>> = (-1..=len).map(|k| step(ix, iz, d, k)).collect();
+                    let cells: Option<Vec<(usize, usize)>> = (-1..=len).map(|k| dm.step(ix, iz, d, k)).collect();
                     let Some(cells) = cells else { continue };
                     let ok = cells.iter().all(|&(x, z)| {
-                        (HALF + 1..BASE_ROW - 1).contains(&z)
+                        (dm.half() + 1..dm.base_row() - 1).contains(&z)
                             && open(x, z)
                             && !near_alcove(x, z)
-                            && !near_kind(x, z, &|gr| matches!(gr, Ground::Ramp { .. } | Ground::Reload | Ground::Spawn))
+                            && !near_kind(x, z, &|gr| {
+                                matches!(gr, Ground::Ramp { .. } | Ground::Reload | Ground::Spawn)
+                            })
                     }) && cells.windows(2).all(|w| g.wall(0, w[0].0, w[0].1, d) == Wall::None);
                     if !ok {
                         continue;
@@ -1459,9 +1668,9 @@ fn place_movers(g: &mut Grid, nav: &Nav, rng: &mut ChaCha8Rng) -> Vec<Mover> {
                     let side = (d + 1) % 4;
                     let roomy = cells[1..cells.len() - 1]
                         .iter()
-                        .flat_map(|&(x, z)| [step(x, z, side, 1), step(x, z, side + 2, 1)])
+                        .flat_map(|&(x, z)| [dm.step(x, z, side, 1), dm.step(x, z, side + 2, 1)])
                         .flatten()
-                        .filter(|&(x, z)| g.ground[idx(x, z)].walkable())
+                        .filter(|&(x, z)| g.ground[dm.idx(x, z)].walkable())
                         .count();
                     tracks.push((roomy as f32 + rng.random::<f32>() * 2.0, cells[1..cells.len() - 1].to_vec(), d));
                 }
@@ -1469,7 +1678,7 @@ fn place_movers(g: &mut Grid, nav: &Nav, rng: &mut ChaCha8Rng) -> Vec<Mover> {
         }
     }
     tracks.sort_by(|a, b| b.0.total_cmp(&a.0));
-    let want = rng.random_range(1..=2usize);
+    let want = rng.random_range(dm.scaled(1)..=dm.scaled(2));
     let mut used: Vec<(usize, usize)> = chosen.iter().flat_map(|&(_, a, b)| [a, b]).collect();
     let mut placed = 0;
     for (_, cells, d) in tracks {
@@ -1481,10 +1690,10 @@ fn place_movers(g: &mut Grid, nav: &Nav, rng: &mut ChaCha8Rng) -> Vec<Mover> {
         }
         used.extend(&cells);
         placed += 1;
-        let under_upper = cells.iter().any(|&(x, z)| g.upper[idx(x, z)]);
+        let under_upper = cells.iter().any(|&(x, z)| g.upper[dm.idx(x, z)]);
         let piece = if under_upper || rng.random_bool(0.5) { PieceKind::WallHalf } else { PieceKind::WallWindow };
-        let first = cell_centre(cells[0].0, cells[0].1);
-        let last = cell_centre(cells[cells.len() - 1].0, cells[cells.len() - 1].1);
+        let first = dm.cell_centre(cells[0].0, cells[0].1);
+        let last = dm.cell_centre(cells[cells.len() - 1].0, cells[cells.len() - 1].1);
         // Lengthwise along the track: a wall's length runs along X at rot 0.
         let rot = if d == 1 { 0 } else { 1 };
         let phase = rng.random_range(0..PANEL_HOLD[0] + PANEL_HOLD[1] + 2 * PANEL_MOVE);
@@ -1510,15 +1719,16 @@ fn place_movers(g: &mut Grid, nav: &Nav, rng: &mut ChaCha8Rng) -> Vec<Mover> {
 }
 
 fn build_level(seed: u64, g: Grid, nav: Nav, movers: Vec<Mover>) -> Level {
+    let dm = g.dims;
     let mut pieces = Vec::new();
     let mut targets = Vec::new();
     let mut spawns: [Vec<Spawn>; 2] = [Vec::new(), Vec::new()];
     let mut reloads = Vec::new();
     let up = Vec3::Y * STOREY;
-    for iz in 0..H {
-        for ix in 0..W {
-            let i = idx(ix, iz);
-            let c = cell_centre(ix, iz);
+    for iz in 0..dm.h {
+        for ix in 0..dm.w {
+            let i = dm.idx(ix, iz);
+            let c = dm.cell_centre(ix, iz);
             pieces.push(PieceInstance { kind: PieceKind::FloorTile, pos: c, rot: 0 });
             match g.ground[i] {
                 Ground::Open => {}
@@ -1542,7 +1752,7 @@ fn build_level(seed: u64, g: Grid, nav: Nav, movers: Vec<Mover>) -> Level {
                     pieces.push(PieceInstance { kind: PieceKind::UpperTile, pos: c + up * 2.0, rot: 0 });
                     let (pmin, pmax) = kit::target_box();
                     let (a, b) = kit::rotate_box(pmin, pmax, facing);
-                    let (rx, rz) = step(ix, iz, facing, 1).unwrap_or((ix, iz));
+                    let (rx, rz) = dm.step(ix, iz, facing, 1).unwrap_or((ix, iz));
                     targets.push(TargetDef {
                         id: 0,
                         team: Team::of_z(c.z),
@@ -1564,29 +1774,31 @@ fn build_level(seed: u64, g: Grid, nav: Nav, movers: Vec<Mover>) -> Level {
     // Walls on edges, and posts where they meet.
     for floor in 0..2 {
         let y = Vec3::Y * STOREY * floor as f32;
-        for l in 1..H {
-            for ix in 0..W {
-                if let Some(kind) = g.hwall[floor][l * W + ix].piece() {
-                    let pos = Vec3::new((ix as f32 + 0.5) * CELL - HALF_WIDTH, 0.0, l as f32 * CELL - HALF_LENGTH);
+        for l in 1..dm.h {
+            for ix in 0..dm.w {
+                if let Some(kind) = g.hwall[floor][l * dm.w + ix].piece() {
+                    let pos =
+                        Vec3::new((ix as f32 + 0.5) * CELL - dm.half_width(), 0.0, l as f32 * CELL - dm.half_length());
                     pieces.push(PieceInstance { kind, pos: pos + y, rot: 0 });
                 }
             }
         }
-        for iz in 0..H {
-            for l in 1..W {
-                if let Some(kind) = g.vwall[floor][iz * (W + 1) + l].piece() {
-                    let pos = Vec3::new(l as f32 * CELL - HALF_WIDTH, 0.0, (iz as f32 + 0.5) * CELL - HALF_LENGTH);
+        for iz in 0..dm.h {
+            for l in 1..dm.w {
+                if let Some(kind) = g.vwall[floor][iz * (dm.w + 1) + l].piece() {
+                    let pos =
+                        Vec3::new(l as f32 * CELL - dm.half_width(), 0.0, (iz as f32 + 0.5) * CELL - dm.half_length());
                     pieces.push(PieceInstance { kind, pos: pos + y, rot: 1 });
                 }
             }
         }
-        for l in 1..H {
-            for vx in 1..W {
+        for l in 1..dm.h {
+            for vx in 1..dm.w {
                 let touching = [
-                    g.hwall[floor][l * W + vx - 1],
-                    g.hwall[floor][l * W + vx],
-                    g.vwall[floor][(l - 1) * (W + 1) + vx],
-                    g.vwall[floor][l * (W + 1) + vx],
+                    g.hwall[floor][l * dm.w + vx - 1],
+                    g.hwall[floor][l * dm.w + vx],
+                    g.vwall[floor][(l - 1) * (dm.w + 1) + vx],
+                    g.vwall[floor][l * (dm.w + 1) + vx],
                 ];
                 let kind = if touching.iter().any(|w| w.tall()) {
                     PieceKind::PostFull
@@ -1595,27 +1807,39 @@ fn build_level(seed: u64, g: Grid, nav: Nav, movers: Vec<Mover>) -> Level {
                 } else {
                     continue;
                 };
-                let pos = Vec3::new(vx as f32 * CELL - HALF_WIDTH, 0.0, l as f32 * CELL - HALF_LENGTH);
+                let pos = Vec3::new(vx as f32 * CELL - dm.half_width(), 0.0, l as f32 * CELL - dm.half_length());
                 pieces.push(PieceInstance { kind, pos: pos + y, rot: 0 });
             }
         }
     }
     // The border, its inner face on the arena's edge.
     let o = kit::BORDER_T / 2.0;
-    for ix in 0..W {
-        let x = (ix as f32 + 0.5) * CELL - HALF_WIDTH;
-        pieces.push(PieceInstance { kind: PieceKind::BorderWall, pos: Vec3::new(x, 0.0, -HALF_LENGTH - o), rot: 0 });
-        pieces.push(PieceInstance { kind: PieceKind::BorderWall, pos: Vec3::new(x, 0.0, HALF_LENGTH + o), rot: 2 });
+    for ix in 0..dm.w {
+        let x = (ix as f32 + 0.5) * CELL - dm.half_width();
+        pieces.push(PieceInstance {
+            kind: PieceKind::BorderWall,
+            pos: Vec3::new(x, 0.0, -dm.half_length() - o),
+            rot: 0,
+        });
+        pieces.push(PieceInstance {
+            kind: PieceKind::BorderWall,
+            pos: Vec3::new(x, 0.0, dm.half_length() + o),
+            rot: 2,
+        });
     }
-    for iz in 0..H {
-        let z = (iz as f32 + 0.5) * CELL - HALF_LENGTH;
-        pieces.push(PieceInstance { kind: PieceKind::BorderWall, pos: Vec3::new(-HALF_WIDTH - o, 0.0, z), rot: 1 });
-        pieces.push(PieceInstance { kind: PieceKind::BorderWall, pos: Vec3::new(HALF_WIDTH + o, 0.0, z), rot: 3 });
+    for iz in 0..dm.h {
+        let z = (iz as f32 + 0.5) * CELL - dm.half_length();
+        pieces.push(PieceInstance {
+            kind: PieceKind::BorderWall,
+            pos: Vec3::new(-dm.half_width() - o, 0.0, z),
+            rot: 1,
+        });
+        pieces.push(PieceInstance { kind: PieceKind::BorderWall, pos: Vec3::new(dm.half_width() + o, 0.0, z), rot: 3 });
     }
     for (sx, sz) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
         pieces.push(PieceInstance {
             kind: PieceKind::BorderPost,
-            pos: Vec3::new(sx * (HALF_WIDTH + o), 0.0, sz * (HALF_LENGTH + o)),
+            pos: Vec3::new(sx * (dm.half_width() + o), 0.0, sz * (dm.half_length() + o)),
             rot: 0,
         });
     }
@@ -1626,8 +1850,8 @@ fn build_level(seed: u64, g: Grid, nav: Nav, movers: Vec<Mover>) -> Level {
     }
 
     let mut colliders = vec![Collider::Box {
-        min: Vec3::new(-HALF_WIDTH - 4.0, -1.0, -HALF_LENGTH - 4.0),
-        max: Vec3::new(HALF_WIDTH + 4.0, 0.0, HALF_LENGTH + 4.0),
+        min: Vec3::new(-dm.half_width() - 4.0, -1.0, -dm.half_length() - 4.0),
+        max: Vec3::new(dm.half_width() + 4.0, 0.0, dm.half_length() + 4.0),
     }];
     for p in &pieces {
         for s in p.kind.shapes() {
@@ -1655,11 +1879,12 @@ pub fn team_tint(z: f32) -> Vec4 {
 
 /// An ASCII picture of the arena (ground floor / upper floor side by side) for tests and logs.
 pub fn ascii(level: &Level) -> String {
+    let dm = level.grid.dims;
     let g = &level.grid;
     let mut s = String::new();
-    for iz in (0..H).rev() {
-        for ix in 0..W {
-            s.push(match g.ground[idx(ix, iz)] {
+    for iz in (0..dm.h).rev() {
+        for ix in 0..dm.w {
+            s.push(match g.ground[dm.idx(ix, iz)] {
                 Ground::Open => '.',
                 Ground::Spawn => 'S',
                 Ground::Pillar => 'o',
@@ -1670,8 +1895,8 @@ pub fn ascii(level: &Level) -> String {
             });
         }
         s.push_str("   ");
-        for ix in 0..W {
-            let i = idx(ix, iz);
+        for ix in 0..dm.w {
+            let i = dm.idx(ix, iz);
             s.push(if g.upper_block[i] {
                 '#'
             } else if g.upper[i] {
@@ -1689,22 +1914,30 @@ pub fn ascii(level: &Level) -> String {
 mod tests {
     use super::*;
 
-    fn seeds() -> impl Iterator<Item = u64> {
-        0..200u64
+    /// `n` arenas of the small size and n / 2 of each bigger one, with their seeds.
+    fn levels(n: u64) -> impl Iterator<Item = (u64, Level)> {
+        ArenaSize::ALL.into_iter().flat_map(move |size| {
+            let count = if size == ArenaSize::Small { n } else { n / 2 };
+            (0..count).map(move |seed| (seed, Level::generate(seed, size)))
+        })
+    }
+
+    fn seeds() -> impl Iterator<Item = (u64, Level)> {
+        levels(200)
     }
 
     #[test]
     fn levels_are_symmetric_and_connected() {
-        for seed in seeds() {
-            let level = Level::generate(seed);
+        for (seed, level) in seeds() {
+            let dm = level.dims();
             let g = &level.grid;
-            for iz in 0..H {
-                for ix in 0..W {
-                    let (mx, mz) = mirror_cell(ix, iz);
-                    let a = g.ground[idx(ix, iz)];
-                    let b = g.ground[idx(mx, mz)];
+            for iz in 0..dm.h {
+                for ix in 0..dm.w {
+                    let (mx, mz) = dm.mirror_cell(ix, iz);
+                    let a = g.ground[dm.idx(ix, iz)];
+                    let b = g.ground[dm.idx(mx, mz)];
                     assert_eq!(a.mirrored(), b, "seed {seed} cell {ix},{iz}");
-                    assert_eq!(g.upper[idx(ix, iz)], g.upper[idx(mx, mz)]);
+                    assert_eq!(g.upper[dm.idx(ix, iz)], g.upper[dm.idx(mx, mz)]);
                 }
             }
             // Pieces mirror each other.
@@ -1725,8 +1958,8 @@ mod tests {
 
     #[test]
     fn levels_have_ramps_targets_and_holes() {
-        for seed in seeds() {
-            let level = Level::generate(seed);
+        for (seed, level) in seeds() {
+            let dm = level.dims();
             let g = &level.grid;
             let ramps_red = level.pieces.iter().filter(|p| p.kind == PieceKind::Ramp && p.pos.z > 0.0).count();
             let ramps_blue = level.pieces.iter().filter(|p| p.kind == PieceKind::Ramp && p.pos.z < 0.0).count();
@@ -1735,13 +1968,11 @@ mod tests {
             assert!((1..=2).contains(&red_targets), "seed {seed}");
             assert_eq!(level.targets.len(), red_targets * 2);
             // Open areas in the upper floor (cells without floor surrounded by floor on 2+ sides).
-            let holes = (0..W * H)
+            let holes = (0..dm.w * dm.h)
                 .filter(|&i| {
-                    let (ix, iz) = (i % W, i / W);
+                    let (ix, iz) = (i % dm.w, i / dm.w);
                     !g.upper[i]
-                        && (0..4)
-                            .filter(|&d| step(ix, iz, d, 1).is_some_and(|(x, z)| g.upper[idx(x, z)]))
-                            .count()
+                        && (0..4).filter(|&d| dm.step(ix, iz, d, 1).is_some_and(|(x, z)| g.upper[dm.idx(x, z)])).count()
                             >= 2
                 })
                 .count();
@@ -1756,7 +1987,10 @@ mod tests {
             // The bases: small, in opposite corners.
             for team in Team::ALL {
                 let c = level.base_centre(team);
-                assert!(c.x.abs() > HALF_WIDTH - 3.5 && c.z.abs() > HALF_LENGTH - 2.5, "seed {seed}: base at {c}");
+                assert!(
+                    c.x.abs() > dm.half_width() - 3.5 && c.z.abs() > dm.half_length() - 2.5,
+                    "seed {seed}: base at {c}"
+                );
                 assert!(level.spawns[team.index()].iter().all(|s| s.pos.distance(c) < 3.0));
             }
             let (r, b) = (level.base_centre(Team::Red), level.base_centre(Team::Blue));
@@ -1780,8 +2014,8 @@ mod tests {
     #[test]
     fn movers_are_mirrored_and_placed_sensibly() {
         let (mut doors, mut panels) = (0, 0);
-        for seed in seeds() {
-            let level = Level::generate(seed);
+        for (seed, level) in seeds() {
+            let dm = level.dims();
             for m in &level.movers {
                 let mirror = mirror_point(m.pos);
                 let travel = mirror_point(m.travel);
@@ -1796,7 +2030,7 @@ mod tests {
                 // Not drawn as a static piece.
                 assert!(!level.pieces.iter().any(|p| (p.pos - m.pos).length() < 1e-3 && p.kind == m.piece));
                 // Out of the bases, away from the targets.
-                assert!(m.pos.z.abs() < HALF_LENGTH - 3.0 * CELL - 0.1, "seed {seed}: {m:?} in a base");
+                assert!(m.pos.z.abs() < dm.half_length() - 3.0 * CELL - 0.1, "seed {seed}: {m:?} in a base");
                 for t in &level.targets {
                     let c = t.centre();
                     assert!(
@@ -1824,21 +2058,25 @@ mod tests {
                 assert!(fr.windows(2).all(|w| (w[1] - w[0]).abs() < 0.05), "smooth");
             }
         }
-        let n = seeds().count();
-        println!("{} door pairs, {} panel pairs per arena", doors as f32 / 2.0 / n as f32, panels as f32 / 2.0 / n as f32);
+        let n = ArenaSize::ALL.iter().map(|&s| if s == ArenaSize::Small { 200 } else { 100 }).sum::<usize>();
+        println!(
+            "{} door pairs, {} panel pairs per arena",
+            doors as f32 / 2.0 / n as f32,
+            panels as f32 / 2.0 / n as f32
+        );
         assert!(doors as f32 / 2.0 / n as f32 >= 2.0, "door pairs");
         assert!(panels as f32 / 2.0 / n as f32 >= 1.0, "panel pairs");
     }
 
     #[test]
     fn levels_connected_with_doors_open_and_closed() {
-        for seed in seeds() {
-            let level = Level::generate(seed);
+        for (seed, level) in seeds() {
+            let dm = level.dims();
             for open in [false, true] {
                 let seen = level.nav.reach_with(spawn_node(&level, Team::Red), open);
                 assert!(seen[spawn_node(&level, Team::Blue)], "seed {seed}, doors open {open}");
                 for t in &level.targets {
-                    assert!(seen[Nav::ground_node(t.rear_cell.0, t.rear_cell.1)], "seed {seed}, doors open {open}");
+                    assert!(seen[dm.ground_node(t.rear_cell.0, t.rear_cell.1)], "seed {seed}, doors open {open}");
                 }
             }
             // A door's two sides are connected the long way round too.
@@ -1850,8 +2088,7 @@ mod tests {
 
     #[test]
     fn panels_never_overlap_the_arena() {
-        for seed in seeds() {
-            let level = Level::generate(seed);
+        for (seed, level) in seeds() {
             let world = level.world();
             for m in level.movers.iter().filter(|m| m.kind == MoverKind::Panel) {
                 for k in 0..=40 {
@@ -1874,14 +2111,14 @@ mod tests {
 
     #[test]
     fn targets_hit_only_from_the_rear_quarter() {
-        for seed in 0..60u64 {
-            let level = Level::generate(seed);
+        for (seed, level) in levels(60) {
+            let dm = level.dims();
             for world in [world_doors(&level, false), world_doors(&level, true)] {
                 for t in &level.targets {
                     let side = t.team.side();
                     for (n, p) in level.nav.pos.iter().enumerate() {
                         // Out of the rear quarter of the target's half.
-                        if !level.nav.valid[n] || p.z * side >= HALF_LENGTH / 2.0 - 0.01 {
+                        if !level.nav.valid[n] || p.z * side >= dm.half_length() / 2.0 - 0.01 {
                             continue;
                         }
                         for h in [0.5, 1.0, 1.7] {
@@ -1900,8 +2137,8 @@ mod tests {
 
     #[test]
     fn targets_hang_from_the_ceiling_and_are_seen_from_both_floors() {
-        for seed in seeds() {
-            let level = Level::generate(seed);
+        for (seed, level) in seeds() {
+            let dm = level.dims();
             for t in &level.targets {
                 // Just under the roof over the upper level.
                 let roof = 2.0 * STOREY - kit::FLOOR_T;
@@ -1915,31 +2152,53 @@ mod tests {
                 let [ground, upper] = level.target_spots(t);
                 assert!(ground >= 2 && upper >= 2, "seed {seed}: target {} seen from {ground} / {upper}\n{}", t.id, ascii(&level));
                 // In the rear quarter.
-                assert!(t.centre().z * t.team.side() >= HALF_LENGTH / 2.0, "seed {seed}");
+                assert!(t.centre().z * t.team.side() >= dm.half_length() / 2.0, "seed {seed}");
             }
         }
     }
 
     #[test]
     fn the_upper_level_crosses_the_arena() {
-        for seed in seeds() {
-            let level = Level::generate(seed);
+        for (seed, level) in seeds() {
             assert!(upper_crosses(&level.grid, &level.nav), "seed {seed}\n{}", ascii(&level));
         }
     }
 
     #[test]
+    fn sizes_grow() {
+        let [s, m, l] = ArenaSize::ALL.map(|a| a.dims());
+        assert_eq!((s.w, s.h), (14, 28));
+        assert!(m.half_width() / s.half_width() > 1.2 && m.half_length() / s.half_length() > 1.2);
+        assert!(l.half_width() / s.half_width() >= 1.5 && l.half_length() / s.half_length() >= 1.5);
+        for d in [s, m, l] {
+            assert_eq!(d.h % 2, 0, "two equal halves");
+            let level = Level::generate(7, ArenaSize::ALL.into_iter().find(|a| a.dims() == d).unwrap());
+            assert_eq!(level.nav.pos.len(), 2 * d.cells());
+            assert!(
+                level
+                    .pieces
+                    .iter()
+                    .all(|p| p.pos.x.abs() <= d.half_width() + 1.0 && p.pos.z.abs() <= d.half_length() + 1.0)
+            );
+        }
+    }
+
+    #[test]
     fn same_seed_same_level() {
-        let a = Level::generate(42);
-        let b = Level::generate(42);
-        assert_eq!(a.pieces, b.pieces);
-        assert_ne!(Level::generate(43).pieces, a.pieces);
+        for size in ArenaSize::ALL {
+            let a = Level::generate(42, size);
+            let b = Level::generate(42, size);
+            assert_eq!(a.pieces, b.pieces);
+            assert_ne!(Level::generate(43, size).pieces, a.pieces);
+        }
     }
 
     #[test]
     fn print_one() {
-        let level = Level::generate(1);
-        println!("{}", ascii(&level));
+        for size in ArenaSize::ALL {
+            println!("{}:\n{}", size.name(), ascii(&Level::generate(1, size)));
+        }
+        let level = Level::generate(1, ArenaSize::Small);
         for t in &level.targets {
             println!("target {} {:?} at {} facing {}", t.id, t.team, t.centre(), t.normal);
         }

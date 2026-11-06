@@ -13,7 +13,9 @@ cargo run --release --features glvr -- --gl-vr   # foveated GL renderer (Steam F
 ```
 
 Other flags: `--name NAME`, `--host [PORT]` (play and let others join), `--connect HOST[:PORT]`,
-`--difficulty easy|normal|hard` (the bots, also in the start menu), `--left-handed` (VR: the
+`--difficulty easy|normal|hard` (the bots, also in the start menu), `--arena small|medium|large|random`
+(the arenas' size in local and hosted games, also in the start menu; random picks one for every
+match), `--left-handed` (VR: the
 holster on the left hip; or `LT_LEFT_HANDED=1`), `--autopilot` (a bot plays you, for testing),
 `--match-time S` (local games), `--screenshot FILE --after 5,10`, `--quit-after S`.
 Testing: `LT_DEV="6:menu,8:leave,10:play-hard,14:hit,20:next"` scripts menu actions and hits (`options`
@@ -81,7 +83,7 @@ the saved volumes too).
 |---|---|
 | `crates/lt-sim` | The game without a renderer: rules (`rules.rs`), arena generation (`level.rs`), modular kit dimensions (`kit.rs`), collision (`collide.rs`), the simulation (`sim.rs`, 60 Hz, authoritative), bots (`bots.rs`: the `Controller` trait and the placeholder `WanderBot`). |
 | `crates/lt-net` | UDP transport (reliable and unreliable channels; ported from stealth-mission-89), protocol (CBOR + LZ4), server and client sessions, master server reporting. |
-| `crates/lt-server` | Dedicated server: `lt-server --port 27420 --bots 8 --difficulty normal --name NAME [--seed N] [--private] [--master URL]`. |
+| `crates/lt-server` | Dedicated server: `lt-server --port 27420 --bots 8 --difficulty normal --name NAME [--arena small|medium|large|random] [--seed N] [--private] [--master URL]`. |
 | `crates/lt-master`, `lt-master-proto` | Master server list (REST/JSON): `lt-master --bind 0.0.0.0:27500`, with deploy files in `crates/lt-master/deploy`. |
 | `src/` | The Bevy client: `game.rs` (local sim or connection, stepped in `FixedUpdate`, client movement prediction), `arena.rs` (kit pieces merged into chunk meshes), `materials.rs` + `assets/shaders/neon.wgsl` (neon accents and glow halos), `actors.rs` (players, bolts, grenades, sparks), `desktop.rs`, `vr.rs` (shared VR input, holster, haptics), `vrui.rs` (VR menu, end panel, hit flash; text from `segtext.rs`), `xr.rs` (bevy_mod_openxr), `glvr/` (foveated GL renderer), `audio.rs`, `hud.rs`, `sevenseg.rs`, `menu.rs`, `pause.rs` (in-game menu), `endscreen.rs` (results), `session.rs` (next match, leaving a game). |
 | `tools/models` | Blender build scripts for the kit, blaster, grenade, avatars and reload station (`build_all.sh`, conventions in its README). |
@@ -91,7 +93,10 @@ the saved volumes too).
 
 ### Arenas
 
-The generator works on a 2 m grid of 14 x 28 cells, with two storeys of 3 m. It builds Red's
+The generator works on a 2 m grid, with two storeys of 3 m: 14 x 28 cells in a small arena,
+18 x 34 in a medium one (about 25 % bigger each way) and 21 x 42 in a large one (50 %). Bigger
+arenas get more of everything (cover, platforms, holes, doors, panels), in proportion to their
+floor; the size travels to clients in the `Rules` with the seed. It builds Red's
 half (+z) and turns it half way round the centre for Blue's (so the bases are in opposite
 corners). Each half has:
 

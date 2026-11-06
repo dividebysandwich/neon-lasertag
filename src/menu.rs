@@ -1,12 +1,13 @@
 //! The flat screen's start menu: play against bots, host a LAN game, join one by address or
-//! from the master server's list, with the bots' number and difficulty. (VR modes start from
-//! the command line.) Shown at the start (nothing chosen on the command line) and whenever a
+//! from the master server's list, with the bots' number and difficulty and the arenas' size.
+//! (VR modes start from the command line.) Shown at the start (nothing chosen on the command line) and whenever a
 //! game is left (src/session.rs inserts `ShowMenu`).
 
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::prelude::*;
 use lt_net::{ListSlot, ServerEntry, fetch_list_into};
 use lt_sim::bots::Difficulty;
+use lt_sim::level::SizeChoice;
 
 use crate::Args;
 use crate::desktop::Overlays;
@@ -22,6 +23,7 @@ enum Action {
     JoinServer(String),
     MoreBots(i32),
     Difficulty(Difficulty),
+    Arena(SizeChoice),
     Refresh,
     Options,
     Quit,
@@ -47,12 +49,13 @@ struct Choices {
     address: String,
     bots: usize,
     difficulty: Difficulty,
+    arena: SizeChoice,
 }
 
 /// The menu has made its choice: start this game.
 #[derive(Resource, Clone)]
 pub enum Start {
-    Local { host: bool, bots: usize, difficulty: Difficulty },
+    Local { host: bool, bots: usize, difficulty: Difficulty, arena: SizeChoice },
     Join(String),
 }
 
@@ -75,7 +78,12 @@ impl Plugin for MenuPlugin {
 }
 
 fn first(mut commands: Commands, args: Res<Args>) {
-    commands.insert_resource(Choices { address: String::new(), bots: args.bots, difficulty: args.difficulty });
+    commands.insert_resource(Choices {
+        address: String::new(),
+        bots: args.bots,
+        difficulty: args.difficulty,
+        arena: args.arena,
+    });
     if args.menu {
         commands.insert_resource(ShowMenu);
     }
@@ -152,6 +160,13 @@ fn spawn(mut commands: Commands, old: Query<Entity, With<MenuRoot>>) {
                 }
             });
             p.spawn(Node { column_gap: Val::Px(10.0), align_items: AlignItems::Center, ..default() }).with_children(|r| {
+                r.spawn(label("Arena:", 22.0, Color::WHITE));
+                for a in SizeChoice::ALL {
+                    let n = a.name();
+                    button(r, &format!("{}{}", n[..1].to_uppercase(), &n[1..]), Action::Arena(a));
+                }
+            });
+            p.spawn(Node { column_gap: Val::Px(10.0), align_items: AlignItems::Center, ..default() }).with_children(|r| {
                 r.spawn(label("Join address:", 22.0, Color::WHITE));
                 r.spawn((
                     Node { width: Val::Px(320.0), padding: UiRect::all(Val::Px(8.0)), ..default() },
@@ -214,7 +229,12 @@ fn buttons(
             commands.entity(e).despawn();
         }
         commands.remove_resource::<MenuState>();
-        commands.insert_resource(Start::Local { host: false, bots: choices.bots, difficulty: p.0 });
+        commands.insert_resource(Start::Local {
+            host: false,
+            bots: choices.bots,
+            difficulty: p.0,
+            arena: choices.arena,
+        });
         return;
     }
     if let Ok(mut t) = bots_text.single_mut() {
@@ -225,11 +245,14 @@ fn buttons(
         t.0 = format!("{}{caret}", choices.address);
     }
     for (a, mut b) in &mut borders {
-        if let Action::Difficulty(d) = a {
-            let want = BorderColor::all(if *d == choices.difficulty { BORDER_ON } else { BORDER });
-            if *b != want {
-                *b = want;
-            }
+        let on = match a {
+            Action::Difficulty(d) => *d == choices.difficulty,
+            Action::Arena(s) => *s == choices.arena,
+            _ => continue,
+        };
+        let want = BorderColor::all(if on { BORDER_ON } else { BORDER });
+        if *b != want {
+            *b = want;
         }
     }
     for (i, action) in &q {
@@ -237,8 +260,18 @@ fn buttons(
             continue;
         }
         let start = match action.clone() {
-            Action::Bots => Some(Start::Local { host: false, bots: choices.bots, difficulty: choices.difficulty }),
-            Action::Host => Some(Start::Local { host: true, bots: choices.bots, difficulty: choices.difficulty }),
+            Action::Bots => Some(Start::Local {
+                host: false,
+                bots: choices.bots,
+                difficulty: choices.difficulty,
+                arena: choices.arena,
+            }),
+            Action::Host => Some(Start::Local {
+                host: true,
+                bots: choices.bots,
+                difficulty: choices.difficulty,
+                arena: choices.arena,
+            }),
             Action::Join if !choices.address.trim().is_empty() => Some(Start::Join(choices.address.trim().to_string())),
             Action::JoinServer(addr) => Some(Start::Join(addr)),
             Action::MoreBots(d) => {
@@ -247,6 +280,10 @@ fn buttons(
             }
             Action::Difficulty(d) => {
                 choices.difficulty = d;
+                None
+            }
+            Action::Arena(a) => {
+                choices.arena = a;
                 None
             }
             Action::Refresh => {

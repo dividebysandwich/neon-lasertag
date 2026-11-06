@@ -4,7 +4,7 @@
 //! above it the time left; VR players also get one on the wrist (src/xr.rs).
 
 use bevy::prelude::*;
-use lt_sim::level::{HALF_LENGTH, Level};
+use lt_sim::level::Level;
 
 use crate::game::Game;
 use crate::materials::{AccentMaterial, Palette};
@@ -143,7 +143,7 @@ fn spawn_panel(
     }
 }
 
-pub fn spawn_scoreboards(commands: &mut Commands, _level: &Level, palette: &Palette, meshes: &mut Assets<Mesh>) {
+pub fn spawn_scoreboards(commands: &mut Commands, level: &Level, palette: &Palette, meshes: &mut Assets<Mesh>) {
     commands.queue(|world: &mut World| {
         let mut boards = world.resource_mut::<Boards>();
         boards.digits.clear();
@@ -174,7 +174,8 @@ pub fn spawn_scoreboards(commands: &mut Commands, _level: &Level, palette: &Pale
             .spawn((
                 Scoreboard,
                 crate::arena::ArenaPart,
-                Transform::from_translation(Vec3::new(0.0, 0.0, side * (HALF_LENGTH - OUT))).with_rotation(rot),
+                Transform::from_translation(Vec3::new(0.0, 0.0, side * (level.dims().half_length() - OUT)))
+                    .with_rotation(rot),
                 Visibility::default(),
             ))
             .id();

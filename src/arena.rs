@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use lt_sim::kit::{self, PieceKind, Shape};
-use lt_sim::level::{HALF_LENGTH, HALF_WIDTH, Level};
+use lt_sim::level::Level;
 
 use crate::assets::{MeshData, load_glb};
 use crate::materials::{BLUE, Palette, RED, WHITE, ZONE_COLORS};
@@ -82,7 +82,9 @@ fn islands(m: &MeshData) -> Vec<MeshData> {
         }
     }
     let mut out: Vec<MeshData> = groups.into_values().collect();
-    out.sort_by(|a, b| a.bounds().0.to_array().partial_cmp(&b.bounds().0.to_array()).unwrap_or(std::cmp::Ordering::Equal));
+    out.sort_by(|a, b| {
+        a.bounds().0.to_array().partial_cmp(&b.bounds().0.to_array()).unwrap_or(std::cmp::Ordering::Equal)
+    });
     out
 }
 
@@ -263,7 +265,8 @@ pub fn zone_color(level: &Level, pos: Vec3) -> Vec3 {
         // Zones: four bands across, two along each half, upper floor apart from the ground.
         // Blue's half is Red's turned round the centre: so are the zones.
         let x = if pos.z >= 0.0 { pos.x } else { -pos.x };
-        let zx = ((x + HALF_WIDTH) / (HALF_WIDTH * 2.0 / 4.0)).floor().clamp(0.0, 3.0) as u64;
+        let hw = level.dims().half_width();
+        let zx = ((x + hw) / (hw * 2.0 / 4.0)).floor().clamp(0.0, 3.0) as u64;
         let zz = (pos.z.abs() / (ZONE_EDGE / 2.0)).floor().min(1.0) as u64;
         let floor = (pos.y > 1.5) as u64;
         let h = (level.seed ^ (zx * 0x9E37_79B9) ^ (zz * 0x85EB_CA6B) ^ (floor * 0xC2B2_AE35))
@@ -325,14 +328,13 @@ pub fn spawn_arena(
     meshes: &mut Assets<Mesh>,
 ) {
     spawn_movers(commands, level, kit, palette, meshes);
-    let nx = ((HALF_WIDTH * 2.0 + 4.0) / CHUNK).ceil() as i32;
+    let (hw, hl) = (level.dims().half_width(), level.dims().half_length());
     let mut chunks: HashMap<(i32, i32), HashMap<&str, MeshData>> = HashMap::new();
     for p in &level.pieces {
-        let Some(parts) = kit.pieces.get(&p.kind) else { continue };
-        let key = (
-            ((p.pos.x + HALF_WIDTH + 2.0) / CHUNK).floor() as i32,
-            ((p.pos.z + HALF_LENGTH + 2.0) / CHUNK).floor() as i32,
-        );
+        let Some(parts) = kit.pieces.get(&p.kind) else {
+            continue;
+        };
+        let key = (((p.pos.x + hw + 2.0) / CHUNK).floor() as i32, ((p.pos.z + hl + 2.0) / CHUNK).floor() as i32);
         let chunk = chunks.entry(key).or_default();
         let rot = kit::turn(p.rot);
         let (tint, important) = zone_tint(level, p.kind, p.pos);
@@ -355,7 +357,6 @@ pub fn spawn_arena(
             }
         }
     }
-    let _ = nx;
     for (_, parts) in chunks {
         for (slot, data) in parts {
             if data.is_empty() {

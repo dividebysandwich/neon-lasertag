@@ -83,7 +83,7 @@ impl NeonUniform {
     fn new(color: Vec3, intensity: f32, mode: f32) -> Self {
         NeonUniform {
             color: color.extend(intensity),
-            params: Vec4::new(mode, 0.0, 0.0, lt_sim::level::HALF_LENGTH),
+            params: Vec4::new(mode, 0.0, 0.0, lt_sim::level::ArenaSize::Small.dims().half_length()),
             red: RED.extend(1.0),
             blue: BLUE.extend(1.0),
             pulse_pos: [Vec4::new(0.0, 0.0, 0.0, -1.0); PULSES],
@@ -99,6 +99,7 @@ impl NeonUniform {
     fn apply(&mut self, g: &NeonGlobals, glow: bool) {
         self.params.y = if glow { 1.0 } else { 0.0 };
         self.params.z = g.time;
+        self.params.w = g.half_length;
         self.red = RED.extend(1.0);
         self.blue = BLUE.extend(1.0);
         for (i, p) in g.pulses.iter().enumerate() {
@@ -177,11 +178,18 @@ pub struct NeonGlobals {
     /// (origin, start time (negative: unused), colour).
     pub pulses: [(Vec3, f32, Vec3); PULSES],
     next: usize,
+    /// Half the arena's length (m): the waves run from its ends.
+    pub half_length: f32,
 }
 
 impl Default for NeonGlobals {
     fn default() -> Self {
-        NeonGlobals { time: 0.0, pulses: [(Vec3::ZERO, -1.0, Vec3::ZERO); PULSES], next: 0 }
+        NeonGlobals {
+            time: 0.0,
+            pulses: [(Vec3::ZERO, -1.0, Vec3::ZERO); PULSES],
+            next: 0,
+            half_length: lt_sim::level::ArenaSize::Small.dims().half_length(),
+        }
     }
 }
 
@@ -321,11 +329,15 @@ fn animate_border(
 
 fn animate(
     time: Res<Time>,
+    game: Option<Res<crate::game::Game>>,
     mut globals: ResMut<NeonGlobals>,
     mut accents: ResMut<Assets<AccentMaterial>>,
     mut glows: ResMut<Assets<GlowMaterial>>,
 ) {
     globals.time = time.elapsed_secs_wrapped();
+    if let Some(game) = game {
+        globals.half_length = game.level.dims().half_length();
+    }
     for (_, m) in accents.iter_mut() {
         m.neon.apply(&globals, false);
     }

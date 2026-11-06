@@ -3,7 +3,8 @@
 //! ```text
 //! lasertag [--vr | --gl-vr] [--seed N] [--bots N] [--name NAME]
 //!          [--host [PORT]] [--connect HOST[:PORT]] [--autopilot]
-//!          [--difficulty easy|normal|hard] [--left-handed] [--match-time SECS]
+//!          [--difficulty easy|normal|hard] [--arena small|medium|large|random]
+//!          [--left-handed] [--match-time SECS]
 //!          [--screenshot FILE --after SECS] [--quit-after SECS]
 //! ```
 //!
@@ -21,6 +22,8 @@ pub mod audio;
 pub mod desktop;
 pub mod endscreen;
 pub mod game;
+#[cfg(all(feature = "glvr", target_os = "linux"))]
+pub mod glvr;
 pub mod hud;
 pub mod materials;
 pub mod menu;
@@ -37,8 +40,6 @@ pub mod vr;
 pub mod vrui;
 #[cfg(feature = "xr")]
 pub mod xr;
-#[cfg(all(feature = "glvr", target_os = "linux"))]
-pub mod glvr;
 
 use std::time::Duration;
 
@@ -70,6 +71,8 @@ pub struct Args {
     pub autopilot: bool,
     /// The bots' skill in local and hosted games.
     pub difficulty: Difficulty,
+    /// The arenas' size in local and hosted games (`Random`: a new one every match).
+    pub arena: lt_sim::level::SizeChoice,
     /// VR: the holster on the left hip (`--left-handed` or `LT_LEFT_HANDED=1`).
     pub left_handed: bool,
     /// Local games: the match's length in seconds (testing).
@@ -92,6 +95,7 @@ impl Args {
             connect: None,
             autopilot: false,
             difficulty: Difficulty::default(),
+            arena: lt_sim::level::SizeChoice::default(),
             left_handed: std::env::var("LT_LEFT_HANDED").is_ok_and(|v| v == "1"),
             match_time: None,
             screenshot: None,
@@ -125,6 +129,10 @@ impl Args {
                 "--difficulty" => match next(&mut i).as_deref().and_then(Difficulty::parse) {
                     Some(d) => a.difficulty = d,
                     None => eprintln!("--difficulty: easy, normal or hard"),
+                },
+                "--arena" => match next(&mut i).as_deref().and_then(lt_sim::level::SizeChoice::parse) {
+                    Some(s) => a.arena = s,
+                    None => eprintln!("--arena: small, medium, large or random"),
                 },
                 "--left-handed" => a.left_handed = true,
                 "--match-time" => a.match_time = next(&mut i).and_then(|v| v.parse().ok()),
@@ -244,7 +252,12 @@ fn setup(mut commands: Commands, args: Res<Args>, mut meshes: ResMut<Assets<Mesh
     if !(args.menu && args.mode == Mode::Desktop) {
         commands.insert_resource(match &args.connect {
             Some(addr) => menu::Start::Join(addr.clone()),
-            None => menu::Start::Local { host: args.host.is_some(), bots: args.bots, difficulty: args.difficulty },
+            None => menu::Start::Local {
+                host: args.host.is_some(),
+                bots: args.bots,
+                difficulty: args.difficulty,
+                arena: args.arena,
+            },
         });
     }
 }
@@ -268,24 +281,31 @@ fn start_game(
             Err(e) => {
                 error!("can't connect to {addr}: {e}");
                 session.difficulty = args.difficulty;
+                session.arena = args.arena;
                 commands.insert_resource(Game::local(
                     seed,
                     args.bots,
                     args.difficulty.skill(),
-                    args.rules(),
+                    session.rules(&args),
                     &args.name,
                     None,
                 ));
             }
         },
-        menu::Start::Local { host, bots, difficulty } => {
+        menu::Start::Local { host, bots, difficulty, arena } => {
             let port = host.then(|| args.host.unwrap_or(lt_net::protocol::DEFAULT_PORT));
             session.difficulty = difficulty;
-            let mut game = Game::local(seed, bots, difficulty.skill(), args.rules(), &args.name, port);
+            session.arena = arena;
+            let mut game = Game::local(seed, bots, difficulty.skill(), session.rules(&args), &args.name, port);
             if args.autopilot {
                 session::autopilot(&mut game, seed);
             }
-            info!("arena {seed} ({})\n{}", difficulty.name(), lt_sim::level::ascii(&game.level));
+            info!(
+                "arena {seed} ({}, {})\n{}",
+                game.rules.arena.name(),
+                difficulty.name(),
+                lt_sim::level::ascii(&game.level)
+            );
             commands.insert_resource(game);
         }
     }
@@ -298,7 +318,7 @@ fn connect(mut commands: Commands, connecting: Option<ResMut<Connecting>>, game:
         match ev {
             ClientEvent::Welcome { id, seed, rules } => {
                 info!("joined as player {id} in arena {seed}");
-                let level = std::sync::Arc::new(Level::generate(seed));
+                let level = std::sync::Arc::new(Level::generate(seed, rules.arena));
                 let client = c.0.take().unwrap();
                 commands.insert_resource(Game::remote(client, level, rules, id));
                 commands.remove_resource::<Connecting>();

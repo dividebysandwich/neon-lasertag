@@ -26,6 +26,8 @@ pub const NEXT_MATCH_DELAY: f32 = 15.0;
 pub struct Session {
     /// The bots' difficulty in this (local) game.
     pub difficulty: Difficulty,
+    /// The arenas' size in this (local) game.
+    pub arena: lt_sim::level::SizeChoice,
     /// How long ago the match ended (None while it runs).
     pub over_for: Option<f32>,
     /// Leaving: the frames of taking the game down done so far.
@@ -33,6 +35,11 @@ pub struct Session {
 }
 
 impl Session {
+    /// The rules for the next local match: the command line's, in an arena of the chosen size.
+    pub fn rules(&self, args: &crate::Args) -> lt_sim::Rules {
+        lt_sim::Rules { arena: self.arena.pick(rand::random()), ..args.rules() }
+    }
+
     /// Seconds until a local game's next match.
     pub fn next_in(&self) -> Option<f32> {
         self.over_for.map(|t| (NEXT_MATCH_DELAY - t).max(0.0))
@@ -150,12 +157,13 @@ fn next_match(game: &mut Game, local: &LocalCmd, session: &mut Session) {
         return;
     }
     let seed = rand::random::<u32>() as u64;
+    game.rules.arena = session.arena.pick(rand::random());
     game.next_match(seed);
     if local.autopilot {
         autopilot(game, seed);
     }
     session.over_for = None;
-    info!("next match: arena {seed}\n{}", lt_sim::level::ascii(&game.level));
+    info!("next match: arena {seed} ({})\n{}", game.rules.arena.name(), lt_sim::level::ascii(&game.level));
 }
 
 fn run_commands(

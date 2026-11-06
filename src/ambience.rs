@@ -13,11 +13,11 @@ use std::f32::consts::TAU;
 
 use bevy::prelude::*;
 use lt_sim::kit::STOREY;
-use lt_sim::level::{H, HALF_LENGTH, HALF_WIDTH, Level, W, cell_centre, idx};
+use lt_sim::level::Level;
 
 use crate::arena::{ArenaPart, MoverView, zone_color};
-use crate::game::{Game, alpha};
 use crate::assets::MeshData;
+use crate::game::{Game, alpha};
 use crate::materials::{AccentMaterial, GlowMaterial, NeonUniform, WHITE, ZONE_COLORS};
 use crate::music::MusicSpectrum;
 use crate::scenery::cone;
@@ -104,17 +104,19 @@ fn mote(m: &mut MeshData, c: Vec3, r: f32) {
 /// Holes in the upper floor: open cells with floor on two or more sides.
 fn holes(level: &Level) -> Vec<(usize, usize)> {
     let g = &level.grid;
+    let dm = level.dims();
+    let (w, h) = (dm.w as i32, dm.h as i32);
     let mut out = Vec::new();
-    for iz in 0..H {
-        for ix in 0..W {
-            if g.upper[idx(ix, iz)] {
+    for iz in 0..dm.h {
+        for ix in 0..dm.w {
+            if g.upper[dm.idx(ix, iz)] {
                 continue;
             }
             let around = [(0i32, 1i32), (1, 0), (0, -1), (-1, 0)]
                 .iter()
                 .filter(|(dx, dz)| {
                     let (x, z) = (ix as i32 + dx, iz as i32 + dz);
-                    x >= 0 && z >= 0 && x < W as i32 && z < H as i32 && g.upper[idx(x as usize, z as usize)]
+                    x >= 0 && z >= 0 && x < w && z < h && g.upper[dm.idx(x as usize, z as usize)]
                 })
                 .count();
             if around >= 2 {
@@ -158,7 +160,7 @@ pub fn spawn(
     // Shafts through the upper floor's holes, grouped by colour.
     let mut shafts: Vec<(Vec3, MeshData)> = Vec::new();
     for (ix, iz) in holes(level) {
-        let c = cell_centre(ix, iz);
+        let c = level.dims().cell_centre(ix, iz);
         let colour = zone_color(level, c);
         let i = match shafts.iter().position(|(k, _)| (*k - colour).length() < 1e-3) {
             Some(i) => i,
@@ -178,7 +180,7 @@ pub fn spawn(
     // Haze: two thin layers over the floor, in drifting patches.
     for (k, (y, colour)) in [(0.08, ZONE_COLORS[0]), (0.25, ZONE_COLORS[3])].into_iter().enumerate() {
         let mut m = MeshData::default();
-        sheet(&mut m, Vec3::new(0.0, y, 0.0), Vec2::new(HALF_WIDTH, HALF_LENGTH), 0.55);
+        sheet(&mut m, Vec3::new(0.0, y, 0.0), Vec2::new(level.dims().half_width(), level.dims().half_length()), 0.55);
         let mat = glows.add(GlowMaterial { neon: NeonUniform::fixed(colour, HAZE).haze() });
         let b = Breathe { glow: mat.clone(), base: HAZE, swing: 0.08, rate: 0.07, phase: k as f32 * 2.0, bass: 0.0 };
         add(commands, m, mat, Some(b));
@@ -196,9 +198,9 @@ pub fn spawn(
         let mut m = MeshData::default();
         for _ in 0..110 {
             let p = Vec3::new(
-                (rand() * 2.0 - 1.0) * (HALF_WIDTH - 0.5),
+                (rand() * 2.0 - 1.0) * (level.dims().half_width() - 0.5),
                 0.4 + rand() * 5.5,
-                (rand() * 2.0 - 1.0) * (HALF_LENGTH - 0.5),
+                (rand() * 2.0 - 1.0) * (level.dims().half_length() - 0.5),
             );
             mote(&mut m, p, 0.012 + rand() * 0.014);
         }

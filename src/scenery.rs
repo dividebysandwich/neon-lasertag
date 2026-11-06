@@ -17,7 +17,6 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 
 use bevy::prelude::*;
 use lt_sim::kit::{BORDER_H, BORDER_T};
-use lt_sim::level::{HALF_LENGTH, HALF_WIDTH};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -44,7 +43,8 @@ const SEGMENTS: usize = 16;
 const DISP_W: f32 = 19.0;
 const DISP_H: f32 = 9.5;
 const DISP_Y0: f32 = 9.0;
-const DISP_Z: f32 = HALF_LENGTH + BORDER_T + 1.8;
+/// The displays stand this far behind the rear walls' inner faces.
+const DISP_BACK: f32 = BORDER_T + 1.8;
 const DISP_DEPTH: f32 = 0.6;
 const STACK_W: f32 = 2.3;
 const STACK_PITCH: f32 = 2.95;
@@ -350,6 +350,8 @@ impl Tier {
 /// Everything static, merged by material.
 #[derive(Default)]
 struct Parts {
+    /// Half the arena's width and length (m).
+    half: Vec2,
     body: MeshData,
     warm: MeshData,
     cool: MeshData,
@@ -504,7 +506,9 @@ fn tower(p: &mut Parts, rng: &mut StdRng, at: Vec2, d: f32, team: usize, roofs: 
     }
     let fp = lerp(7.0, 18.0, t) * rng.random_range(0.7..1.25);
     let yaw = if rng.random_bool(0.5) { rng.random_range(0.0..TAU) } else { at.to_angle() + FRAC_PI_2 };
-    let pick = |rng: &mut StdRng| if rng.random_bool(0.2) { team } else { rng.random_range(0..5) };
+    let pick = |rng: &mut StdRng| {
+        if rng.random_bool(0.2) { team } else { rng.random_range(0..5) }
+    };
     let color = pick(rng);
     let st = Style {
         color,
@@ -617,8 +621,8 @@ fn tower(p: &mut Parts, rng: &mut StdRng, at: Vec2, d: f32, team: usize, roofs: 
 }
 
 /// Distance from `p` to the arena's border (outside it).
-fn arena_distance(p: Vec2) -> f32 {
-    let q = p.abs() - Vec2::new(HALF_WIDTH + BORDER_T, HALF_LENGTH + BORDER_T);
+fn arena_distance(half: Vec2, p: Vec2) -> f32 {
+    let q = p.abs() - (half + Vec2::splat(BORDER_T));
     q.max(Vec2::ZERO).length() + q.x.max(q.y).min(0.0)
 }
 
@@ -632,7 +636,7 @@ fn city(p: &mut Parts, rng: &mut StdRng) -> Vec<(Vec3, f32)> {
             break;
         }
         let at = Vec2::new(rng.random_range(-210.0..210.0), rng.random_range(-210.0..210.0));
-        let d = arena_distance(at);
+        let d = arena_distance(p.half, at);
         if !(12.0..200.0).contains(&d) || at.length() < 25.0 {
             continue;
         }
@@ -665,7 +669,7 @@ fn emitter(p: &mut Parts, at: Vec3, dir: Vec3, r: f32, color: usize) {
 
 /// Cones from the arena's corners and long walls, and searchlights on the roofs.
 fn cones(p: &mut Parts, rng: &mut StdRng, roofs: &[(Vec3, f32)]) -> Vec<(Vec3, Quat, f32, f32, usize)> {
-    let (hx, hz) = (HALF_WIDTH + BORDER_T / 2.0, HALF_LENGTH + BORDER_T / 2.0);
+    let (hx, hz) = (p.half.x + BORDER_T / 2.0, p.half.y + BORDER_T / 2.0);
     for sx in [1.0, -1.0] {
         for sz in [1.0f32, -1.0] {
             // Beams crossing over the arena, rising, so nobody stands in them: the lower edge
@@ -726,8 +730,8 @@ fn stack_x(s: f32, b: usize) -> f32 {
     s * (2.5 - b as f32) * STACK_PITCH
 }
 
-fn front_z(s: f32) -> f32 {
-    s * (DISP_Z - DISP_DEPTH / 2.0)
+fn front_z(half_len: f32, s: f32) -> f32 {
+    s * (half_len + DISP_BACK - DISP_DEPTH / 2.0)
 }
 
 fn seg_y(j: usize) -> f32 {
@@ -735,8 +739,8 @@ fn seg_y(j: usize) -> f32 {
 }
 
 /// Segment j of stack b at end s, as a box standing out of the display.
-fn segment(m: &mut MeshData, s: f32, b: usize, j: usize) {
-    let (x, y, z) = (stack_x(s, b), seg_y(j), front_z(s));
+fn segment(m: &mut MeshData, half_len: f32, s: f32, b: usize, j: usize) {
+    let (x, y, z) = (stack_x(s, b), seg_y(j), front_z(half_len, s));
     aabox(
         m,
         Vec3::new(x - STACK_W / 2.0, y, z.min(z - s * 0.06)),
@@ -750,7 +754,7 @@ type StackMeshes = (Vec<Vec<Handle<Mesh>>>, Vec<Vec<Handle<Mesh>>>, Vec<Handle<M
 
 fn displays(p: &mut Parts, meshes: &mut Assets<Mesh>) -> StackMeshes {
     for s in [1.0f32, -1.0] {
-        let z = s * DISP_Z;
+        let z = s * (p.half.y + DISP_BACK);
         let m = 0.4;
         aabox(
             &mut p.body,
@@ -761,7 +765,7 @@ fn displays(p: &mut Parts, meshes: &mut Assets<Mesh>) -> StackMeshes {
             aabox(&mut p.body, Vec3::new(x - 0.4, 0.0, z - 0.3), Vec3::new(x + 0.4, DISP_Y0, z + 0.3));
         }
         let color = if s > 0.0 { C_RED } else { C_BLUE };
-        let fz = front_z(s) - s * 0.03;
+        let fz = front_z(p.half.y, s) - s * 0.03;
         let (x0, x1, y0, y1) = (-DISP_W / 2.0 - m, DISP_W / 2.0 + m, DISP_Y0 - m, DISP_Y0 + DISP_H + m);
         let t = 0.14;
         let n = Vec3::Z * -s;
@@ -787,7 +791,7 @@ fn displays(p: &mut Parts, meshes: &mut Assets<Mesh>) -> StackMeshes {
                 let mut m = MeshData::default();
                 for s in [1.0, -1.0] {
                     for j in 0..k {
-                        segment(&mut m, s, b, j);
+                        segment(&mut m, p.half.y, s, b, j);
                     }
                 }
                 l.push(meshes.add(m.to_mesh()));
@@ -795,7 +799,7 @@ fn displays(p: &mut Parts, meshes: &mut Assets<Mesh>) -> StackMeshes {
             let mut m = MeshData::default();
             for s in [1.0f32, -1.0] {
                 let n = Vec3::Z * -s;
-                let z = front_z(s) - s * 0.015;
+                let z = front_z(p.half.y, s) - s * 0.015;
                 let x = stack_x(s, b);
                 for j in 0..SEGMENTS {
                     let y = seg_y(j);
@@ -810,7 +814,7 @@ fn displays(p: &mut Parts, meshes: &mut Assets<Mesh>) -> StackMeshes {
                 if k > 0 {
                     let min = Vec2::new(x - STACK_W / 2.0, seg_y(0));
                     let max = Vec2::new(x + STACK_W / 2.0, seg_y(k - 1) + SEG_H);
-                    halo_rect(&mut m, min, max, front_z(s) - s * 0.04, 0.45, n);
+                    halo_rect(&mut m, min, max, front_z(p.half.y, s) - s * 0.04, 0.45, n);
                 }
             }
             h.push(meshes.add(m.to_mesh()));
@@ -822,7 +826,7 @@ fn displays(p: &mut Parts, meshes: &mut Assets<Mesh>) -> StackMeshes {
         .map(|b| {
             let mut m = MeshData::default();
             for s in [1.0, -1.0] {
-                segment(&mut m, s, b, 0);
+                segment(&mut m, p.half.y, s, b, 0);
             }
             meshes.add(m.to_mesh())
         })
@@ -854,6 +858,8 @@ fn build(
     }
     let mut rng = StdRng::seed_from_u64(seed ^ 0x5CE7_E41A_C17E_5EED);
     let mut p = Parts::default();
+    let dm = game.level.dims();
+    p.half = Vec2::new(dm.half_width(), dm.half_length());
     // The ground around the arena.
     quad(
         &mut p.body,

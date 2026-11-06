@@ -2,7 +2,7 @@
 //! the master server unless `--private`.
 //!
 //!     lt-server [--port 27420] [--name NAME] [--seed N] [--bots 8] [--difficulty normal]
-//!               [--master URL] [--private]
+//!               [--arena small|medium|large|random] [--master URL] [--private]
 
 use std::time::{Duration, Instant};
 
@@ -11,6 +11,7 @@ use lt_net::protocol::{DEFAULT_PORT, PROTOCOL};
 use lt_net::server::Server;
 use lt_net::{DEFAULT_MASTER, Reporter};
 use lt_sim::bots::{Bots, Difficulty};
+use lt_sim::level::SizeChoice;
 use lt_sim::{Rules, Sim, TICK, Team};
 
 struct Args {
@@ -19,6 +20,8 @@ struct Args {
     seed: Option<u64>,
     bots: usize,
     difficulty: Difficulty,
+    /// The arenas' size (`Random`: a new one every match).
+    arena: SizeChoice,
     master: String,
     private: bool,
 }
@@ -30,6 +33,7 @@ fn args() -> Args {
         seed: None,
         bots: 8,
         difficulty: Difficulty::default(),
+        arena: SizeChoice::default(),
         master: DEFAULT_MASTER.into(),
         private: false,
     };
@@ -44,12 +48,16 @@ fn args() -> Args {
                 Some(d) => a.difficulty = d,
                 None => eprintln!("--difficulty takes easy, normal or hard"),
             },
+            "--arena" => match it.next().as_deref().and_then(SizeChoice::parse) {
+                Some(s) => a.arena = s,
+                None => eprintln!("--arena takes small, medium, large or random"),
+            },
             "--master" => a.master = it.next().unwrap_or(a.master),
             "--private" => a.private = true,
             "-h" | "--help" => {
                 println!(
                     "lt-server [--port N] [--name NAME] [--seed N] [--bots N] [--difficulty easy|normal|hard] \
-                     [--master URL] [--private]"
+                     [--arena small|medium|large|random] [--master URL] [--private]"
                 );
                 std::process::exit(0);
             }
@@ -59,8 +67,8 @@ fn args() -> Args {
     a
 }
 
-fn new_match(seed: u64, bots: usize, difficulty: Difficulty) -> (Sim, Bots) {
-    let mut sim = Sim::new(seed, Rules::default());
+fn new_match(seed: u64, bots: usize, difficulty: Difficulty, arena: SizeChoice) -> (Sim, Bots) {
+    let mut sim = Sim::new(seed, Rules { arena: arena.pick(rand::random()), ..Rules::default() });
     let mut b = Bots::default();
     b.fill(&mut sim, bots, difficulty.skill());
     (sim, b)
@@ -93,7 +101,7 @@ fn report(server: &Server, sim: &Sim, port: u16) -> ServerReport {
 fn main() {
     let args = args();
     let mut seed = args.seed.unwrap_or_else(rand::random);
-    let (mut sim, mut bots) = new_match(seed, args.bots, args.difficulty);
+    let (mut sim, mut bots) = new_match(seed, args.bots, args.difficulty, args.arena);
     let mut server = match Server::listen(args.port, &args.name, seed) {
         Ok(s) => s,
         Err(e) => {
@@ -102,9 +110,11 @@ fn main() {
         }
     };
     println!(
-        "lasertag server \"{}\" on UDP {} (arena {seed}, {} bots, {})",
+        "lasertag server \"{}\" on UDP {} (arena {seed}, {} ({}), {} bots, {})",
         args.name,
         args.port,
+        sim.rules.arena.name(),
+        args.arena.name(),
         args.bots,
         args.difficulty.name()
     );
@@ -131,10 +141,11 @@ fn main() {
             if since.elapsed() > Duration::from_secs(10) {
                 println!("match over {:?}; next arena", sim.scores);
                 seed = rand::random();
-                let (mut next_sim, mut next_bots) = new_match(seed, args.bots, args.difficulty);
+                let (mut next_sim, mut next_bots) = new_match(seed, args.bots, args.difficulty, args.arena);
                 server.move_to(&mut next_sim, &mut next_bots, &sim);
                 sim = next_sim;
                 bots = next_bots;
+                println!("arena {seed}, {}", sim.rules.arena.name());
                 over_since = None;
             }
         }
