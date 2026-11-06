@@ -626,6 +626,67 @@ impl JumpPad {
     }
 }
 
+/// A laser gate across a gap in a wall line on the ground: on and off on a cycle (driven only
+/// by the sim tick, like the movers), and whoever walks into it while it's on takes a hit.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LaserGate {
+    /// The beams' box (thin, across the gap).
+    pub min: Vec3,
+    pub max: Vec3,
+    /// Ticks on in a cycle of `period`, and ticks into the cycle at tick 0.
+    pub on: u32,
+    pub period: u32,
+    pub phase: u32,
+    /// The two nav nodes it stands between.
+    pub link: (u32, u32),
+}
+
+/// Laser gates: ticks on, ticks off, and the warning flicker's ticks before switching on.
+const GATE_ON: u32 = 120;
+const GATE_OFF: u32 = 150;
+pub const GATE_WARN: u32 = 30;
+/// The beams' height (from the floor up to) and their thickness.
+pub const GATE_H: f32 = 1.85;
+const GATE_T: f32 = 0.08;
+
+impl LaserGate {
+    fn at(&self, tick: u64) -> u32 {
+        ((tick + self.phase as u64) % self.period.max(1) as u64) as u32
+    }
+
+    /// On (hitting whoever walks into it).
+    pub fn active(&self, tick: u64) -> bool {
+        self.at(tick) < self.on
+    }
+
+    /// Off, but about to switch on (flickering).
+    pub fn warning(&self, tick: u64) -> bool {
+        self.at(tick) >= self.period.saturating_sub(GATE_WARN)
+    }
+
+    /// Ticks until it switches on (0 while on).
+    pub fn until_on(&self, tick: u64) -> u32 {
+        let t = self.at(tick);
+        if t < self.on { 0 } else { self.period - t }
+    }
+
+    pub fn centre(&self) -> Vec3 {
+        (self.min + self.max) / 2.0
+    }
+
+    /// Whether a standing body with its feet at `feet` touches the beams.
+    pub fn touches(&self, feet: Vec3) -> bool {
+        let r = crate::collide::BODY_RADIUS;
+        let (nx, nz) = (
+            feet.x.clamp(self.min.x, self.max.x),
+            feet.z.clamp(self.min.z, self.max.z),
+        );
+        feet.y < self.max.y
+            && feet.y + crate::collide::BODY_HEIGHT > self.min.y
+            && (feet.x - nx).powi(2) + (feet.z - nz).powi(2) < r * r
+    }
+}
+
 /// A turret guarding a secondary target, on the outer face of the wall in front of it, above
 /// a doorway into the target's pocket.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -1040,6 +1101,8 @@ pub struct Level {
     pub mirrors: Vec<Panel>,
     /// Jump pads (`nav.jumps` has their links).
     pub pads: Vec<JumpPad>,
+    /// Laser gates (their nodes stay linked in `nav`).
+    pub gates: Vec<LaserGate>,
 }
 
 impl Level {
@@ -1070,8 +1133,10 @@ impl Level {
                             nav.doors.push((a, b, i));
                         }
                     }
+                    let gates = place_gates(&grid, &nav, &movers, mode, &mut rng);
                     let mut level = build_level(seed, grid, nav, movers, mode);
                     level.mirrors = mirrors;
+                    level.gates = gates;
                     level.pads = place_pads(&level, mode, &mut rng);
                     for (i, p) in level.pads.iter().enumerate() {
                         if let (Some(a), Some(b)) =
@@ -1148,16 +1213,7 @@ impl Level {
 
     /// Whether the cell is on a sliding panel's track (nothing should be put there).
     pub fn on_track(&self, ix: usize, iz: usize) -> bool {
-        let dm = self.grid.dims;
-        let c = dm.cell_centre(ix, iz);
-        self.movers
-            .iter()
-            .filter(|m| m.kind == MoverKind::Panel)
-            .any(|m| {
-                let (a, b) = (m.pos, m.pos + m.travel);
-                let (lo, hi) = (a.min(b), a.max(b));
-                c.x >= lo.x - 0.1 && c.x <= hi.x + 0.1 && c.z >= lo.z - 0.1 && c.z <= hi.z + 0.1
-            })
+        on_track(&self.movers, self.grid.dims, ix, iz)
     }
 
     /// How many places on the ground and on the upper floor (walkable cell centres, reached
@@ -2526,6 +2582,148 @@ fn place_movers(g: &mut Grid, nav: &Nav, rng: &mut ChaCha8Rng) -> Vec<Mover> {
     movers
 }
 
+/// Whether the cell is on one of `movers`' sliding panels' tracks.
+fn on_track(movers: &[Mover], dm: Dims, ix: usize, iz: usize) -> bool {
+    let c = dm.cell_centre(ix, iz);
+    movers
+        .iter()
+        .filter(|m| m.kind == MoverKind::Panel)
+        .any(|m| {
+            let (a, b) = (m.pos, m.pos + m.travel);
+            let (lo, hi) = (a.min(b), a.max(b));
+            c.x >= lo.x - 0.1 && c.x <= hi.x + 0.1 && c.z >= lo.z - 0.1 && c.z <= hi.z + 0.1
+        })
+}
+
+/// Laser gates: gaps in a wall line on the ground (an open edge between two open cells with a
+/// tall wall on each side of it along the line) in the middle of Red's half, mirrored into
+/// Blue's, each one only where the arena still passes `validate` with every gate shut.
+fn place_gates(
+    g: &Grid,
+    nav: &Nav,
+    movers: &[Mover],
+    mode: GameMode,
+    rng: &mut ChaCha8Rng,
+) -> Vec<LaserGate> {
+    let dm = g.dims;
+    let first = match mode {
+        GameMode::Classic => dm.half() + 1,
+        GameMode::Megatarget => mega_row(dm) + 6,
+    };
+    let rows = first..dm.target_row() - 1;
+    let open = |ix: usize, iz: usize| g.ground[dm.idx(ix, iz)] == Ground::Open;
+    let mut cands: Vec<(f32, Edge, CellXZ, CellXZ)> = Vec::new();
+    for iz in rows.clone() {
+        for ix in 0..dm.w {
+            for d in [0u8, 1] {
+                let Some((nx, nz)) = dm.step(ix, iz, d, 1) else {
+                    continue;
+                };
+                if !rows.contains(&nz) || !open(ix, iz) || !open(nx, nz) {
+                    continue;
+                }
+                if on_track(movers, dm, ix, iz) || on_track(movers, dm, nx, nz) {
+                    continue;
+                }
+                if g.wall(0, ix, iz, d) != Wall::None {
+                    continue;
+                }
+                // A gap: shut off on both sides along the line through the edge (by a wall,
+                // a pillar or block on either side, or the arena's border).
+                let side = (d + 1) % 4;
+                let walled = [side, (side + 2) % 4].iter().all(|&s| {
+                    let Some((sx, sz)) = dm.step(ix, iz, s, 1) else {
+                        return true;
+                    };
+                    g.wall(0, sx, sz, d) != Wall::None
+                        || !g.ground[dm.idx(sx, sz)].walkable()
+                        || dm
+                            .step(sx, sz, d, 1)
+                            .is_none_or(|(tx, tz)| !g.ground[dm.idx(tx, tz)].walkable())
+                });
+                if walled {
+                    cands.push((rng.random::<f32>(), edge(ix, iz, d), (ix, iz), (nx, nz)));
+                }
+            }
+        }
+    }
+    cands.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let want = rng.random_range(1..=dm.scaled(2));
+    let mut shut = nav.clone();
+    let mut chosen: Vec<(Edge, CellXZ, CellXZ)> = Vec::new();
+    for (_, e, a, b) in cands {
+        if chosen.len() >= want {
+            break;
+        }
+        if chosen
+            .iter()
+            .any(|&(_, ca, _)| ca.0.abs_diff(a.0) + ca.1.abs_diff(a.1) < 4)
+        {
+            continue;
+        }
+        let mut trial = shut.clone();
+        let (ma, mb) = (dm.mirror_cell(a.0, a.1), dm.mirror_cell(b.0, b.1));
+        for (p, q) in [(a, b), (ma, mb)] {
+            let (p, q) = (dm.ground_node(p.0, p.1), dm.ground_node(q.0, q.1));
+            trial.links[p].retain(|&m| m as usize != q);
+            trial.links[q].retain(|&m| m as usize != p);
+        }
+        if validate(g, &trial, mode) {
+            shut = trial;
+            chosen.push((e, a, b));
+        }
+    }
+    let mut gates = Vec::new();
+    let period = GATE_ON + GATE_OFF;
+    for &(e, a, b) in &chosen {
+        let phase = rng.random_range(0..period);
+        let (centre, across) = match e {
+            Edge::H { l, ix } => (
+                Vec3::new(
+                    (ix as f32 + 0.5) * CELL - dm.half_width(),
+                    0.0,
+                    l as f32 * CELL - dm.half_length(),
+                ),
+                Vec3::X,
+            ),
+            Edge::V { l, iz } => (
+                Vec3::new(
+                    l as f32 * CELL - dm.half_width(),
+                    0.0,
+                    (iz as f32 + 0.5) * CELL - dm.half_length(),
+                ),
+                Vec3::Z,
+            ),
+        };
+        let thin = Vec3::ONE - across - Vec3::Y;
+        let half = across * (CELL / 2.0 - kit::POST / 2.0) + thin * GATE_T / 2.0;
+        let (min, max) = (centre - half, centre + half + Vec3::Y * GATE_H);
+        let mirror = |(x, z): (usize, usize)| dm.mirror_cell(x, z);
+        for (min, max, a, b) in [
+            (min, max, a, b),
+            (
+                mirror_point(max).with_y(0.0),
+                mirror_point(min).with_y(GATE_H),
+                mirror(a),
+                mirror(b),
+            ),
+        ] {
+            gates.push(LaserGate {
+                min: min.min(max),
+                max: max.max(min),
+                on: GATE_ON,
+                period,
+                phase,
+                link: (
+                    dm.ground_node(a.0, a.1) as u32,
+                    dm.ground_node(b.0, b.1) as u32,
+                ),
+            });
+        }
+    }
+    gates
+}
+
 /// Mirror panels: faces of full walls (either floor) in the middle of Red's half and their
 /// mirror images, each facing an open cell with room in front of it to shoot from, away from
 /// the bases, the targets and the Megatarget mode's pieces.
@@ -2633,8 +2831,9 @@ pub fn pad_flight(world: &World, pos: Vec3, launch: Vec3) -> Option<Vec<Vec3>> {
 }
 
 /// Jump pads: on open ground cells in the middle of Red's half with nothing overhead, each
-/// throwing up onto a cell of the upper floor one to three cells away, the flight clear (with
-/// the doors and panels anywhere on their way) and landing there; mirrored into Blue's half.
+/// throwing up onto a cell of the upper floor one to three cells away, the flight clear (of
+/// the doors and panels wherever they are on their way, and of the laser gates) and landing
+/// there; mirrored into Blue's half.
 fn place_pads(level: &Level, mode: GameMode, rng: &mut ChaCha8Rng) -> Vec<JumpPad> {
     let g = &level.grid;
     let dm = g.dims;
@@ -2654,15 +2853,18 @@ fn place_pads(level: &Level, mode: GameMode, rng: &mut ChaCha8Rng) -> Vec<JumpPa
             })
         })
     };
-    // The arena with the movers at both ends of their way.
-    let worlds: Vec<World> = [0.0, 1.0]
-        .iter()
-        .map(|&f| {
-            let mut w = level.world();
-            w.set_dynamic(level.movers.iter().flat_map(|m| m.colliders(f)).collect());
-            w
-        })
-        .collect();
+    // The arena with the movers anywhere along their way (all at once).
+    let worlds: Vec<World> = {
+        let mut w = level.world();
+        w.set_dynamic(
+            level
+                .movers
+                .iter()
+                .flat_map(|m| (0..=4).flat_map(move |k| m.colliders(k as f32 / 4.0)))
+                .collect(),
+        );
+        vec![w]
+    };
     let mut cands: Vec<(f32, JumpPad, (usize, usize))> = Vec::new();
     for iz in rows {
         for ix in 0..dm.w {
@@ -2690,7 +2892,11 @@ fn place_pads(level: &Level, mode: GameMode, rng: &mut ChaCha8Rng) -> Vec<JumpPa
                     let lands = worlds.iter().all(|w| {
                         pad_flight(w, pos, pad.launch).is_some_and(|path| {
                             let end = *path.last().unwrap();
-                            (end.y - land.y).abs() < 0.05 && (end - land).with_y(0.0).length() < 0.6
+                            (end.y - land.y).abs() < 0.05
+                                && (end - land).with_y(0.0).length() < 0.6
+                                && !path
+                                    .iter()
+                                    .any(|f| level.gates.iter().any(|gt| gt.touches(*f)))
                         })
                     });
                     if lands {
@@ -2963,6 +3169,7 @@ fn build_level(seed: u64, g: Grid, nav: Nav, movers: Vec<Mover>, mode: GameMode)
         mega,
         mirrors: Vec::new(),
         pads: Vec::new(),
+        gates: Vec::new(),
     }
 }
 
@@ -3483,6 +3690,46 @@ mod tests {
             with * 10 >= total * 8,
             "{with} of {total} arenas have jump pads"
         );
+    }
+
+    #[test]
+    fn laser_gates_close_gaps_and_never_cut_the_arena() {
+        let mut with = 0;
+        let mut total = 0;
+        for (seed, level) in seeds() {
+            total += 1;
+            if !level.gates.is_empty() {
+                with += 1;
+            }
+            assert_eq!(level.gates.len() % 2, 0);
+            // Every gate shut: still a valid arena.
+            let mut nav = level.nav.clone();
+            for g in &level.gates {
+                let (a, b) = (g.link.0 as usize, g.link.1 as usize);
+                nav.links[a].retain(|&m| m as usize != b);
+                nav.links[b].retain(|&m| m as usize != a);
+                // Across the link between the two cells, in a gap.
+                let mid = (nav.pos[a] + nav.pos[b]) / 2.0;
+                assert!(
+                    g.touches(mid),
+                    "seed {seed}: gate {g:?} not between its cells"
+                );
+                assert!(!g.touches(nav.pos[a]) && !g.touches(nav.pos[b]));
+            }
+            assert!(validate(&level.grid, &nav, level.mode), "seed {seed}");
+        }
+        println!("{with} of {total} arenas have laser gates");
+        assert!(
+            with * 10 >= total * 6,
+            "{with} of {total} arenas have laser gates"
+        );
+        let g = Level::generate(3, ArenaSize::Small).gates;
+        if let Some(g) = g.first() {
+            let on = (0..g.period as u64).filter(|&t| g.active(t)).count();
+            assert_eq!(on as u32, g.on);
+            let t = (0..g.period as u64).find(|&t| g.warning(t)).unwrap();
+            assert!(!g.active(t) && g.until_on(t) <= GATE_WARN);
+        }
     }
 
     #[test]

@@ -13,7 +13,7 @@
 //! team target (`target`). Megatarget mode in local games: both secondary targets hit at once
 //! (`power`), and going to Red's doorway into the megatarget's room (`warp-door`), into the
 //! room (`warp-room`), in front of the first turret (`warp-turret`) or into the first pocket
-//! (`warp-pocket`); in front of the nearest mirror (`warp-mirror`) or jump pad (`warp-pad`); turning the flat screen's view (`yaw=90`, `pitch=-20`, in degrees).
+//! (`warp-pocket`); in front of the nearest mirror (`warp-mirror`) jump pad (`warp-pad`) or laser gate (`warp-gate`); turning the flat screen's view (`yaw=90`, `pitch=-20`, in degrees).
 
 use bevy::prelude::*;
 use lt_sim::bots::Difficulty;
@@ -252,6 +252,40 @@ fn dev_script(
                     let dir = (p.land - p.pos).with_y(0.0).normalize_or(Vec3::NEG_Z);
                     let feet = p.pos - dir * back;
                     let yaw = lt_sim::sim::yaw_of(dir);
+                    sim.teleport(me, feet, yaw);
+                    yaw
+                };
+                face(w, yaw);
+            });
+        }
+        // Local games: in the cell before the nearest laser gate, facing it.
+        "warp-gate" => {
+            commands.queue(move |w: &mut World| {
+                let yaw = {
+                    let Some(mut game) = w.get_resource_mut::<Game>() else {
+                        return;
+                    };
+                    let Some(me) = game.me else { return };
+                    let Source::Local { sim, .. } = &mut game.source else {
+                        return;
+                    };
+                    let Some(at) = sim.player(me).map(|p| p.feet) else {
+                        return;
+                    };
+                    let Some(g) = sim
+                        .level
+                        .gates
+                        .iter()
+                        .min_by(|a, b| a.centre().distance(at).total_cmp(&b.centre().distance(at)))
+                        .copied()
+                    else {
+                        return;
+                    };
+                    // (The side without a jump pad.)
+                    let nav = &sim.level.nav;
+                    let (a, b) = (nav.pos[g.link.0 as usize], nav.pos[g.link.1 as usize]);
+                    let feet = if sim.level.pad_at(a).is_some() { b } else { a };
+                    let yaw = lt_sim::sim::yaw_of(g.centre().with_y(feet.y) - feet);
                     sim.teleport(me, feet, yaw);
                     yaw
                 };

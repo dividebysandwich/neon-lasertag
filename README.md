@@ -30,7 +30,7 @@ opens the options screen, `arc` shows the throw arc, `target` hits a team target
 `grenade`, `rapid`, `shield`, `shotgun`, `cloak`; `shields-up` switches everyone's shield on, `summon` (or `summon=M`) puts the
 nearest other player 4 m (M m) in front of you; Megatarget mode: `power` hits both secondary targets, `warp-door`, `warp-room`, `warp-turret` and `warp-pocket` move
 you there; `warp-mirror` puts you before the nearest mirror, `warp-pad` (or `warp-pad=M`) 1 m (M m) before
-the nearest jump pad; `yaw=DEG` and `pitch=DEG` turn the flat screen's view),
+the nearest jump pad, `warp-gate` before the nearest laser gate; `yaw=DEG` and `pitch=DEG` turn the flat screen's view),
 `LT_VR_MENU=1` opens the VR menu, `LT_VR_FAKE_HANDS=1` fakes controllers, `LT_HOLSTER=x,y,z`
 moves the holster (from the eyes; default `0.23,-0.58,-0.07`). `LT_GUN_TILT=DEG` turns the
 blaster nose down in the hand by that much from the controller's aim (default 15), for a more
@@ -77,6 +77,12 @@ a second mirror stops it. The glints flash in the bolt's colour and the mirror p
 one and it throws you up onto the upper floor a few metres on, peaking a little over a metre
 above it (you can steer a little in the air). Every pad's flight is checked when the arena is
 made; the bots take them too.
+
+**Laser gates.** Some gaps in the walls on the ground have three beams across them between
+glowing posts, in the colour of the zone they stand in. They switch on for 2 s and off for
+2.5 s, humming while on and flickering for half a second before they come on; walking into
+one while it's on is a hit (unless your shield is on, or you're still recovering from the last
+hit). Bolts and grenades fly through. The bots wait for a gate to go off.
 
 **Blaster.** Three shots a second at most, 50 shots in a full blaster. It refills while you
 stand on your own spawn pads or on one of the two white reload stations in the middle of the
@@ -170,7 +176,10 @@ corners). Each half has:
 - jump pads (`Level::pads`): one or two (more in bigger arenas) on open ground with nothing
   overhead, each throwing onto the upper floor one to three cells away; the flight is
   simulated when the arena is made, with the doors and panels at both ends of their way, and
-  must be clear and land there (`level::pad_flight`). The bots' map has them as one-way links.
+  must be clear and land there (`level::pad_flight`). The bots' map has them as one-way links;
+- laser gates (`Level::gates`): one or two (more in bigger arenas) across gaps on the ground
+  shut off on both sides (by walls, pillars, blocks or the border), never where shutting
+  them would fail the arena's checks; on and off by the sim tick alone, like the doors.
 
 Long open lanes are broken up. Every arena is checked before it is used: every base reaches the
 centre, the upper floor and the rear of the enemy targets, the upper level leads from one

@@ -212,6 +212,11 @@ const DOOR_ETA_SPEED: f32 = 3.5;
 /// stay open to be worth it.
 const DOOR_WAIT_MAX: u32 = 240;
 const DOOR_OPEN_MIN: u32 = 40;
+/// Ticks a bot needs to get through a laser gate (it waits if the gate is on or switches on
+/// sooner).
+const GATE_CLEAR_TICKS: u32 = 24;
+/// What going through a laser gate costs a route (metres), for the wait.
+const GATE_DETOUR: f32 = 3.0;
 
 /// A* open-list entry, ordered so that `BinaryHeap` pops the lowest estimate first.
 #[derive(Clone, Copy, PartialEq)]
@@ -349,6 +354,16 @@ impl BotGraph {
                             links[b].push((a as u32, d));
                         }
                     }
+                }
+            }
+        }
+
+        // Laser gates: the average wait for one to go off, as a detour.
+        for gt in &level.gates {
+            let (a, b) = (gt.link.0 as usize, gt.link.1 as usize);
+            for (x, y) in [(a, b), (b, a)] {
+                if let Some(l) = links[x].iter_mut().find(|l| l.0 as usize == y) {
+                    l.1 += GATE_DETOUR;
                 }
             }
         }
@@ -622,6 +637,18 @@ impl BotGraph {
         None
     }
 
+    /// What a node path costs (its links' lengths, the gates' waits included).
+    pub fn path_cost(&self, path: &[usize]) -> f32 {
+        path.windows(2)
+            .map(|w| {
+                self.links[w[0]]
+                    .iter()
+                    .find(|l| l.0 as usize == w[1])
+                    .map_or(f32::INFINITY, |l| l.1)
+            })
+            .sum()
+    }
+
     /// Length of a node path.
     pub fn path_len(&self, path: &[usize]) -> f32 {
         path.windows(2)
@@ -882,6 +909,8 @@ pub struct Bot {
     route_goal: Option<usize>,
     /// Doors (mover indices) the route goes through.
     route_doors: Vec<usize>,
+    /// Laser gates (indices into `Level::gates`) the route goes through.
+    route_gates: Vec<usize>,
     progress_pos: Vec3,
     progress_t: f32,
     stuck: u32,
@@ -967,6 +996,7 @@ impl Bot {
             route: Vec::new(),
             route_goal: None,
             route_doors: Vec::new(),
+            route_gates: Vec::new(),
             progress_pos: Vec3::ZERO,
             progress_t: 0.0,
             stuck: 0,
@@ -1835,6 +1865,19 @@ impl Bot {
             let Some((path, doors)) = g.path_at(start, goal, &sim.level, sim.tick) else {
                 return Steer::Unreachable;
             };
+            self.route_gates = sim
+                .level
+                .gates
+                .iter()
+                .enumerate()
+                .filter(|(_, gt)| {
+                    path.windows(2).any(|w| {
+                        let (a, b) = (w[0] as u32, w[1] as u32);
+                        gt.link == (a, b) || gt.link == (b, a)
+                    })
+                })
+                .map(|(k, _)| k)
+                .collect();
             self.route = g.smooth(world, feet, &path);
             self.route_doors = doors;
             if end.distance(g.pos[goal]) > 0.05 {
@@ -1859,6 +1902,23 @@ impl Bot {
                 self.route_doors.clear();
                 return Steer::Move(Vec2::ZERO);
             } else if near {
+                wait_at_door = true;
+            }
+        }
+        // A laser gate just ahead that is on, or switches on before the bot is through: wait.
+        let next = self.route.first().copied().unwrap_or(end);
+        let heading = Vec2::new(next.x - feet.x, next.z - feet.z);
+        for &k in &self.route_gates {
+            let Some(gt) = sim.level.gates.get(k) else {
+                continue;
+            };
+            let c = gt.centre();
+            let to = Vec2::new(c.x - feet.x, c.z - feet.z);
+            if to.length() < 1.7
+                && to.dot(heading) > 0.0
+                && !gt.touches(feet)
+                && gt.until_on(sim.tick) < GATE_CLEAR_TICKS
+            {
                 wait_at_door = true;
             }
         }
@@ -2473,6 +2533,7 @@ mod tests {
         pickups: u32,
         grenades: u32,
         launches: u32,
+        zaps: u32,
         moved: f32,
     }
 
@@ -2522,6 +2583,7 @@ mod tests {
                     SimEvent::PickedUp { .. } => s.pickups += 1,
                     SimEvent::GrenadeThrown { .. } => s.grenades += 1,
                     SimEvent::Launched { .. } => s.launches += 1,
+                    SimEvent::GateZap { .. } => s.zaps += 1,
                     _ => {}
                 }
             }
@@ -2530,7 +2592,7 @@ mod tests {
         s.scores = sim.scores;
         println!(
             "seed {seed}, {n} bots, {secs} s: scores {:?}, shots {} ({} at panels), hits {}, target hits {} \
-             ({} by attackers), reloads {}, pickups {}, grenades thrown {}, jump pads {}, walked {:.0} m",
+             ({} by attackers), reloads {}, pickups {}, grenades thrown {}, jump pads {}, gate zaps {}, walked {:.0} m",
             s.scores,
             s.fired,
             s.panel_shots,
@@ -2541,6 +2603,7 @@ mod tests {
             s.pickups,
             s.grenades,
             s.launches,
+            s.zaps,
             s.moved
         );
         s
@@ -2595,7 +2658,7 @@ mod tests {
                         path.windows(2)
                             .all(|w| g.links[w[0]].iter().any(|l| l.0 as usize == w[1]))
                     );
-                    assert!(g.path_len(&path) <= g.path_len(&bfs) + 1e-3);
+                    assert!(g.path_cost(&path) <= g.path_cost(&bfs) + 1e-3);
                     // Smoothed waypoints are walkable one to the next on flat stretches.
                     let pts = g.smooth(&world, g.pos[a], &path);
                     assert!(pts.len() <= path.len() && pts.last() == Some(&g.pos[b]));

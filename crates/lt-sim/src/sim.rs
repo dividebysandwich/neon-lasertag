@@ -574,6 +574,7 @@ impl Sim {
         }
         self.step_movers();
         self.step_players();
+        self.step_gates();
         self.step_mega();
         self.step_bolts();
         self.step_grenades();
@@ -1329,6 +1330,43 @@ impl Sim {
         }
     }
 
+    /// Laser gates: whoever touches one while it's on takes a hit (unless shielded or still
+    /// recovering from the last).
+    fn step_gates(&mut self) {
+        if self.level.gates.is_empty() {
+            return;
+        }
+        let level = self.level.clone();
+        for (k, gate) in level.gates.iter().enumerate() {
+            if !gate.active(self.tick) {
+                continue;
+            }
+            for pi in 0..self.players.len() {
+                let p = &self.players[pi];
+                if !p.alive() || p.cooldown > 0.0 || p.shield > 0.0 || !gate.touches(p.feet) {
+                    continue;
+                }
+                let at = p.chest();
+                self.events.push(SimEvent::GateZap {
+                    gate: k as u8,
+                    player: p.id,
+                    pos: at,
+                });
+                let bolt = Bolt {
+                    id: 0,
+                    owner: HAZARD,
+                    owner_team: Team::Red,
+                    team: None,
+                    pos: gate.centre(),
+                    vel: Vec3::ZERO,
+                    life: 0.0,
+                    extra: BoltExtra::default(),
+                };
+                self.hit_player(pi, &bolt, at);
+            }
+        }
+    }
+
     /// Megatarget mode, once a tick: the players' time to get into the room, the forcefields
     /// and the turrets.
     fn step_mega(&mut self) {
@@ -1868,6 +1906,49 @@ mod tests {
         );
         assert_eq!(p.air, Vec2::ZERO);
         assert_eq!(p.vy, 0.0);
+    }
+
+    #[test]
+    fn laser_gates_hit_only_while_on() {
+        let seed = (1..60)
+            .find(|&s| {
+                !Level::generate(s, crate::level::ArenaSize::Small)
+                    .gates
+                    .is_empty()
+            })
+            .expect("an arena with laser gates");
+        let mut sim = Sim::new(seed, Rules::default());
+        let a = sim.add_player("a", Some(Team::Red), false).unwrap();
+        let g = sim.level.gates[0];
+        let mid = g.centre().with_y(0.0);
+        let on = |sim: &Sim| g.active(sim.tick + 1);
+        // Off: nothing.
+        while on(&sim) {
+            sim.tick += 1;
+        }
+        sim.teleport(a, mid, 0.0);
+        sim.step();
+        assert_eq!(sim.player(a).unwrap().hits, 0);
+        // On: one hit, then the hit's cooldown.
+        while !on(&sim) {
+            sim.tick += 1;
+        }
+        sim.drain_events();
+        sim.step();
+        sim.step();
+        assert_eq!(sim.player(a).unwrap().hits, 1);
+        assert_eq!(
+            sim.drain_events()
+                .iter()
+                .filter(|e| matches!(e, SimEvent::GateZap { .. }))
+                .count(),
+            1
+        );
+        // Shielded: nothing.
+        sim.players[0].cooldown = 0.0;
+        sim.players[0].shield = 5.0;
+        sim.step();
+        assert_eq!(sim.player(a).unwrap().hits, 1);
     }
 
     #[test]

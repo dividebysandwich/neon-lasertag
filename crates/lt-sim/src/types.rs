@@ -326,6 +326,12 @@ pub enum SimEvent {
     TurretEngaged {
         turret: u8,
     },
+    /// A player walked into a laser gate while it was on (and takes a hit).
+    GateZap {
+        gate: u8,
+        player: PlayerId,
+        pos: Vec3,
+    },
     /// A player walked into a forcefield (and is tagged out by it).
     Shocked {
         player: PlayerId,

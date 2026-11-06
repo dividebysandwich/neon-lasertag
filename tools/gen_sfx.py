@@ -40,6 +40,8 @@
   zap and a short shimmering ring.
 - jump_pad: a jump pad throwing someone up: a soft low thump, a rising whoosh of filtered
   noise and a sine chirp sweeping up two octaves.
+- gate_hum: a laser gate's buzz while it's on (a seamless one-second loop): a harsh
+  electric hum with a fast flutter and a thin high whine.
 - shield_hum: a forcefield's hum (a seamless two-second loop): a mains-like drone with
   slowly beating partials and faint crackle.
 
@@ -597,6 +599,16 @@ def jump_pad():
     return echoes(thud + whoosh + chirp, [0.07], [0.2], 5000)
 
 
+def gate_hum():
+    T = 1.0
+    x = seconds(T)
+    # Every partial a whole number of cycles in 1 s: a seamless loop.
+    buzz = square(np.full(len(x), 100.0), 0.3) * 0.5 + saw(np.full(len(x), 200.0)) * 0.3
+    buzz = lowpass(buzz, 2500) * (0.75 + 0.25 * np.sin(2 * np.pi * 25 * x))
+    whine = np.sin(2 * np.pi * 3200 * x) * 0.05 * (0.6 + 0.4 * np.sin(2 * np.pi * 3 * x))
+    return buzz + whine
+
+
 SOUNDS = {
     # name: (generator, RMS dBFS, seed)
     "footstep_1": (lambda: footstep(1), -27.0, 11),
@@ -629,10 +641,11 @@ SOUNDS = {
     "shield_hum": (shield_hum, -24.0, 231),
     "mirror_ping": (mirror_ping, -21.0, 241),
     "jump_pad": (jump_pad, -20.0, 251),
+    "gate_hum": (gate_hum, -27.0, 261),
 }
 
 # Sounds played as loops.
-LOOPS = {"shield_hum"}
+LOOPS = {"shield_hum", "gate_hum"}
 
 
 if __name__ == "__main__":

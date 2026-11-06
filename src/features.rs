@@ -1,5 +1,5 @@
 //! The arena's special features (lt_sim::level::Level): mirror panels on walls that bolts
-//! bounce off, and jump pads. Built from the neon materials and lit StandardMaterial, so every renderer draws
+//! bounce off, jump pads and laser gates. Built from the neon materials and lit StandardMaterial, so every renderer draws
 //! them.
 //!
 //! - Mirrors: dark polished glass on the wall's face with a faint lavender tint, glinting
@@ -8,17 +8,22 @@
 //! - Jump pads: a mint ring on the floor around a brighter disc, a soft column of light over
 //!   it, and chevrons climbing along the flight's path to where it comes down; the pad blazes
 //!   when it throws someone.
+//! - Laser gates: three beams in the colour of the zone they stand in between glowing emitter
+//!   posts, humming while on, flickering just before they switch on, a faint trace while off;
+//!   they flash when they zap someone.
 
 use std::f32::consts::FRAC_PI_2;
 
+use bevy::audio::{PlaybackMode, Volume};
 use bevy::prelude::*;
 use lt_sim::SimEvent;
-use lt_sim::level::{Level, PAD_RADIUS, Panel, pad_flight};
+use lt_sim::level::{GATE_H, Level, PAD_RADIUS, Panel, pad_flight};
 
 use crate::arena::ArenaPart;
 use crate::assets::MeshData;
 use crate::game::{Game, GameEvent};
 use crate::materials::{AccentMaterial, GlowMaterial, NeonUniform, Palette, team_color};
+use crate::settings::Settings;
 
 /// The mirrors' frame and glint colour (lavender), the tint over the glass and the glints'
 /// brightness.
@@ -51,6 +56,22 @@ struct PadView {
 /// A chevron climbing a jump pad's flight path: the path (feet positions), and its phase.
 #[derive(Component)]
 struct PadChevron(std::sync::Arc<Vec<Vec3>>, f32);
+
+#[derive(Component)]
+struct GateView {
+    k: usize,
+    beams: Handle<AccentMaterial>,
+    glow: Handle<GlowMaterial>,
+    posts: Handle<AccentMaterial>,
+    flash: f32,
+}
+
+/// A laser gate's hum (heard while it's on).
+#[derive(Component)]
+struct GateHum(usize);
+
+/// The beams' heights.
+const BEAMS: [f32; 3] = [0.45, 1.0, 1.55];
 
 #[derive(Component)]
 struct MirrorView {
@@ -86,6 +107,7 @@ pub fn panel_sheet(p: &Panel, out: f32) -> MeshData {
 }
 
 /// Spawns the features of `level` (as parts of the arena).
+#[allow(clippy::too_many_arguments)]
 pub fn spawn(
     commands: &mut Commands,
     level: &Level,
@@ -94,9 +116,11 @@ pub fn spawn(
     std: &mut Assets<StandardMaterial>,
     accents: &mut Assets<AccentMaterial>,
     glows: &mut Assets<GlowMaterial>,
+    assets: &AssetServer,
 ) {
     let _ = palette;
     spawn_pads(commands, level, meshes, accents, glows);
+    spawn_gates(commands, level, meshes, accents, glows, assets);
     if level.mirrors.is_empty() {
         return;
     }
@@ -277,12 +301,104 @@ fn spawn_pads(
     }
 }
 
+fn spawn_gates(
+    commands: &mut Commands,
+    level: &Level,
+    meshes: &mut Assets<Mesh>,
+    accents: &mut Assets<AccentMaterial>,
+    glows: &mut Assets<GlowMaterial>,
+    assets: &AssetServer,
+) {
+    if level.gates.is_empty() {
+        return;
+    }
+    let hum: Handle<AudioSource> = assets.load("sounds/gate_hum.ogg");
+    let unit = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
+    for (k, g) in level.gates.iter().enumerate() {
+        let c = g.centre().with_y(0.0);
+        let size = g.max - g.min;
+        let across = if size.x > size.z { Vec3::X } else { Vec3::Z };
+        let len = size.dot(across);
+        let color = crate::arena::zone_color(level, c);
+        let beams = accents.add(AccentMaterial {
+            neon: NeonUniform::fixed(color, 6.0),
+        });
+        let glow = glows.add(GlowMaterial {
+            neon: NeonUniform::fixed(color, 1.5),
+        });
+        let posts = accents.add(AccentMaterial {
+            neon: NeonUniform::fixed(color, 3.0),
+        });
+        let beam = across * len + (Vec3::ONE - across - Vec3::Y) * 0.025 + Vec3::Y * 0.025;
+        let halo = across * len + (Vec3::ONE - across - Vec3::Y) * 0.002 + Vec3::Y * 0.12;
+        let e = commands
+            .spawn((
+                ArenaPart,
+                Transform::from_translation(c),
+                Visibility::default(),
+                GateView {
+                    k,
+                    beams: beams.clone(),
+                    glow: glow.clone(),
+                    posts: posts.clone(),
+                    flash: 0.0,
+                },
+                Name::new("laser gate"),
+            ))
+            .id();
+        for y in BEAMS {
+            commands.spawn((
+                Mesh3d(unit.clone()),
+                MeshMaterial3d(beams.clone()),
+                Transform::from_xyz(0.0, y, 0.0).with_scale(beam),
+                ChildOf(e),
+            ));
+            commands.spawn((
+                Mesh3d(unit.clone()),
+                MeshMaterial3d(glow.clone()),
+                Transform::from_xyz(0.0, y, 0.0).with_scale(halo),
+                ChildOf(e),
+            ));
+        }
+        // Emitter posts at both ends.
+        for s in [-1.0, 1.0] {
+            commands.spawn((
+                Mesh3d(unit.clone()),
+                MeshMaterial3d(posts.clone()),
+                Transform::from_translation(
+                    across * s * (len / 2.0 + 0.04) + Vec3::Y * GATE_H / 2.0,
+                )
+                .with_scale(Vec3::new(0.05, GATE_H, 0.05)),
+                ChildOf(e),
+            ));
+        }
+        commands.spawn((
+            ArenaPart,
+            AudioPlayer(hum.clone()),
+            PlaybackSettings {
+                mode: PlaybackMode::Loop,
+                spatial: true,
+                volume: Volume::Linear(0.0),
+                ..default()
+            },
+            GateHum(k),
+            Transform::from_translation(c + Vec3::Y * 1.0),
+        ));
+    }
+}
+
 fn on_events(
     mut events: MessageReader<GameEvent>,
     mut mirrors: Query<&mut MirrorView>,
     mut pads: Query<&mut PadView>,
+    mut gates: Query<&mut GateView>,
 ) {
     for GameEvent(e) in events.read() {
+        if let SimEvent::GateZap { gate, .. } = *e {
+            for mut g in gates.iter_mut().filter(|g| g.k == gate as usize) {
+                g.flash = 1.0;
+            }
+        }
         if let SimEvent::Launched { pos, .. } = *e
             && let Some(mut p) = pads
                 .iter_mut()
@@ -301,8 +417,13 @@ fn on_events(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn animate(
     time: Res<Time>,
+    game: Res<Game>,
+    settings: Option<Res<Settings>>,
+    mut gates: Query<&mut GateView>,
+    mut hums: Query<(&GateHum, &mut AudioSink)>,
     mut mirrors: Query<&mut MirrorView>,
     mut pads: Query<&mut PadView>,
     mut chevrons: Query<(&PadChevron, &mut Transform)>,
@@ -311,6 +432,37 @@ fn animate(
 ) {
     let t = time.elapsed_secs();
     let dt = time.delta_secs();
+    let tick = game.snap.tick;
+    let gain = settings.map_or(1.0, |s| s.sound_volume);
+    for mut v in &mut gates {
+        let Some(g) = game.level.gates.get(v.k) else {
+            continue;
+        };
+        v.flash = (v.flash - dt * 3.0).max(0.0);
+        let on = g.active(tick);
+        // On: bright, buzzing a little; about to come on: flickering; off: a faint trace.
+        let k = if on {
+            0.85 + 0.15 * (t * 37.0 + v.k as f32).sin()
+        } else if g.warning(tick) {
+            if (t * 14.0).fract() < 0.5 { 0.6 } else { 0.05 }
+        } else {
+            0.04
+        };
+        let k = k + v.flash * 2.0;
+        if let Some(mut m) = accents.get_mut(&v.beams) {
+            m.neon.color.w = 6.0 * k;
+        }
+        if let Some(mut m) = glows.get_mut(&v.glow) {
+            m.neon.color.w = 1.5 * k;
+        }
+        if let Some(mut m) = accents.get_mut(&v.posts) {
+            m.neon.color.w = if on { 2.0 } else { 0.7 };
+        }
+    }
+    for (h, mut sink) in &mut hums {
+        let on = game.level.gates.get(h.0).is_some_and(|g| g.active(tick));
+        sink.set_volume(Volume::Linear(if on { 0.7 * gain } else { 0.0 }));
+    }
     for mut p in &mut pads {
         p.since += dt;
         let blaze = (1.0 - p.since / 0.6).max(0.0);

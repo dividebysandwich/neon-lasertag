@@ -555,6 +555,7 @@ fn build_arena(
         &mut std,
         &mut accents,
         &mut glows,
+        &assets,
     );
     ambience::spawn(
         &mut commands,

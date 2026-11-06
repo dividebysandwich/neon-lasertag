@@ -241,6 +241,9 @@ fn play_events(
             SimEvent::Uncloaked { player } if Some(player) == me => {
                 play(&mut commands, gain, &sounds.zap, None, 0.4, 0.8)
             }
+            SimEvent::GateZap { pos, .. } => {
+                play(&mut commands, gain, &sounds.zap, Some(pos), 0.8, 1.3)
+            }
             SimEvent::Launched { player, pos } => {
                 let mine = Some(player) == me;
                 play(
