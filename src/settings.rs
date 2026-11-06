@@ -84,24 +84,94 @@ pub enum Binding {
 const KEYS: &[(KeyCode, &str)] = {
     use KeyCode::*;
     &[
-        (KeyA, "A"), (KeyB, "B"), (KeyC, "C"), (KeyD, "D"), (KeyE, "E"), (KeyF, "F"), (KeyG, "G"),
-        (KeyH, "H"), (KeyI, "I"), (KeyJ, "J"), (KeyK, "K"), (KeyL, "L"), (KeyM, "M"), (KeyN, "N"),
-        (KeyO, "O"), (KeyP, "P"), (KeyQ, "Q"), (KeyR, "R"), (KeyS, "S"), (KeyT, "T"), (KeyU, "U"),
-        (KeyV, "V"), (KeyW, "W"), (KeyX, "X"), (KeyY, "Y"), (KeyZ, "Z"),
-        (Digit0, "0"), (Digit1, "1"), (Digit2, "2"), (Digit3, "3"), (Digit4, "4"), (Digit5, "5"),
-        (Digit6, "6"), (Digit7, "7"), (Digit8, "8"), (Digit9, "9"),
-        (ArrowUp, "Up"), (ArrowDown, "Down"), (ArrowLeft, "Left"), (ArrowRight, "Right"),
-        (ShiftLeft, "Left Shift"), (ShiftRight, "Right Shift"), (ControlLeft, "Left Ctrl"),
-        (ControlRight, "Right Ctrl"), (AltLeft, "Left Alt"), (AltRight, "Right Alt"),
-        (Space, "Space"), (Tab, "Tab"), (Enter, "Enter"), (CapsLock, "Caps Lock"),
-        (Backquote, "`"), (Minus, "-"), (Equal, "="), (BracketLeft, "["), (BracketRight, "]"),
-        (Backslash, "\\"), (Semicolon, ";"), (Quote, "'"), (Comma, ","), (Period, "."), (Slash, "/"),
-        (Insert, "Insert"), (Home, "Home"), (End, "End"), (PageUp, "Page Up"), (PageDown, "Page Down"),
-        (Numpad0, "Num 0"), (Numpad1, "Num 1"), (Numpad2, "Num 2"), (Numpad3, "Num 3"),
-        (Numpad4, "Num 4"), (Numpad5, "Num 5"), (Numpad6, "Num 6"), (Numpad7, "Num 7"),
-        (Numpad8, "Num 8"), (Numpad9, "Num 9"),
-        (F1, "F1"), (F2, "F2"), (F3, "F3"), (F4, "F4"), (F5, "F5"), (F6, "F6"), (F7, "F7"),
-        (F8, "F8"), (F9, "F9"), (F10, "F10"), (F11, "F11"), (F12, "F12"),
+        (KeyA, "A"),
+        (KeyB, "B"),
+        (KeyC, "C"),
+        (KeyD, "D"),
+        (KeyE, "E"),
+        (KeyF, "F"),
+        (KeyG, "G"),
+        (KeyH, "H"),
+        (KeyI, "I"),
+        (KeyJ, "J"),
+        (KeyK, "K"),
+        (KeyL, "L"),
+        (KeyM, "M"),
+        (KeyN, "N"),
+        (KeyO, "O"),
+        (KeyP, "P"),
+        (KeyQ, "Q"),
+        (KeyR, "R"),
+        (KeyS, "S"),
+        (KeyT, "T"),
+        (KeyU, "U"),
+        (KeyV, "V"),
+        (KeyW, "W"),
+        (KeyX, "X"),
+        (KeyY, "Y"),
+        (KeyZ, "Z"),
+        (Digit0, "0"),
+        (Digit1, "1"),
+        (Digit2, "2"),
+        (Digit3, "3"),
+        (Digit4, "4"),
+        (Digit5, "5"),
+        (Digit6, "6"),
+        (Digit7, "7"),
+        (Digit8, "8"),
+        (Digit9, "9"),
+        (ArrowUp, "Up"),
+        (ArrowDown, "Down"),
+        (ArrowLeft, "Left"),
+        (ArrowRight, "Right"),
+        (ShiftLeft, "Left Shift"),
+        (ShiftRight, "Right Shift"),
+        (ControlLeft, "Left Ctrl"),
+        (ControlRight, "Right Ctrl"),
+        (AltLeft, "Left Alt"),
+        (AltRight, "Right Alt"),
+        (Space, "Space"),
+        (Tab, "Tab"),
+        (Enter, "Enter"),
+        (CapsLock, "Caps Lock"),
+        (Backquote, "`"),
+        (Minus, "-"),
+        (Equal, "="),
+        (BracketLeft, "["),
+        (BracketRight, "]"),
+        (Backslash, "\\"),
+        (Semicolon, ";"),
+        (Quote, "'"),
+        (Comma, ","),
+        (Period, "."),
+        (Slash, "/"),
+        (Insert, "Insert"),
+        (Home, "Home"),
+        (End, "End"),
+        (PageUp, "Page Up"),
+        (PageDown, "Page Down"),
+        (Numpad0, "Num 0"),
+        (Numpad1, "Num 1"),
+        (Numpad2, "Num 2"),
+        (Numpad3, "Num 3"),
+        (Numpad4, "Num 4"),
+        (Numpad5, "Num 5"),
+        (Numpad6, "Num 6"),
+        (Numpad7, "Num 7"),
+        (Numpad8, "Num 8"),
+        (Numpad9, "Num 9"),
+        (F1, "F1"),
+        (F2, "F2"),
+        (F3, "F3"),
+        (F4, "F4"),
+        (F5, "F5"),
+        (F6, "F6"),
+        (F7, "F7"),
+        (F8, "F8"),
+        (F9, "F9"),
+        (F10, "F10"),
+        (F11, "F11"),
+        (F12, "F12"),
     ]
 };
 
@@ -116,8 +186,14 @@ const BUTTONS: &[(MouseButton, &str)] = &[
 impl Binding {
     pub fn name(self) -> String {
         match self {
-            Binding::Key(k) => KEYS.iter().find(|(c, _)| *c == k).map_or_else(|| format!("{k:?}"), |(_, n)| n.to_string()),
-            Binding::Mouse(b) => BUTTONS.iter().find(|(c, _)| *c == b).map_or_else(|| format!("{b:?}"), |(_, n)| n.to_string()),
+            Binding::Key(k) => KEYS
+                .iter()
+                .find(|(c, _)| *c == k)
+                .map_or_else(|| format!("{k:?}"), |(_, n)| n.to_string()),
+            Binding::Mouse(b) => BUTTONS
+                .iter()
+                .find(|(c, _)| *c == b)
+                .map_or_else(|| format!("{b:?}"), |(_, n)| n.to_string()),
         }
     }
 
@@ -125,7 +201,12 @@ impl Binding {
         KEYS.iter()
             .find(|(_, n)| *n == s)
             .map(|(k, _)| Binding::Key(*k))
-            .or_else(|| BUTTONS.iter().find(|(_, n)| *n == s).map(|(b, _)| Binding::Mouse(*b)))
+            .or_else(|| {
+                BUTTONS
+                    .iter()
+                    .find(|(_, n)| *n == s)
+                    .map(|(b, _)| Binding::Mouse(*b))
+            })
     }
 
     /// Whether this key can be bound (Esc and the like are the game's own).
@@ -166,7 +247,10 @@ pub struct Inputs<'a> {
 
 impl Settings {
     pub fn get(&self, a: Action) -> [Option<Binding>; 2] {
-        self.bindings.iter().find(|(b, _)| *b == a).map_or([None, None], |(_, b)| *b)
+        self.bindings
+            .iter()
+            .find(|(b, _)| *b == a)
+            .map_or([None, None], |(_, b)| *b)
     }
 
     pub fn set(&mut self, a: Action, slot: usize, b: Option<Binding>) {
@@ -213,7 +297,11 @@ impl Settings {
     /// The names of an action's bindings ("W / Up"), or "-" if it has none.
     pub fn describe(&self, a: Action) -> String {
         let names: Vec<String> = self.get(a).iter().flatten().map(|b| b.name()).collect();
-        if names.is_empty() { "-".into() } else { names.join(" / ") }
+        if names.is_empty() {
+            "-".into()
+        } else {
+            names.join(" / ")
+        }
     }
 
     fn path() -> Option<PathBuf> {
@@ -232,7 +320,9 @@ impl Settings {
 
     pub fn load() -> Settings {
         let mut s = Settings::default();
-        let Some(text) = Self::path().and_then(|p| std::fs::read_to_string(p).ok()) else { return s };
+        let Some(text) = Self::path().and_then(|p| std::fs::read_to_string(p).ok()) else {
+            return s;
+        };
         match ron::from_str::<Saved>(&text) {
             Ok(saved) => {
                 s.sensitivity = saved.sensitivity.clamp(0.1, 5.0);
@@ -264,7 +354,12 @@ impl Settings {
             bindings: self
                 .bindings
                 .iter()
-                .map(|(a, bs)| (a.id().to_string(), bs.iter().map(|b| b.map(|b| b.name())).collect()))
+                .map(|(a, bs)| {
+                    (
+                        a.id().to_string(),
+                        bs.iter().map(|b| b.map(|b| b.name())).collect(),
+                    )
+                })
                 .collect(),
         };
         let text = match ron::ser::to_string_pretty(&saved, ron::ser::PrettyConfig::default()) {
@@ -293,7 +388,13 @@ struct Saved {
 
 impl Default for Saved {
     fn default() -> Self {
-        Saved { sensitivity: 1.0, invert_y: false, sound_volume: 1.0, music_volume: 1.0, bindings: Vec::new() }
+        Saved {
+            sensitivity: 1.0,
+            invert_y: false,
+            sound_volume: 1.0,
+            music_volume: 1.0,
+            bindings: Vec::new(),
+        }
     }
 }
 

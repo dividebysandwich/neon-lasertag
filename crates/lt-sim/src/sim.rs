@@ -92,7 +92,11 @@ impl Player {
 
     fn head_offset(&self) -> Vec3 {
         let h = self.cmd.head.pos;
-        if h == Vec3::ZERO { Vec3::Y * EYE } else { h.clamp(Vec3::new(-0.6, 0.4, -0.6), Vec3::new(0.6, 2.2, 0.6)) }
+        if h == Vec3::ZERO {
+            Vec3::Y * EYE
+        } else {
+            h.clamp(Vec3::new(-0.6, 0.4, -0.6), Vec3::new(0.6, 2.2, 0.6))
+        }
     }
 
     /// The middle of the floating chest (bots aim here).
@@ -138,7 +142,10 @@ pub struct Bolt {
 pub enum GrenadePhase {
     Flying,
     /// Hovering between `from` and `to` (`hop` above where it landed).
-    Active { from: Vec3, to: Vec3 },
+    Active {
+        from: Vec3,
+        to: Vec3,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -246,7 +253,9 @@ impl Sim {
 
     pub fn with_level(level: Arc<Level>, rules: Rules) -> Sim {
         let world = level.world_at(0);
-        let max_dist = (level.base_centre(Team::Red) - level.base_centre(Team::Blue)).length().max(1.0);
+        let max_dist = (level.base_centre(Team::Red) - level.base_centre(Team::Blue))
+            .length()
+            .max(1.0);
         let pairs = rules.pickup_pairs as usize;
         Sim {
             time_left: rules.match_time,
@@ -256,7 +265,11 @@ impl Sim {
             bolts: Vec::new(),
             grenades: Vec::new(),
             slots: (0..pairs * 2)
-                .map(|i| PickupSlot { half: if i % 2 == 0 { Team::Red } else { Team::Blue }, pickup: None, wait: 1.0 + (i / 2) as f32 * 2.0 })
+                .map(|i| PickupSlot {
+                    half: if i % 2 == 0 { Team::Red } else { Team::Blue },
+                    pickup: None,
+                    wait: 1.0 + (i / 2) as f32 * 2.0,
+                })
                 .collect(),
             scores: [0; 2],
             tick: 0,
@@ -380,7 +393,9 @@ impl Sim {
         if self.time_left <= 0.0 {
             self.time_left = 0.0;
             self.over = true;
-            self.events.push(SimEvent::MatchOver { scores: self.scores });
+            self.events.push(SimEvent::MatchOver {
+                scores: self.scores,
+            });
             return;
         }
         self.step_movers();
@@ -396,7 +411,13 @@ impl Sim {
         let ghosts = self
             .players
             .iter()
-            .map(|p| Ghost { id: p.id, alive: p.alive(), feet: p.feet, eye: p.eye(), cmd: p.cmd })
+            .map(|p| Ghost {
+                id: p.id,
+                alive: p.alive(),
+                feet: p.feet,
+                eye: p.eye(),
+                cmd: p.cmd,
+            })
             .collect();
         if self.history.len() >= HISTORY {
             self.history.pop_front();
@@ -427,12 +448,24 @@ impl Sim {
             let iz = self.rng.random_range(dm.half()..dm.h - 3);
             let iz = if half == Team::Red { iz } else { dm.h - 1 - iz };
             let upper = self.rng.random_bool(0.35);
-            let n = if upper { nav.upper_node(ix, iz) } else { nav.ground_node(ix, iz) };
-            if !nav.valid[n] || !upper && (grid.ground[dm.idx(ix, iz)] != Ground::Open || self.level.on_track(ix, iz)) {
+            let n = if upper {
+                nav.upper_node(ix, iz)
+            } else {
+                nav.ground_node(ix, iz)
+            };
+            if !nav.valid[n]
+                || !upper
+                    && (grid.ground[dm.idx(ix, iz)] != Ground::Open || self.level.on_track(ix, iz))
+            {
                 continue;
             }
             let pos = nav.pos[n] + Vec3::Y * PICKUP_HEIGHT;
-            if self.slots.iter().filter_map(|s| s.pickup).any(|p| (p.pos - pos).length() < 6.0) {
+            if self
+                .slots
+                .iter()
+                .filter_map(|s| s.pickup)
+                .any(|p| (p.pos - pos).length() < 6.0)
+            {
                 continue;
             }
             return Some(pos);
@@ -478,19 +511,26 @@ impl Sim {
                         continue;
                     }
                     let (nx, nz) = (p.feet.x.clamp(min.x, max.x), p.feet.z.clamp(min.z, max.z));
-                    if Vec2::new(p.feet.x - nx, p.feet.z - nz).length_squared() >= BODY_RADIUS * BODY_RADIUS {
+                    if Vec2::new(p.feet.x - nx, p.feet.z - nz).length_squared()
+                        >= BODY_RADIUS * BODY_RADIUS
+                    {
                         continue;
                     }
                     // How far along the motion until the body clears the box.
                     let need = if dir.x.abs() > dir.y.abs() {
-                        if dir.x > 0.0 { max.x + BODY_RADIUS - p.feet.x } else { p.feet.x - (min.x - BODY_RADIUS) }
+                        if dir.x > 0.0 {
+                            max.x + BODY_RADIUS - p.feet.x
+                        } else {
+                            p.feet.x - (min.x - BODY_RADIUS)
+                        }
                     } else if dir.y > 0.0 {
                         max.z + BODY_RADIUS - p.feet.z
                     } else {
                         p.feet.z - (min.z - BODY_RADIUS)
                     };
                     if need > 0.0 {
-                        let (feet, vy) = self.world.move_body(p.feet, dir * (need + 0.01), p.vy, 0.0);
+                        let (feet, vy) =
+                            self.world.move_body(p.feet, dir * (need + 0.01), p.vy, 0.0);
                         p.feet = feet;
                         p.vy = vy;
                     }
@@ -507,13 +547,18 @@ impl Sim {
                     let taker = self.players.iter_mut().find(|p| {
                         p.alive()
                             && p.grenades < self.rules.grenade_max
-                            && Vec2::new(p.feet.x - pk.pos.x, p.feet.z - pk.pos.z).length() < PICKUP_REACH
+                            && Vec2::new(p.feet.x - pk.pos.x, p.feet.z - pk.pos.z).length()
+                                < PICKUP_REACH
                             && (pk.pos.y - p.feet.y).abs() < 1.6
                     });
                     if let Some(p) = taker {
                         p.grenades += 1;
                         let player = p.id;
-                        self.events.push(SimEvent::PickedUp { id: pk.id, player, pos: pk.pos });
+                        self.events.push(SimEvent::PickedUp {
+                            id: pk.id,
+                            player,
+                            pos: pk.pos,
+                        });
                         let (lo, hi) = self.rules.pickup_respawn;
                         self.slots[i].pickup = None;
                         self.slots[i].wait = self.rng.random_range(lo..=hi.max(lo));
@@ -567,7 +612,10 @@ impl Sim {
                 p.vy = 0.0;
                 p.cmd.yaw = s.yaw;
                 p.claim_block = 30;
-                self.events.push(SimEvent::Respawned { player: p.id, pos: s.pos });
+                self.events.push(SimEvent::Respawned {
+                    player: p.id,
+                    pos: s.pos,
+                });
             }
             if !self.players[i].alive() {
                 let p = &mut self.players[i];
@@ -651,10 +699,18 @@ impl Sim {
                     let blocked = self.world.ray(eye, from);
                     let bid = self.id();
                     // Fired first, so its event comes before any hit it makes straight away.
-                    self.events.push(SimEvent::Fired { player: id, pos: from, dir });
+                    self.events.push(SimEvent::Fired {
+                        player: id,
+                        pos: from,
+                        dir,
+                    });
                     match blocked {
                         Some((_, q, n)) => {
-                            self.events.push(SimEvent::BoltImpact { pos: q, normal: n, team: Some(team) });
+                            self.events.push(SimEvent::BoltImpact {
+                                pos: q,
+                                normal: n,
+                                team: Some(team),
+                            });
                         }
                         None => {
                             let mut bolt = Bolt {
@@ -686,7 +742,11 @@ impl Sim {
                 if !pos.is_finite() || !self.world.clear(eye, pos) {
                     pos = eye;
                 }
-                let vel = if vel.is_finite() { vel.clamp_length_max(rules.grenade_max_speed) } else { Vec3::ZERO };
+                let vel = if vel.is_finite() {
+                    vel.clamp_length_max(rules.grenade_max_speed)
+                } else {
+                    Vec3::ZERO
+                };
                 let gid = self.id();
                 self.grenades.push(Grenade {
                     id: gid,
@@ -699,7 +759,8 @@ impl Sim {
                     phase: GrenadePhase::Flying,
                     next_burst: 0.0,
                 });
-                self.events.push(SimEvent::GrenadeThrown { player: id, pos });
+                self.events
+                    .push(SimEvent::GrenadeThrown { player: id, pos });
             }
         }
     }
@@ -714,7 +775,9 @@ impl Sim {
         let lag = (self.tick - view_tick).min(MAX_LAG);
         for k in 0..lag {
             // The bolt's k-th tick meets the world the shooter saw k ticks after `view_tick`.
-            let Some(h) = self.past(self.tick - lag + k) else { continue };
+            let Some(h) = self.past(self.tick - lag + k) else {
+                continue;
+            };
             if self.bolt_tick(bolt, Some(h)) {
                 return false;
             }
@@ -736,7 +799,9 @@ impl Sim {
             hit = Some((q, n));
         }
         // Team bolts pass through team mates (and their shooter); grenade bolts hit everyone.
-        let passes = |p: &Player| !p.alive() || b.team.is_some() && (p.id == b.owner || b.team == Some(p.team));
+        let passes = |p: &Player| {
+            !p.alive() || b.team.is_some() && (p.id == b.owner || b.team == Some(p.team))
+        };
         let mut victim: Option<usize> = None;
         match past {
             None => {
@@ -755,7 +820,9 @@ impl Sim {
             Some(h) => {
                 for g in &self.history[h].1 {
                     // Where they were, if they were there then and are still in the game now.
-                    let Some(pi) = self.players.iter().position(|p| p.id == g.id) else { continue };
+                    let Some(pi) = self.players.iter().position(|p| p.id == g.id) else {
+                        continue;
+                    };
                     if !g.alive || passes(&self.players[pi]) {
                         continue;
                     }
@@ -777,10 +844,15 @@ impl Sim {
             // A target panel?
             let dir = (to - b.pos).normalize_or_zero();
             let len = (to - b.pos).length();
-            let target = self.level.targets.iter().find(|t| {
-                ray_box(b.pos, dir, t.min - 0.01, t.max + 0.01, len)
-                    .is_some_and(|(tt, _)| (tt / len - t_best).abs() < 0.02)
-            }).copied();
+            let target = self
+                .level
+                .targets
+                .iter()
+                .find(|t| {
+                    ray_box(b.pos, dir, t.min - 0.01, t.max + 0.01, len)
+                        .is_some_and(|(tt, _)| (tt / len - t_best).abs() < 0.02)
+                })
+                .copied();
             match target {
                 Some(t) if t.team != b.owner_team => {
                     let points = self.rules.target_points;
@@ -792,9 +864,17 @@ impl Sim {
                     if let Some(h) = self.last_target_hit.get_mut(t.id as usize) {
                         *h = Some((self.tick, b.owner));
                     }
-                    self.events.push(SimEvent::TargetHit { target: t.id, by: b.owner, pos: q });
+                    self.events.push(SimEvent::TargetHit {
+                        target: t.id,
+                        by: b.owner,
+                        pos: q,
+                    });
                 }
-                _ => self.events.push(SimEvent::BoltImpact { pos: q, normal: n, team: b.team }),
+                _ => self.events.push(SimEvent::BoltImpact {
+                    pos: q,
+                    normal: n,
+                    team: b.team,
+                }),
             }
             remove = true;
         }
@@ -822,7 +902,11 @@ impl Sim {
         let p = &mut self.players[pi];
         if p.cooldown > 0.0 {
             // Still recovering from the last hit: the bolt just fizzles.
-            self.events.push(SimEvent::BoltImpact { pos: at, normal: (b.pos - at).normalize_or_zero(), team: b.team });
+            self.events.push(SimEvent::BoltImpact {
+                pos: at,
+                normal: (b.pos - at).normalize_or_zero(),
+                team: b.team,
+            });
             return;
         }
         p.hits += 1;
@@ -834,14 +918,24 @@ impl Sim {
         {
             s.landed += 1;
         }
-        self.events.push(SimEvent::Hit { player: id, by: b.owner, pos: at, hits });
+        self.events.push(SimEvent::Hit {
+            player: id,
+            by: b.owner,
+            pos: at,
+            hits,
+        });
         if hits >= hits_to_tag {
             let wait = self.respawn_time(team, feet);
             let p = &mut self.players[pi];
             p.respawn = Some(wait);
             p.tagged += 1;
             p.cmd.fire = false;
-            self.events.push(SimEvent::TaggedOut { player: id, by: b.owner, pos: at, respawn_in: wait });
+            self.events.push(SimEvent::TaggedOut {
+                player: id,
+                by: b.owner,
+                pos: at,
+                respawn_in: wait,
+            });
             if b.owner_team != team {
                 self.scores[b.owner_team.index()] += self.rules.tag_points;
                 let points = self.rules.tag_points;
@@ -862,7 +956,8 @@ impl Sim {
             let mut done = false;
             match g.phase {
                 GrenadePhase::Flying => {
-                    let (pos, vel, bounce) = grenade_step(&self.world, g.pos, g.vel, rules.grenade_restitution);
+                    let (pos, vel, bounce) =
+                        grenade_step(&self.world, g.pos, g.vel, rules.grenade_restitution);
                     (g.pos, g.vel) = (pos, vel);
                     if let Some((q, speed)) = bounce
                         && speed > 1.2
@@ -876,7 +971,10 @@ impl Sim {
                             Some((_, q, _)) => q - Vec3::Y * 0.2,
                             None => up,
                         };
-                        g.phase = GrenadePhase::Active { from: g.pos, to: to.max(g.pos) };
+                        g.phase = GrenadePhase::Active {
+                            from: g.pos,
+                            to: to.max(g.pos),
+                        };
                         g.next_burst = 0.3;
                         self.events.push(SimEvent::GrenadeArmed { pos: g.pos });
                     }
@@ -898,7 +996,9 @@ impl Sim {
                             .iter()
                             .filter(|p| p.alive())
                             .map(|p| p.eye() - Vec3::Y * 0.35)
-                            .filter(|c| c.distance(g.pos) < GRENADE_AIM_RANGE && self.world.clear(g.pos, *c))
+                            .filter(|c| {
+                                c.distance(g.pos) < GRENADE_AIM_RANGE && self.world.clear(g.pos, *c)
+                            })
                             .collect();
                         for _ in 0..n {
                             let z: f32 = self.rng.random_range(-1.0..1.0);
@@ -908,7 +1008,8 @@ impl Sim {
                             if !seen.is_empty() && self.rng.random::<f32>() < rules.grenade_aimed {
                                 // At a player, a little off (the random direction nudges it).
                                 let at = seen[self.rng.random_range(0..seen.len())];
-                                dir = ((at - g.pos).normalize_or(dir) + dir * 0.06).normalize_or(dir);
+                                dir =
+                                    ((at - g.pos).normalize_or(dir) + dir * 0.06).normalize_or(dir);
                             }
                             let id = self.id();
                             self.bolts.push(Bolt {
@@ -952,7 +1053,10 @@ impl Sim {
                     team: p.team,
                     feet: p.feet,
                     yaw: p.cmd.yaw,
-                    head: Pose { pos: p.head_offset(), rot: p.cmd.head.rot },
+                    head: Pose {
+                        pos: p.head_offset(),
+                        rot: p.cmd.head.rot,
+                    },
                     hands: p.cmd.hands,
                     gun_hand: p.cmd.gun_hand,
                     grenade_hand: p.cmd.grenade_hand,
@@ -970,7 +1074,16 @@ impl Sim {
                     target_hits: p.target_hits,
                 })
                 .collect(),
-            bolts: self.bolts.iter().map(|b| BoltSnap { id: b.id, pos: b.pos, vel: b.vel, team: b.team }).collect(),
+            bolts: self
+                .bolts
+                .iter()
+                .map(|b| BoltSnap {
+                    id: b.id,
+                    pos: b.pos,
+                    vel: b.vel,
+                    team: b.team,
+                })
+                .collect(),
             grenades: self
                 .grenades
                 .iter()
@@ -981,7 +1094,13 @@ impl Sim {
                     active: matches!(g.phase, GrenadePhase::Active { .. }),
                 })
                 .collect(),
-            pickups: self.pickups().map(|p| PickupSnap { id: p.id, pos: p.pos }).collect(),
+            pickups: self
+                .pickups()
+                .map(|p| PickupSnap {
+                    id: p.id,
+                    pos: p.pos,
+                })
+                .collect(),
         }
     }
 }
@@ -1004,7 +1123,12 @@ pub const GRENADE_AIM_RANGE: f32 = 20.0;
 
 /// One tick of a flying grenade: falling, bouncing off the arena (losing speed), coming to rest
 /// on a floor. Returns the new position and velocity, and where it bounced and how hard.
-pub fn grenade_step(world: &World, pos: Vec3, vel: Vec3, restitution: f32) -> (Vec3, Vec3, Option<(Vec3, f32)>) {
+pub fn grenade_step(
+    world: &World,
+    pos: Vec3,
+    vel: Vec3,
+    restitution: f32,
+) -> (Vec3, Vec3, Option<(Vec3, f32)>) {
     let mut vel = vel;
     vel.y -= GRAVITY * TICK;
     let to = pos + vel * TICK;
@@ -1025,7 +1149,11 @@ pub fn grenade_step(world: &World, pos: Vec3, vel: Vec3, restitution: f32) -> (V
 /// Where a grenade thrown from `from` (world) with `vel` flies until its fuse runs out (as the
 /// sim will fly it, the arena's moving pieces aside): a point a tick, and the bounces.
 pub fn grenade_path(world: &World, rules: &Rules, from: Vec3, vel: Vec3) -> (Vec<Vec3>, Vec<Vec3>) {
-    let vel = if vel.is_finite() { vel.clamp_length_max(rules.grenade_max_speed) } else { Vec3::ZERO };
+    let vel = if vel.is_finite() {
+        vel.clamp_length_max(rules.grenade_max_speed)
+    } else {
+        Vec3::ZERO
+    };
     let (mut pos, mut vel) = (from, vel);
     let mut path = vec![pos];
     let mut bounces = Vec::new();
@@ -1068,7 +1196,10 @@ mod tests {
         let dir = (target - (me.feet + muzzle_pos)).normalize();
         let cmd = PlayerCmd {
             gun_hand: Some(Hand::Right),
-            muzzle: Pose { pos: muzzle_pos, rot: look_rot(dir) },
+            muzzle: Pose {
+                pos: muzzle_pos,
+                rot: look_rot(dir),
+            },
             fire: true,
             ..Default::default()
         };
@@ -1086,14 +1217,21 @@ mod tests {
         shoot(&mut sim, a, b);
         assert_eq!(sim.player(b).unwrap().hits, 1);
         let ev = sim.drain_events();
-        assert!(ev.iter().any(|e| matches!(e, SimEvent::Hit { player, hits: 1, .. } if *player == b)));
+        assert!(
+            ev.iter()
+                .any(|e| matches!(e, SimEvent::Hit { player, hits: 1, .. } if *player == b))
+        );
         // During the cooldown further hits don't count.
         shoot(&mut sim, a, b);
         assert_eq!(sim.player(b).unwrap().hits, 1);
         // The victim can't fire meanwhile.
         sim.drain_events();
         shoot(&mut sim, b, a);
-        assert!(sim.drain_events().iter().any(|e| matches!(e, SimEvent::Denied { player } if *player == b)));
+        assert!(
+            sim.drain_events()
+                .iter()
+                .any(|e| matches!(e, SimEvent::Denied { player } if *player == b))
+        );
         assert_eq!(sim.player(a).unwrap().hits, 0);
         // Wait out the cooldown, hit twice more.
         for _ in 0..(3.0 / TICK) as usize {
@@ -1125,14 +1263,26 @@ mod tests {
         let (mut sim, a, _) = duel();
         let start = sim.player(a).unwrap().feet;
         // A claim 10 m away moves only a speed-limited step.
-        sim.set_cmd(a, PlayerCmd { feet: Some(start + Vec3::new(10.0, 0.0, 0.0)), ..Default::default() });
+        sim.set_cmd(
+            a,
+            PlayerCmd {
+                feet: Some(start + Vec3::new(10.0, 0.0, 0.0)),
+                ..Default::default()
+            },
+        );
         sim.step();
         let moved = (sim.player(a).unwrap().feet - start).length();
         assert!(moved > 0.05 && moved < 0.4, "{moved}");
         // Claims into the border wall stop at the wall.
         for _ in 0..600 {
             let f = sim.player(a).unwrap().feet;
-            sim.set_cmd(a, PlayerCmd { feet: Some(f + Vec3::new(0.0, 0.0, 0.1)), ..Default::default() });
+            sim.set_cmd(
+                a,
+                PlayerCmd {
+                    feet: Some(f + Vec3::new(0.0, 0.0, 0.1)),
+                    ..Default::default()
+                },
+            );
             sim.step();
         }
         let f = sim.player(a).unwrap().feet;
@@ -1158,7 +1308,12 @@ mod tests {
         let mut sim = Sim::new(11, Rules::default());
         let blue = sim.add_player("b", Some(Team::Blue), false).unwrap();
         let red = sim.add_player("r", Some(Team::Red), false).unwrap();
-        let t = *sim.level.targets.iter().find(|t| t.team == Team::Red).unwrap();
+        let t = *sim
+            .level
+            .targets
+            .iter()
+            .find(|t| t.team == Team::Red)
+            .unwrap();
         let spot = sim.level.dims().cell_centre(t.rear_cell.0, t.rear_cell.1) + t.normal * 0.6;
         for (who, expect) in [(red, [0, 0]), (blue, [0, 100])] {
             let pi = sim.players.iter().position(|p| p.id == who).unwrap();
@@ -1167,7 +1322,10 @@ mod tests {
             let dir = (t.centre() - eye).normalize();
             let cmd = PlayerCmd {
                 gun_hand: Some(Hand::Right),
-                muzzle: Pose { pos: eye - spot, rot: look_rot(dir) },
+                muzzle: Pose {
+                    pos: eye - spot,
+                    rot: look_rot(dir),
+                },
                 fire: true,
                 ..Default::default()
             };
@@ -1187,7 +1345,13 @@ mod tests {
         let (mut sim, a, _b) = duel();
         let base = sim.level.base_centre(Team::Red);
         sim.players[0].grenades = 1;
-        sim.set_cmd(a, PlayerCmd { throw: Some((Vec3::new(0.0, 1.2, -0.3), Vec3::new(0.0, 2.0, -3.0))), ..Default::default() });
+        sim.set_cmd(
+            a,
+            PlayerCmd {
+                throw: Some((Vec3::new(0.0, 1.2, -0.3), Vec3::new(0.0, 2.0, -3.0))),
+                ..Default::default()
+            },
+        );
         sim.step();
         assert_eq!(sim.grenades.len(), 1);
         assert_eq!(sim.player(a).unwrap().grenades, 0);
@@ -1213,13 +1377,21 @@ mod tests {
                 max_y_active = max_y_active.max(g.pos.y);
             }
             if sim.bolts.iter().any(|b| b.team.is_none()) {
-                assert!(sim.bolts.iter().filter(|b| b.team.is_none()).all(|b| b.owner == a));
+                assert!(
+                    sim.bolts
+                        .iter()
+                        .filter(|b| b.team.is_none())
+                        .all(|b| b.owner == a)
+                );
             }
         }
         let armed = armed_at.unwrap();
         assert!((armed - 3.0).abs() < 0.05, "{armed}");
         assert!(sim.grenades.is_empty(), "gone after 3 + 4 s");
-        assert!((max_y_active - ground_y - 1.0).abs() < 0.1, "hops about a metre: {max_y_active} {ground_y}");
+        assert!(
+            (max_y_active - ground_y - 1.0).abs() < 0.1,
+            "hops about a metre: {max_y_active} {ground_y}"
+        );
         assert!(bursts >= 25, "{bursts}");
         let _ = base;
     }
@@ -1262,7 +1434,10 @@ mod tests {
                 a,
                 PlayerCmd {
                     gun_hand: Some(Hand::Right),
-                    muzzle: Pose { pos: Vec3::Y * 1.4, rot: Quat::IDENTITY },
+                    muzzle: Pose {
+                        pos: Vec3::Y * 1.4,
+                        rot: Quat::IDENTITY,
+                    },
                     fire: on,
                     ..Default::default()
                 },
@@ -1286,7 +1461,11 @@ mod tests {
             fire(&mut sim, false);
             fire(&mut sim, true);
         }
-        let shots: usize = sim.drain_events().iter().filter(|e| matches!(e, SimEvent::Fired { .. })).count();
+        let shots: usize = sim
+            .drain_events()
+            .iter()
+            .filter(|e| matches!(e, SimEvent::Fired { .. }))
+            .count();
         assert_eq!(fired + shots, 50, "50 shots in a blaster");
         assert!(empty > 0 || sim.player(a).unwrap().ammo == 0);
         // Standing on a spawn pad refills it.
@@ -1305,25 +1484,44 @@ mod tests {
 
     /// Whether a body at `feet` is inside anything solid (beyond a little slack).
     fn embedded(world: &World, feet: Vec3) -> Option<crate::collide::Collider> {
-        world.colliders.iter().skip(1).chain(&world.dynamic).copied().find(|c| {
-            if matches!(c, crate::collide::Collider::Ramp { .. }) {
-                return false;
-            }
-            let (min, max) = c.bounds();
-            if max.y <= feet.y + crate::collide::STEP || min.y >= feet.y + BODY_HEIGHT {
-                return false;
-            }
-            let n = Vec2::new(feet.x.clamp(min.x, max.x), feet.z.clamp(min.z, max.z));
-            Vec2::new(feet.x, feet.z).distance(n) < BODY_RADIUS - 0.03
-        })
+        world
+            .colliders
+            .iter()
+            .skip(1)
+            .chain(&world.dynamic)
+            .copied()
+            .find(|c| {
+                if matches!(c, crate::collide::Collider::Ramp { .. }) {
+                    return false;
+                }
+                let (min, max) = c.bounds();
+                if max.y <= feet.y + crate::collide::STEP || min.y >= feet.y + BODY_HEIGHT {
+                    return false;
+                }
+                let n = Vec2::new(feet.x.clamp(min.x, max.x), feet.z.clamp(min.z, max.z));
+                Vec2::new(feet.x, feet.z).distance(n) < BODY_RADIUS - 0.03
+            })
     }
 
     #[test]
     fn sliding_panels_push_players_out_of_the_way() {
         let mut checked = 0;
         for seed in 0..10u64 {
-            let mut sim = Sim::new(seed, Rules { match_time: 1000.0, ..Rules::default() });
-            let Some(mi) = sim.level.movers.iter().position(|m| m.kind == MoverKind::Panel) else { continue };
+            let mut sim = Sim::new(
+                seed,
+                Rules {
+                    match_time: 1000.0,
+                    ..Rules::default()
+                },
+            );
+            let Some(mi) = sim
+                .level
+                .movers
+                .iter()
+                .position(|m| m.kind == MoverKind::Panel)
+            else {
+                continue;
+            };
             let m = sim.level.movers[mi];
             let a = sim.add_player("a", Some(Team::Red), false).unwrap();
             // Wait for the panel to rest at the start of its track, then stand where it's going.
@@ -1337,7 +1535,11 @@ mod tests {
                 sim.step();
                 let f = sim.player(a).unwrap().feet;
                 moved = moved.max(Vec2::new(f.x - spot.x, f.z - spot.z).length());
-                assert!(embedded(&sim.world, f).is_none(), "seed {seed}: player at {f} inside {:?}", embedded(&sim.world, f));
+                assert!(
+                    embedded(&sim.world, f).is_none(),
+                    "seed {seed}: player at {f} inside {:?}",
+                    embedded(&sim.world, f)
+                );
                 assert!(f.y.abs() < 0.05, "seed {seed}: still on the floor: {f}");
             }
             assert!(moved > 0.5, "seed {seed}: pushed only {moved} m");
@@ -1350,8 +1552,22 @@ mod tests {
     fn doors_block_bolts_while_closed() {
         let mut checked = 0;
         for seed in 0..10u64 {
-            let mut sim = Sim::new(seed, Rules { match_time: 1000.0, ..Rules::default() });
-            let Some(m) = sim.level.movers.iter().find(|m| m.kind == MoverKind::Door).copied() else { continue };
+            let mut sim = Sim::new(
+                seed,
+                Rules {
+                    match_time: 1000.0,
+                    ..Rules::default()
+                },
+            );
+            let Some(m) = sim
+                .level
+                .movers
+                .iter()
+                .find(|m| m.kind == MoverKind::Door)
+                .copied()
+            else {
+                continue;
+            };
             let across = if m.rot % 2 == 0 { Vec3::Z } else { Vec3::X };
             for open in [false, true] {
                 let want = if open { 1.0 } else { 0.0 };
@@ -1378,7 +1594,11 @@ mod tests {
                     _ => None,
                 });
                 let at_door = impact.is_some_and(|q| (q - from).dot(across) < 1.6);
-                assert_eq!(at_door, !open, "seed {seed}, door open {open}: impact {impact:?}, door at {}", m.pos);
+                assert_eq!(
+                    at_door, !open,
+                    "seed {seed}, door open {open}: impact {impact:?}, door at {}",
+                    m.pos
+                );
                 sim.bolts.clear();
             }
             checked += 1;
@@ -1390,7 +1610,13 @@ mod tests {
     /// target was `lag` ticks ago (leading it as it then moved); the command made at
     /// `view_tick` = now - `lag` if `compensated`, else 0. Returns the target's hits.
     fn lagged_shot(lag: u64, compensated: bool) -> u8 {
-        let mut sim = Sim::new(7, Rules { pickup_pairs: 0, ..Rules::default() });
+        let mut sim = Sim::new(
+            7,
+            Rules {
+                pickup_pairs: 0,
+                ..Rules::default()
+            },
+        );
         let a = sim.add_player("shooter", Some(Team::Red), false).unwrap();
         let b = sim.add_player("target", Some(Team::Blue), false).unwrap();
         // Somewhere open: the target walks 3 m along x in plain sight of the shooter.
@@ -1402,7 +1628,10 @@ mod tests {
                 let eye = p + Vec3::Y * EYE;
                 (0..=14).all(|k| {
                     let q = p + start + Vec3::X * (k as f32 * 0.25);
-                    sim.level.dims().cell_at(q).is_some_and(|(x, z)| sim.level.nav.valid[sim.level.dims().idx(x, z)])
+                    sim.level
+                        .dims()
+                        .cell_at(q)
+                        .is_some_and(|(x, z)| sim.level.nav.valid[sim.level.dims().idx(x, z)])
                         && world.clear(eye, q + Vec3::Y * 1.2)
                         && world.clear(q + Vec3::Y * 0.5, q + Vec3::new(0.6, 0.5, 0.0))
                         && world.clear(q + Vec3::Y * 0.5, q + Vec3::new(0.0, 0.5, 0.6))
@@ -1412,7 +1641,10 @@ mod tests {
             .expect("an open spot");
         sim.players[0].feet = shooter;
         sim.players[1].feet = shooter + start;
-        let walk = PlayerCmd { stick: Vec2::X, ..Default::default() };
+        let walk = PlayerCmd {
+            stick: Vec2::X,
+            ..Default::default()
+        };
         sim.set_cmd(b, walk);
         for _ in 0..30 {
             sim.step();
@@ -1442,7 +1674,10 @@ mod tests {
         let me = sim.player(a).unwrap();
         let cmd = PlayerCmd {
             gun_hand: Some(Hand::Right),
-            muzzle: Pose { pos: muzzle - me.feet, rot: look_rot(dir) },
+            muzzle: Pose {
+                pos: muzzle - me.feet,
+                rot: look_rot(dir),
+            },
             fire: true,
             view_tick: if compensated { view } else { 0 },
             ..Default::default()
@@ -1459,8 +1694,16 @@ mod tests {
     #[test]
     fn lag_compensation_hits_what_the_shooter_saw() {
         for lag in [6, 10, 14] {
-            assert_eq!(lagged_shot(lag, true), 1, "{lag} ticks behind, compensated: a hit");
-            assert_eq!(lagged_shot(lag, false), 0, "{lag} ticks behind, uncompensated: a miss");
+            assert_eq!(
+                lagged_shot(lag, true),
+                1,
+                "{lag} ticks behind, compensated: a hit"
+            );
+            assert_eq!(
+                lagged_shot(lag, false),
+                0,
+                "{lag} ticks behind, uncompensated: a miss"
+            );
         }
         // Beyond the history only `MAX_LAG` is made up: still nothing breaks.
         let _ = lagged_shot(19, true);
@@ -1470,13 +1713,21 @@ mod tests {
     fn grenade_pickups_appear_and_are_taken() {
         let mut sim = Sim::new(4, Rules::default());
         let a = sim.add_player("a", Some(Team::Red), false).unwrap();
-        assert_eq!(sim.player(a).unwrap().grenades, 0, "players start without grenades");
+        assert_eq!(
+            sim.player(a).unwrap().grenades,
+            0,
+            "players start without grenades"
+        );
         for _ in 0..(10.0 / TICK) as usize {
             sim.step();
         }
         let pickups: Vec<Pickup> = sim.pickups().copied().collect();
         assert_eq!(pickups.len(), 4);
-        assert_eq!(pickups.iter().filter(|p| p.pos.z > 0.0).count(), 2, "two in each half");
+        assert_eq!(
+            pickups.iter().filter(|p| p.pos.z > 0.0).count(),
+            2,
+            "two in each half"
+        );
         let p = pickups[0];
         sim.players[0].feet = p.pos - Vec3::Y * PICKUP_HEIGHT;
         sim.step();

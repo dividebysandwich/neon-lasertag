@@ -8,8 +8,8 @@ use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::pbr::{MaterialPipeline, MaterialPipelineKey};
 use bevy::prelude::*;
 use bevy::render::render_resource::{
-    AsBindGroup, BlendComponent, BlendFactor, BlendOperation, BlendState, RenderPipelineDescriptor, ShaderType,
-    SpecializedMeshPipelineError,
+    AsBindGroup, BlendComponent, BlendFactor, BlendOperation, BlendState, RenderPipelineDescriptor,
+    ShaderType, SpecializedMeshPipelineError,
 };
 use bevy::shader::ShaderRef;
 use lt_sim::Team;
@@ -83,7 +83,12 @@ impl NeonUniform {
     fn new(color: Vec3, intensity: f32, mode: f32) -> Self {
         NeonUniform {
             color: color.extend(intensity),
-            params: Vec4::new(mode, 0.0, 0.0, lt_sim::level::ArenaSize::Small.dims().half_length()),
+            params: Vec4::new(
+                mode,
+                0.0,
+                0.0,
+                lt_sim::level::ArenaSize::Small.dims().half_length(),
+            ),
             red: RED.extend(1.0),
             blue: BLUE.extend(1.0),
             pulse_pos: [Vec4::new(0.0, 0.0, 0.0, -1.0); PULSES],
@@ -289,15 +294,43 @@ fn make_palette(
         body,
         suit,
         fur,
-        arena_accent: accents.add(AccentMaterial { neon: NeonUniform::team_zoned(3.0) }),
-        arena_glow: glows.add(GlowMaterial { neon: NeonUniform::team_zoned(2.0) }),
-        border_accent: accents.add(AccentMaterial { neon: fixed(RED, BORDER_ACCENT) }),
-        border_glow: glows.add(GlowMaterial { neon: fixed(RED, BORDER_GLOW) }),
-        accent: colors.map(|c| accents.add(AccentMaterial { neon: fixed(c, 3.0) })),
-        glow: colors.map(|c| glows.add(GlowMaterial { neon: fixed(c, 2.0) })),
-        bolt: colors.map(|c| accents.add(AccentMaterial { neon: fixed(c, 9.0) })),
-        eyes: colors.map(|c| accents.add(AccentMaterial { neon: fixed(c, 7.0) })),
-        flow: colors.map(|c| accents.add(AccentMaterial { neon: NeonUniform::flow(c, 3.0, 0.8) })),
+        arena_accent: accents.add(AccentMaterial {
+            neon: NeonUniform::team_zoned(3.0),
+        }),
+        arena_glow: glows.add(GlowMaterial {
+            neon: NeonUniform::team_zoned(2.0),
+        }),
+        border_accent: accents.add(AccentMaterial {
+            neon: fixed(RED, BORDER_ACCENT),
+        }),
+        border_glow: glows.add(GlowMaterial {
+            neon: fixed(RED, BORDER_GLOW),
+        }),
+        accent: colors.map(|c| {
+            accents.add(AccentMaterial {
+                neon: fixed(c, 3.0),
+            })
+        }),
+        glow: colors.map(|c| {
+            glows.add(GlowMaterial {
+                neon: fixed(c, 2.0),
+            })
+        }),
+        bolt: colors.map(|c| {
+            accents.add(AccentMaterial {
+                neon: fixed(c, 9.0),
+            })
+        }),
+        eyes: colors.map(|c| {
+            accents.add(AccentMaterial {
+                neon: fixed(c, 7.0),
+            })
+        }),
+        flow: colors.map(|c| {
+            accents.add(AccentMaterial {
+                neon: NeonUniform::flow(c, 3.0, 0.8),
+            })
+        }),
     });
 }
 

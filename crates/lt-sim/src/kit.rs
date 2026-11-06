@@ -105,31 +105,36 @@ impl PieceKind {
                 (Vec3::new(-h, 0.0, -t), Vec3::new(h, STOREY, t))
             }
             PieceKind::WallHalf => (Vec3::new(-h, 0.0, -t), Vec3::new(h, HALF_H, t)),
-            PieceKind::Railing => {
-                (Vec3::new(-h, 0.0, -RAIL_T / 2.0), Vec3::new(h, RAIL_H, RAIL_T / 2.0))
-            }
-            PieceKind::PostFull => {
-                (Vec3::new(-POST / 2.0, 0.0, -POST / 2.0), Vec3::new(POST / 2.0, STOREY, POST / 2.0))
-            }
-            PieceKind::PostLow => {
-                (Vec3::new(-POST / 2.0, 0.0, -POST / 2.0), Vec3::new(POST / 2.0, HALF_H, POST / 2.0))
-            }
+            PieceKind::Railing => (
+                Vec3::new(-h, 0.0, -RAIL_T / 2.0),
+                Vec3::new(h, RAIL_H, RAIL_T / 2.0),
+            ),
+            PieceKind::PostFull => (
+                Vec3::new(-POST / 2.0, 0.0, -POST / 2.0),
+                Vec3::new(POST / 2.0, STOREY, POST / 2.0),
+            ),
+            PieceKind::PostLow => (
+                Vec3::new(-POST / 2.0, 0.0, -POST / 2.0),
+                Vec3::new(POST / 2.0, HALF_H, POST / 2.0),
+            ),
             PieceKind::Pillar => (
                 Vec3::new(-PILLAR / 2.0, 0.0, -PILLAR / 2.0),
                 Vec3::new(PILLAR / 2.0, STOREY, PILLAR / 2.0),
             ),
-            PieceKind::Block => {
-                (Vec3::new(-BLOCK / 2.0, 0.0, -BLOCK / 2.0), Vec3::new(BLOCK / 2.0, BLOCK, BLOCK / 2.0))
-            }
+            PieceKind::Block => (
+                Vec3::new(-BLOCK / 2.0, 0.0, -BLOCK / 2.0),
+                Vec3::new(BLOCK / 2.0, BLOCK, BLOCK / 2.0),
+            ),
             PieceKind::Ramp => {
                 let l = CELL * RAMP_CELLS as f32 / 2.0;
                 (Vec3::new(-h, 0.0, -l), Vec3::new(h, STOREY, l))
             }
             PieceKind::TargetAlcove => (Vec3::new(-h, 0.0, -h), Vec3::new(h, STOREY, h)),
             PieceKind::SpawnPad => (Vec3::new(-h, 0.0, -h), Vec3::new(h, 0.02, h)),
-            PieceKind::BorderWall => {
-                (Vec3::new(-h, 0.0, -BORDER_T / 2.0), Vec3::new(h, BORDER_H, BORDER_T / 2.0))
-            }
+            PieceKind::BorderWall => (
+                Vec3::new(-h, 0.0, -BORDER_T / 2.0),
+                Vec3::new(h, BORDER_H, BORDER_T / 2.0),
+            ),
             PieceKind::BorderPost => (
                 Vec3::new(-BORDER_T / 2.0, 0.0, -BORDER_T / 2.0),
                 Vec3::new(BORDER_T / 2.0, BORDER_H, BORDER_T / 2.0),
@@ -276,7 +281,11 @@ pub fn dims_json() -> String {
                 }
             })
             .collect();
-        let comma = if i + 1 < PieceKind::ALL.len() { "," } else { "" };
+        let comma = if i + 1 < PieceKind::ALL.len() {
+            ","
+        } else {
+            ""
+        };
         s += &format!(
             "    \"{}\": {{\"bounds\": [{}, {}], \"shapes\": [{}]}}{comma}\n",
             k.name(),
@@ -286,7 +295,11 @@ pub fn dims_json() -> String {
         );
     }
     let (pmin, pmax) = target_panel();
-    s += &format!("  }},\n  \"target_panel\": [{}, {}]\n}}\n", v(pmin), v(pmax));
+    s += &format!(
+        "  }},\n  \"target_panel\": [{}, {}]\n}}\n",
+        v(pmin),
+        v(pmax)
+    );
     s
 }
 
@@ -311,20 +324,29 @@ mod tests {
                 let (min, max) = match s {
                     Shape::Box { min, max } | Shape::Ramp { min, max } => (min, max),
                 };
-                assert!(min.cmpge(bmin - 1e-5).all() && max.cmple(bmax + 1e-5).all(), "{k:?}");
+                assert!(
+                    min.cmpge(bmin - 1e-5).all() && max.cmple(bmax + 1e-5).all(),
+                    "{k:?}"
+                );
             }
         }
     }
 
     #[test]
     fn kit_dims_json_is_current() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tools/models/kit_dims.json");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tools/models/kit_dims.json"
+        );
         let json = dims_json();
         let _: serde_json::Value = serde_json::from_str(&json).expect("valid json");
         if std::env::var_os("LT_WRITE_KIT_DIMS").is_some() {
             std::fs::write(path, &json).unwrap();
         }
         let on_disk = std::fs::read_to_string(path).unwrap_or_default();
-        assert_eq!(on_disk, json, "kit_dims.json is stale: LT_WRITE_KIT_DIMS=1 cargo test -p lt-sim kit");
+        assert_eq!(
+            on_disk, json,
+            "kit_dims.json is stale: LT_WRITE_KIT_DIMS=1 cargo test -p lt-sim kit"
+        );
     }
 }

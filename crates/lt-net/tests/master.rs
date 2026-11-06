@@ -35,7 +35,10 @@ fn report(port: u16) -> ServerReport {
         bots: 2,
         scores: [3, 5],
         time_left_s: 300,
-        players: vec![ReportPlayer { name: "Ann".into(), team: "red".into() }],
+        players: vec![ReportPlayer {
+            name: "Ann".into(),
+            team: "red".into(),
+        }],
         ..Default::default()
     }
 }
@@ -51,7 +54,12 @@ fn a_pushed_report_is_listed_and_removed_on_stop() {
     assert_eq!(list[0].report.map_seed, 0xdead_beef);
     assert_eq!(list[0].report.scores, [3, 5]);
     assert_eq!(list[0].report.players[0].team, "red");
-    assert!(reporter.take_log().iter().any(|l| l.starts_with("listed on")));
+    assert!(
+        reporter
+            .take_log()
+            .iter()
+            .any(|l| l.starts_with("listed on"))
+    );
     reporter.stop();
     assert!(fetch_list(&url).unwrap().is_empty(), "DELETE on stop");
 }

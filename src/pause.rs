@@ -24,7 +24,12 @@ pub struct PausePlugin;
 
 impl Plugin for PausePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (toggle, buttons, show).chain().before(crate::options::OptionsSet));
+        app.add_systems(
+            Update,
+            (toggle, buttons, show)
+                .chain()
+                .before(crate::options::OptionsSet),
+        );
     }
 }
 
@@ -63,13 +68,20 @@ fn resume(overlays: &mut Overlays, cursor: &mut Query<&mut CursorOptions, With<P
 #[allow(clippy::type_complexity)]
 fn buttons(
     q: Query<(&Interaction, &PauseButton), Changed<Interaction>>,
-    mut colors: Query<(&Interaction, &mut BackgroundColor), (Changed<Interaction>, With<PauseButton>)>,
+    mut colors: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<PauseButton>),
+    >,
     mut overlays: ResMut<Overlays>,
     mut cursor: Query<&mut CursorOptions, With<PrimaryWindow>>,
     mut cmds: MessageWriter<SessionCmd>,
 ) {
     for (i, mut bg) in &mut colors {
-        bg.0 = if *i == Interaction::None { BUTTON } else { BUTTON_HOVER };
+        bg.0 = if *i == Interaction::None {
+            BUTTON
+        } else {
+            BUTTON_HOVER
+        };
     }
     for (i, b) in &q {
         if *i != Interaction::Pressed {
@@ -90,10 +102,22 @@ fn buttons(
 }
 
 fn label(s: &str, size: f32, color: Color) -> impl Bundle {
-    (Text::new(s), TextFont { font_size: FontSize::Px(size), ..default() }, TextColor(color))
+    (
+        Text::new(s),
+        TextFont {
+            font_size: FontSize::Px(size),
+            ..default()
+        },
+        TextColor(color),
+    )
 }
 
-fn show(mut commands: Commands, overlays: Res<Overlays>, root: Query<Entity, With<PauseRoot>>, game: Option<Res<Game>>) {
+fn show(
+    mut commands: Commands,
+    overlays: Res<Overlays>,
+    root: Query<Entity, With<PauseRoot>>,
+    game: Option<Res<Game>>,
+) {
     let open = overlays.menu && game.is_some();
     match (open, root.single()) {
         (true, Err(_)) => {
@@ -116,17 +140,22 @@ fn show(mut commands: Commands, overlays: Res<Overlays>, root: Query<Entity, Wit
                 ))
                 .with_children(|p| {
                     p.spawn(label("MENU", 56.0, Color::srgb(1.0, 0.3, 0.4)));
-                    let note = if multiplayer { "the match goes on meanwhile" } else { "the bots play on meanwhile" };
+                    let note = if multiplayer {
+                        "the match goes on meanwhile"
+                    } else {
+                        "the bots play on meanwhile"
+                    };
                     p.spawn(label(note, 18.0, Color::srgb(0.6, 0.6, 0.7)));
-                    p.spawn(Node { height: Val::Px(12.0), ..default() });
-                    for (text, b) in
-                        [
+                    p.spawn(Node {
+                        height: Val::Px(12.0),
+                        ..default()
+                    });
+                    for (text, b) in [
                         ("Resume", PauseButton::Resume),
                         ("Options", PauseButton::Options),
                         ("Leave to main menu", PauseButton::Leave),
                         ("Quit game", PauseButton::Quit),
-                    ]
-                    {
+                    ] {
                         p.spawn((
                             Button,
                             b,
@@ -144,7 +173,11 @@ fn show(mut commands: Commands, overlays: Res<Overlays>, root: Query<Entity, Wit
                             b.spawn(label(text, 26.0, Color::WHITE));
                         });
                     }
-                    p.spawn(label("Esc: back to the game", 16.0, Color::srgb(0.6, 0.6, 0.7)));
+                    p.spawn(label(
+                        "Esc: back to the game",
+                        16.0,
+                        Color::srgb(0.6, 0.6, 0.7),
+                    ));
                 });
         }
         (false, Ok(e)) => {
@@ -155,5 +188,11 @@ fn show(mut commands: Commands, overlays: Res<Overlays>, root: Query<Entity, Wit
 }
 
 fn hosting(game: &Game) -> bool {
-    matches!(&game.source, crate::game::Source::Local { server: Some(_), .. })
+    matches!(
+        &game.source,
+        crate::game::Source::Local {
+            server: Some(_),
+            ..
+        }
+    )
 }

@@ -66,7 +66,10 @@ pub struct Pose {
 
 impl Default for Pose {
     fn default() -> Self {
-        Pose { pos: Vec3::ZERO, rot: Quat::IDENTITY }
+        Pose {
+            pos: Vec3::ZERO,
+            rot: Quat::IDENTITY,
+        }
     }
 }
 
@@ -113,28 +116,82 @@ pub struct PlayerCmd {
 /// What happened during a tick: drives sounds, haptics, effects and the score display.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum SimEvent {
-    Fired { player: PlayerId, pos: Vec3, dir: Vec3 },
+    Fired {
+        player: PlayerId,
+        pos: Vec3,
+        dir: Vec3,
+    },
     /// The trigger was pulled while the blaster is down (after a hit).
-    Denied { player: PlayerId },
+    Denied {
+        player: PlayerId,
+    },
     /// The trigger was pulled with no shots left.
-    Empty { player: PlayerId },
+    Empty {
+        player: PlayerId,
+    },
     /// A blaster started refilling (at a reload station or a spawn pad), and is full again.
-    Reloading { player: PlayerId },
-    Reloaded { player: PlayerId },
+    Reloading {
+        player: PlayerId,
+    },
+    Reloaded {
+        player: PlayerId,
+    },
     /// A grenade pickup appeared, and was taken.
-    PickupSpawned { id: u32, pos: Vec3 },
-    PickedUp { id: u32, player: PlayerId, pos: Vec3 },
+    PickupSpawned {
+        id: u32,
+        pos: Vec3,
+    },
+    PickedUp {
+        id: u32,
+        player: PlayerId,
+        pos: Vec3,
+    },
     /// A bolt hit a player (`hits` taken so far, 1..=hits_to_tag); `by` is the shooter.
-    Hit { player: PlayerId, by: PlayerId, pos: Vec3, hits: u8 },
-    TaggedOut { player: PlayerId, by: PlayerId, pos: Vec3, respawn_in: f32 },
-    Respawned { player: PlayerId, pos: Vec3 },
-    TargetHit { target: u8, by: PlayerId, pos: Vec3 },
+    Hit {
+        player: PlayerId,
+        by: PlayerId,
+        pos: Vec3,
+        hits: u8,
+    },
+    TaggedOut {
+        player: PlayerId,
+        by: PlayerId,
+        pos: Vec3,
+        respawn_in: f32,
+    },
+    Respawned {
+        player: PlayerId,
+        pos: Vec3,
+    },
+    TargetHit {
+        target: u8,
+        by: PlayerId,
+        pos: Vec3,
+    },
     /// A bolt hit a wall (spark).
-    BoltImpact { pos: Vec3, normal: Vec3, team: Option<Team> },
-    GrenadeThrown { player: PlayerId, pos: Vec3 },
-    GrenadeBounce { pos: Vec3, speed: f32 },
-    GrenadeArmed { pos: Vec3 },
-    GrenadeBurst { pos: Vec3 },
-    GrenadeDone { pos: Vec3 },
-    MatchOver { scores: [u32; 2] },
+    BoltImpact {
+        pos: Vec3,
+        normal: Vec3,
+        team: Option<Team>,
+    },
+    GrenadeThrown {
+        player: PlayerId,
+        pos: Vec3,
+    },
+    GrenadeBounce {
+        pos: Vec3,
+        speed: f32,
+    },
+    GrenadeArmed {
+        pos: Vec3,
+    },
+    GrenadeBurst {
+        pos: Vec3,
+    },
+    GrenadeDone {
+        pos: Vec3,
+    },
+    MatchOver {
+        scores: [u32; 2],
+    },
 }

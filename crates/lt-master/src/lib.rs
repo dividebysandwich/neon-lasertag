@@ -37,11 +37,19 @@ pub struct Response {
 impl Response {
     fn json<T: serde::Serialize>(status: u16, v: &T) -> Self {
         let body = serde_json::to_vec(v).unwrap_or_else(|_| b"{}".to_vec());
-        Response { status, content_type: "application/json", body }
+        Response {
+            status,
+            content_type: "application/json",
+            body,
+        }
     }
 
     fn html(status: u16, body: String) -> Self {
-        Response { status, content_type: "text/html; charset=utf-8", body: body.into_bytes() }
+        Response {
+            status,
+            content_type: "text/html; charset=utf-8",
+            body: body.into_bytes(),
+        }
     }
 
     /// The body as text.
@@ -169,13 +177,25 @@ impl List {
                 return Response::error(429, "too many servers");
             }
         }
-        self.servers.insert(addr, Listed { report: report.trimmed(), seen: now });
-        Response::json(200, &Registered { every: REPORT_EVERY })
+        self.servers.insert(
+            addr,
+            Listed {
+                report: report.trimmed(),
+                seen: now,
+            },
+        );
+        Response::json(
+            200,
+            &Registered {
+                every: REPORT_EVERY,
+            },
+        )
     }
 
     fn expire(&mut self, now: Instant) {
         let after = Duration::from_secs(EXPIRE_AFTER);
-        self.servers.retain(|_, l| now.duration_since(l.seen) < after);
+        self.servers
+            .retain(|_, l| now.duration_since(l.seen) < after);
     }
 
     /// The address of the server with this id, if it is still listed (for a relay).
@@ -209,7 +229,12 @@ impl List {
                 .players
                 .len()
                 .cmp(&a.report.players.len())
-                .then_with(|| a.report.name.to_lowercase().cmp(&b.report.name.to_lowercase()))
+                .then_with(|| {
+                    a.report
+                        .name
+                        .to_lowercase()
+                        .cmp(&b.report.name.to_lowercase())
+                })
                 .then_with(|| a.addr.cmp(&b.addr))
         });
         out
@@ -281,7 +306,11 @@ mod tests {
         }
         let r = l.handle("POST", "/api/servers", &report("S", 5000, 0), A, t);
         assert_eq!(r.status, 429);
-        assert_eq!(l.handle("POST", "/api/servers", &report("S", 5000, 0), B, t).status, 200);
+        assert_eq!(
+            l.handle("POST", "/api/servers", &report("S", 5000, 0), B, t)
+                .status,
+            200
+        );
     }
 
     #[test]
@@ -291,11 +320,16 @@ mod tests {
             move |n: &str| h.iter().find(|x| x.0.eq_ignore_ascii_case(n)).map(|x| x.1)
         };
         // From the internet: the peer, whatever it says.
-        let spoof = headers(&[("CF-Connecting-IP", "1.2.3.4"), ("X-Forwarded-For", "1.2.3.4")]);
+        let spoof = headers(&[
+            ("CF-Connecting-IP", "1.2.3.4"),
+            ("X-Forwarded-For", "1.2.3.4"),
+        ]);
         assert_eq!(client_ip(ip("203.0.113.5"), spoof), ip("203.0.113.5"));
         // cloudflared on the LAN, Caddy between: Cloudflare's header.
-        let cf =
-            headers(&[("cf-connecting-ip", "81.189.183.15"), ("X-Forwarded-For", "192.168.178.2")]);
+        let cf = headers(&[
+            ("cf-connecting-ip", "81.189.183.15"),
+            ("X-Forwarded-For", "192.168.178.2"),
+        ]);
         assert_eq!(client_ip(ip("192.168.178.2"), cf), ip("81.189.183.15"));
         assert_eq!(client_ip(ip("::1"), cf), ip("81.189.183.15"));
         // Plain proxies: the last address not theirs.
@@ -319,7 +353,11 @@ mod tests {
         assert!(l.entries(t).is_empty());
         assert_eq!(l.handle("DELETE", "/api/servers/x", b"", A, t).status, 400);
         assert_eq!(l.handle("POST", "/api/servers", b"{nope", A, t).status, 400);
-        assert_eq!(l.handle("POST", "/api/servers", &report("", 1, 0), A, t).status, 400);
+        assert_eq!(
+            l.handle("POST", "/api/servers", &report("", 1, 0), A, t)
+                .status,
+            400
+        );
         assert_eq!(l.handle("PUT", "/api/servers", b"", A, t).status, 405);
         assert_eq!(l.handle("GET", "/nothing", b"", A, t).status, 404);
     }
@@ -334,7 +372,10 @@ mod tests {
         let one = l.handle("GET", &format!("/api/server/{id}"), b"", A, t);
         let e: ServerEntry = serde_json::from_slice(&one.body).unwrap();
         assert_eq!(e.report.players[1].team, "blue");
-        assert_eq!(l.addr_of(&id, t), Some("203.0.113.5:27515".parse().unwrap()));
+        assert_eq!(
+            l.addr_of(&id, t),
+            Some("203.0.113.5:27515".parse().unwrap())
+        );
         assert_eq!(l.handle("GET", "/api/server/0000", b"", A, t).status, 404);
     }
 
@@ -342,7 +383,13 @@ mod tests {
     fn the_page_lists_the_servers_escaped() {
         let mut l = List::default();
         let t = Instant::now();
-        l.handle("POST", "/api/servers", &report("<b>Evil</b> & co", 27515, 2), A, t);
+        l.handle(
+            "POST",
+            "/api/servers",
+            &report("<b>Evil</b> & co", 27515, 2),
+            A,
+            t,
+        );
         let r = l.handle("GET", "/", b"", A, t);
         assert_eq!(r.content_type, "text/html; charset=utf-8");
         assert!(r.text().contains("&lt;b&gt;Evil&lt;/b&gt; &amp; co"));

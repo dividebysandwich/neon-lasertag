@@ -60,7 +60,12 @@ impl Server {
 
     fn broadcast(&mut self, channel: Channel, msg: &ToClient) {
         let bytes = encode(msg);
-        let ids: Vec<ConnId> = self.remotes.iter().filter(|(_, r)| r.player.is_some()).map(|(id, _)| *id).collect();
+        let ids: Vec<ConnId> = self
+            .remotes
+            .iter()
+            .filter(|(_, r)| r.player.is_some())
+            .map(|(id, _)| *id)
+            .collect();
         for id in ids {
             self.endpoint.send(id, channel, &bytes);
         }
@@ -74,7 +79,13 @@ impl Server {
                 NetEvent::Connected(id) => {
                     self.remotes.insert(
                         id,
-                        Remote { player: None, name: String::new(), last_seq: 0, queue: VecDeque::new(), last: PlayerCmd::default() },
+                        Remote {
+                            player: None,
+                            name: String::new(),
+                            last_seq: 0,
+                            queue: VecDeque::new(),
+                            last: PlayerCmd::default(),
+                        },
                     );
                 }
                 NetEvent::Disconnected(id, why) => {
@@ -89,7 +100,9 @@ impl Server {
                     }
                 }
                 NetEvent::Message(id, _, bytes) => {
-                    let Some(msg) = decode::<ToServer>(&bytes) else { continue };
+                    let Some(msg) = decode::<ToServer>(&bytes) else {
+                        continue;
+                    };
                     self.message(id, msg, sim, bots);
                 }
             }
@@ -110,7 +123,13 @@ impl Server {
         match msg {
             ToServer::Hello { protocol, name } => {
                 if protocol != PROTOCOL {
-                    self.send(id, Channel::Reliable, &ToClient::Reject(format!("Protocol {protocol}, the server speaks {PROTOCOL}")));
+                    self.send(
+                        id,
+                        Channel::Reliable,
+                        &ToClient::Reject(format!(
+                            "Protocol {protocol}, the server speaks {PROTOCOL}"
+                        )),
+                    );
                     self.endpoint.close(id, "protocol");
                     return;
                 }
@@ -118,7 +137,11 @@ impl Server {
                     return;
                 }
                 let name: String = name.chars().filter(|c| !c.is_control()).take(24).collect();
-                let name = if name.trim().is_empty() { "Player".to_string() } else { name };
+                let name = if name.trim().is_empty() {
+                    "Player".to_string()
+                } else {
+                    name
+                };
                 // Make room: a bot of the smaller team leaves.
                 let team = smaller_team(sim);
                 let freed = bots.remove_one(sim, team);
@@ -132,20 +155,30 @@ impl Server {
                             r.name = name.clone();
                         }
                         self.log.push(format!("{name} joined {team:?}"));
-                        let welcome = ToClient::Welcome { id: p, seed: sim.level.seed, rules: sim.rules.clone() };
+                        let welcome = ToClient::Welcome {
+                            id: p,
+                            seed: sim.level.seed,
+                            rules: sim.rules.clone(),
+                        };
                         self.send(id, Channel::Reliable, &welcome);
                     }
                     None => {
                         if freed {
                             bots.fill_team(sim, team, bots.skill());
                         }
-                        self.send(id, Channel::Reliable, &ToClient::Reject("The server is full".into()));
+                        self.send(
+                            id,
+                            Channel::Reliable,
+                            &ToClient::Reject("The server is full".into()),
+                        );
                         self.endpoint.close(id, "full");
                     }
                 }
             }
             ToServer::Input { recent } => {
-                let Some(r) = self.remotes.get_mut(&id) else { return };
+                let Some(r) = self.remotes.get_mut(&id) else {
+                    return;
+                };
                 for (seq, cmd) in recent {
                     if seq > r.last_seq {
                         r.last_seq = seq;
@@ -173,7 +206,11 @@ impl Server {
             self.broadcast(Channel::Unreliable, &ToClient::Snapshot(sim.snapshot()));
         }
         if sim.tick % 60 == 1 {
-            let roster = sim.players.iter().map(|p| (p.id, p.name.clone(), p.team)).collect();
+            let roster = sim
+                .players
+                .iter()
+                .map(|p| (p.id, p.name.clone(), p.team))
+                .collect();
             self.broadcast(Channel::Reliable, &ToClient::Roster(roster));
         }
         self.endpoint.flush(Instant::now());
@@ -185,9 +222,14 @@ impl Server {
         self.displaced.clear();
         let ids: Vec<ConnId> = self.remotes.keys().copied().collect();
         for id in ids {
-            let Some(r) = self.remotes.get(&id) else { continue };
+            let Some(r) = self.remotes.get(&id) else {
+                continue;
+            };
             let Some(old_id) = r.player else { continue };
-            let team = old.player(old_id).map(|p| p.team).unwrap_or_else(|| smaller_team(sim));
+            let team = old
+                .player(old_id)
+                .map(|p| p.team)
+                .unwrap_or_else(|| smaller_team(sim));
             let name = r.name.clone();
             let freed = bots.remove_one(sim, team);
             let new_id = sim.add_player(&name, Some(team), false);
@@ -202,7 +244,11 @@ impl Server {
                 r.last = PlayerCmd::default();
             }
             if let Some(p) = new_id {
-                let welcome = ToClient::Welcome { id: p, seed: sim.level.seed, rules: sim.rules.clone() };
+                let welcome = ToClient::Welcome {
+                    id: p,
+                    seed: sim.level.seed,
+                    rules: sim.rules.clone(),
+                };
                 self.send(id, Channel::Reliable, &welcome);
             }
         }
@@ -227,5 +273,9 @@ fn smaller_team(sim: &Sim) -> Team {
     if r != b {
         return if r < b { Team::Red } else { Team::Blue };
     }
-    if all(Team::Red) <= all(Team::Blue) { Team::Red } else { Team::Blue }
+    if all(Team::Red) <= all(Team::Blue) {
+        Team::Red
+    } else {
+        Team::Blue
+    }
 }

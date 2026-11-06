@@ -13,10 +13,17 @@ use crate::kit::{self, Shape};
 /// A collider in world space.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Collider {
-    Box { min: Vec3, max: Vec3 },
+    Box {
+        min: Vec3,
+        max: Vec3,
+    },
     /// A wedge over `min..max` whose top climbs from `min.y` to `max.y` in direction `dir`
     /// (0: +Z, 1: +X, 2: -Z, 3: -X).
-    Ramp { min: Vec3, max: Vec3, dir: u8 },
+    Ramp {
+        min: Vec3,
+        max: Vec3,
+        dir: u8,
+    },
 }
 
 impl Collider {
@@ -25,11 +32,18 @@ impl Collider {
         match *shape {
             Shape::Box { min, max } => {
                 let (a, b) = kit::rotate_box(min, max, rot);
-                Collider::Box { min: a + pos, max: b + pos }
+                Collider::Box {
+                    min: a + pos,
+                    max: b + pos,
+                }
             }
             Shape::Ramp { min, max } => {
                 let (a, b) = kit::rotate_box(min, max, rot);
-                Collider::Ramp { min: a + pos, max: b + pos, dir: rot % 4 }
+                Collider::Ramp {
+                    min: a + pos,
+                    max: b + pos,
+                    dir: rot % 4,
+                }
             }
         }
     }
@@ -204,7 +218,11 @@ pub fn segment_segment(p1: Vec3, q1: Vec3, p2: Vec3, q2: Vec3) -> (f32, f32) {
         } else {
             let b = d1.dot(d2);
             let denom = a * e - b * b;
-            let mut s0 = if denom > 1e-9 { ((b * f - c * e) / denom).clamp(0.0, 1.0) } else { 0.0 };
+            let mut s0 = if denom > 1e-9 {
+                ((b * f - c * e) / denom).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
             let mut t0 = (b * s0 + f) / e;
             if t0 < 0.0 {
                 t0 = 0.0;
@@ -258,7 +276,14 @@ impl World {
         let cell = 2.0;
         let nx = (((max.x - min.x) / cell).ceil() as usize).max(1);
         let nz = (((max.y - min.y) / cell).ceil() as usize).max(1);
-        let mut w = World { colliders, dynamic: Vec::new(), origin: min, cell, dims: (nx, nz), grid: vec![Vec::new(); nx * nz] };
+        let mut w = World {
+            colliders,
+            dynamic: Vec::new(),
+            origin: min,
+            cell,
+            dims: (nx, nz),
+            grid: vec![Vec::new(); nx * nz],
+        };
         for (i, c) in w.colliders.iter().enumerate() {
             let (a, b) = c.bounds();
             let (x0, z0) = w.cell_of(a.x, a.z);
@@ -286,8 +311,12 @@ impl World {
     }
 
     fn cell_of(&self, x: f32, z: f32) -> (usize, usize) {
-        let cx = ((x - self.origin.x) / self.cell).floor().clamp(0.0, (self.dims.0 - 1) as f32);
-        let cz = ((z - self.origin.y) / self.cell).floor().clamp(0.0, (self.dims.1 - 1) as f32);
+        let cx = ((x - self.origin.x) / self.cell)
+            .floor()
+            .clamp(0.0, (self.dims.0 - 1) as f32);
+        let cz = ((z - self.origin.y) / self.cell)
+            .floor()
+            .clamp(0.0, (self.dims.1 - 1) as f32);
         (cx as usize, cz as usize)
     }
 
@@ -339,7 +368,11 @@ impl World {
         let p = Vec2::new(x, z);
         self.near(p, p, &mut idx);
         let mut best: Option<f32> = None;
-        for c in idx.iter().map(|&i| &self.colliders[i as usize]).chain(self.near_dynamic(p, p)) {
+        for c in idx
+            .iter()
+            .map(|&i| &self.colliders[i as usize])
+            .chain(self.near_dynamic(p, p))
+        {
             if let Some(top) = c.top_at(x, z)
                 && top <= below
                 && best.is_none_or(|b| top > b)
@@ -366,7 +399,11 @@ impl World {
             let dynamic: Vec<&Collider> = self.near_dynamic(lo, hi).collect();
             for _ in 0..3 {
                 let mut moved = false;
-                for c in idx.iter().map(|&i| &self.colliders[i as usize]).chain(dynamic.iter().copied()) {
+                for c in idx
+                    .iter()
+                    .map(|&i| &self.colliders[i as usize])
+                    .chain(dynamic.iter().copied())
+                {
                     let (min, max) = c.bounds();
                     if min.y >= p.y + BODY_HEIGHT {
                         continue;
@@ -397,7 +434,10 @@ impl World {
                             (p.z - min.z + BODY_RADIUS, Vec2::new(0.0, -1.0)),
                             (max.z - p.z + BODY_RADIUS, Vec2::new(0.0, 1.0)),
                         ];
-                        let (d, n) = opts.iter().copied().fold(opts[0], |a, b| if b.0 < a.0 { b } else { a });
+                        let (d, n) = opts
+                            .iter()
+                            .copied()
+                            .fold(opts[0], |a, b| if b.0 < a.0 { b } else { a });
                         p.x += n.x * d;
                         p.z += n.y * d;
                     }
@@ -431,12 +471,18 @@ mod tests {
     use super::*;
 
     fn ground_box() -> Collider {
-        Collider::Box { min: Vec3::new(-20.0, -1.0, -20.0), max: Vec3::new(20.0, 0.0, 20.0) }
+        Collider::Box {
+            min: Vec3::new(-20.0, -1.0, -20.0),
+            max: Vec3::new(20.0, 0.0, 20.0),
+        }
     }
 
     #[test]
     fn ray_hits_box_face() {
-        let b = Collider::Box { min: Vec3::new(-1.0, 0.0, -0.1), max: Vec3::new(1.0, 3.0, 0.1) };
+        let b = Collider::Box {
+            min: Vec3::new(-1.0, 0.0, -0.1),
+            max: Vec3::new(1.0, 3.0, 0.1),
+        };
         let (t, n) = b.ray(Vec3::new(0.0, 1.0, 5.0), Vec3::NEG_Z, 10.0).unwrap();
         assert!((t - 4.9).abs() < 1e-4);
         assert_eq!(n, Vec3::Z);
@@ -446,17 +492,29 @@ mod tests {
     #[test]
     fn ray_hits_ramp_slope() {
         // Climbs along +Z from y=0 at z=-3 to y=3 at z=3.
-        let r = Collider::Ramp { min: Vec3::new(-1.0, 0.0, -3.0), max: Vec3::new(1.0, 3.0, 3.0), dir: 0 };
+        let r = Collider::Ramp {
+            min: Vec3::new(-1.0, 0.0, -3.0),
+            max: Vec3::new(1.0, 3.0, 3.0),
+            dir: 0,
+        };
         // Straight down at z=0: the slope is at y=1.5.
         let (t, n) = r.ray(Vec3::new(0.0, 5.0, 0.0), Vec3::NEG_Y, 10.0).unwrap();
         assert!((t - 3.5).abs() < 1e-4, "{t}");
         assert!(n.y > 0.8 && n.z < 0.0);
         // Above the slope near the low end, a horizontal ray at y=2 passes z=-2 freely.
-        assert!(r.ray(Vec3::new(5.0, 2.0, -2.0), Vec3::NEG_X, 10.0).is_none());
+        assert!(
+            r.ray(Vec3::new(5.0, 2.0, -2.0), Vec3::NEG_X, 10.0)
+                .is_none()
+        );
         for dir in 0..4u8 {
             let q = crate::kit::turn(dir);
-            let (a, b) = crate::kit::rotate_box(Vec3::new(-1.0, 0.0, -3.0), Vec3::new(1.0, 3.0, 3.0), dir);
-            let c = Collider::Ramp { min: a, max: b, dir };
+            let (a, b) =
+                crate::kit::rotate_box(Vec3::new(-1.0, 0.0, -3.0), Vec3::new(1.0, 3.0, 3.0), dir);
+            let c = Collider::Ramp {
+                min: a,
+                max: b,
+                dir,
+            };
             let p = q * Vec3::new(0.0, 0.0, 1.5);
             let top = c.top_at(p.x, p.z).unwrap();
             assert!((top - 2.25).abs() < 1e-4, "dir {dir}: {top}");
@@ -467,7 +525,10 @@ mod tests {
 
     #[test]
     fn body_blocked_by_wall_and_climbs_ramp() {
-        let wall = Collider::Box { min: Vec3::new(-1.0, 0.0, -0.1), max: Vec3::new(1.0, 3.0, 0.1) };
+        let wall = Collider::Box {
+            min: Vec3::new(-1.0, 0.0, -0.1),
+            max: Vec3::new(1.0, 3.0, 0.1),
+        };
         let w = World::new(vec![ground_box(), wall]);
         let mut p = Vec3::new(0.0, 0.0, 2.0);
         let mut vy = 0.0;
@@ -476,8 +537,15 @@ mod tests {
         }
         assert!(p.z >= 0.1 + BODY_RADIUS - 1e-3, "{p}");
 
-        let ramp = Collider::Ramp { min: Vec3::new(-1.0, 0.0, -3.0), max: Vec3::new(1.0, 3.0, 3.0), dir: 0 };
-        let deck = Collider::Box { min: Vec3::new(-3.0, 2.8, 3.0), max: Vec3::new(3.0, 3.0, 7.0) };
+        let ramp = Collider::Ramp {
+            min: Vec3::new(-1.0, 0.0, -3.0),
+            max: Vec3::new(1.0, 3.0, 3.0),
+            dir: 0,
+        };
+        let deck = Collider::Box {
+            min: Vec3::new(-3.0, 2.8, 3.0),
+            max: Vec3::new(3.0, 3.0, 7.0),
+        };
         let w = World::new(vec![ground_box(), ramp, deck]);
         let mut p = Vec3::new(0.0, 0.0, -5.0);
         let mut vy = 0.0;
@@ -495,7 +563,10 @@ mod tests {
 
     #[test]
     fn body_falls_through_hole() {
-        let deck = Collider::Box { min: Vec3::new(-3.0, 2.8, -3.0), max: Vec3::new(3.0, 3.0, 3.0) };
+        let deck = Collider::Box {
+            min: Vec3::new(-3.0, 2.8, -3.0),
+            max: Vec3::new(3.0, 3.0, 3.0),
+        };
         let w = World::new(vec![ground_box(), deck]);
         let mut p = Vec3::new(0.0, 3.0, 0.0);
         let mut vy = 0.0;

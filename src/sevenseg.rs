@@ -54,7 +54,12 @@ pub fn spawn_digits(
         ];
         let segs = parts.map(|(p, m)| {
             commands
-                .spawn((Mesh3d(m.clone()), MeshMaterial3d(material.clone()), Transform::from_translation(o + p), ChildOf(parent)))
+                .spawn((
+                    Mesh3d(m.clone()),
+                    MeshMaterial3d(material.clone()),
+                    Transform::from_translation(o + p),
+                    ChildOf(parent),
+                ))
                 .id()
         });
         out.push(Digit(segs));
@@ -74,7 +79,11 @@ pub fn show(text: &str, digits: &[Digit], vis: &mut Query<&mut Visibility>) {
         for (k, e) in d.0.iter().enumerate() {
             if let Ok(mut v) = vis.get_mut(*e) {
                 let on = mask & (1 << k) != 0;
-                let want = if on { Visibility::Inherited } else { Visibility::Hidden };
+                let want = if on {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                };
                 if *v != want {
                     *v = want;
                 }
@@ -130,7 +139,11 @@ fn spawn_panel(
             commands.spawn((
                 Mesh3d(half.clone()),
                 MeshMaterial3d(mat.clone()),
-                Transform::from_xyz(centre.x + sx * size.x / 4.0, centre.y + sy * (size.y - FRAME) / 2.0, fz),
+                Transform::from_xyz(
+                    centre.x + sx * size.x / 4.0,
+                    centre.y + sy * (size.y - FRAME) / 2.0,
+                    fz,
+                ),
                 ChildOf(root),
             ));
         }
@@ -143,7 +156,12 @@ fn spawn_panel(
     }
 }
 
-pub fn spawn_scoreboards(commands: &mut Commands, level: &Level, palette: &Palette, meshes: &mut Assets<Mesh>) {
+pub fn spawn_scoreboards(
+    commands: &mut Commands,
+    level: &Level,
+    palette: &Palette,
+    meshes: &mut Assets<Mesh>,
+) {
     commands.queue(|world: &mut World| {
         let mut boards = world.resource_mut::<Boards>();
         boards.digits.clear();
@@ -169,24 +187,50 @@ pub fn spawn_scoreboards(commands: &mut Commands, level: &Level, palette: &Palet
     let dot = meshes.add(Cuboid::new(CLOCK_H * 0.1, CLOCK_H * 0.1, 0.05));
     let divider = meshes.add(Cuboid::new(FRAME, SCORE_H + MARGIN, FRAME));
     for side in [1.0f32, -1.0] {
-        let rot = if side > 0.0 { Quat::from_rotation_y(std::f32::consts::PI) } else { Quat::IDENTITY };
+        let rot = if side > 0.0 {
+            Quat::from_rotation_y(std::f32::consts::PI)
+        } else {
+            Quat::IDENTITY
+        };
         let root = commands
             .spawn((
                 Scoreboard,
                 crate::arena::ArenaPart,
-                Transform::from_translation(Vec3::new(0.0, 0.0, side * (level.dims().half_length() - OUT)))
-                    .with_rotation(rot),
+                Transform::from_translation(Vec3::new(
+                    0.0,
+                    0.0,
+                    side * (level.dims().half_length() - OUT),
+                ))
+                .with_rotation(rot),
                 Visibility::default(),
             ))
             .id();
-        spawn_panel(commands, meshes, root, Vec2::new(0.0, SCORE_Y), score_size, palette, &red, &blue);
+        spawn_panel(
+            commands,
+            meshes,
+            root,
+            Vec2::new(0.0, SCORE_Y),
+            score_size,
+            palette,
+            &red,
+            &blue,
+        );
         commands.spawn((
             Mesh3d(divider.clone()),
             MeshMaterial3d(white.clone()),
             Transform::from_xyz(0.0, SCORE_Y, -0.02 + FRAME / 2.0),
             ChildOf(root),
         ));
-        spawn_panel(commands, meshes, root, Vec2::new(0.0, CLOCK_Y), clock_size, palette, &white, &white);
+        spawn_panel(
+            commands,
+            meshes,
+            root,
+            Vec2::new(0.0, CLOCK_Y),
+            clock_size,
+            palette,
+            &white,
+            &white,
+        );
 
         let first = |centre: f32, n: usize, p: f32| centre - (n as f32 - 1.0) * p / 2.0;
         let red_x = -(gap + score_w) / 2.0;
@@ -194,10 +238,42 @@ pub fn spawn_scoreboards(commands: &mut Commands, level: &Level, palette: &Palet
         let min_x = -clock_w / 2.0 + CLOCK_H * 0.55 / 2.0;
         let sec_x = min_x + 2.0 * cp + colon;
         let mut digits = Vec::new();
-        digits.extend(spawn_digits(commands, meshes, root, Vec3::new(first(red_x, 5, sp), SCORE_Y, 0.0), 5, SCORE_H, &red));
-        digits.extend(spawn_digits(commands, meshes, root, Vec3::new(min_x, CLOCK_Y, 0.0), 2, CLOCK_H, &white));
-        digits.extend(spawn_digits(commands, meshes, root, Vec3::new(sec_x, CLOCK_Y, 0.0), 2, CLOCK_H, &white));
-        digits.extend(spawn_digits(commands, meshes, root, Vec3::new(first(blue_x, 5, sp), SCORE_Y, 0.0), 5, SCORE_H, &blue));
+        digits.extend(spawn_digits(
+            commands,
+            meshes,
+            root,
+            Vec3::new(first(red_x, 5, sp), SCORE_Y, 0.0),
+            5,
+            SCORE_H,
+            &red,
+        ));
+        digits.extend(spawn_digits(
+            commands,
+            meshes,
+            root,
+            Vec3::new(min_x, CLOCK_Y, 0.0),
+            2,
+            CLOCK_H,
+            &white,
+        ));
+        digits.extend(spawn_digits(
+            commands,
+            meshes,
+            root,
+            Vec3::new(sec_x, CLOCK_Y, 0.0),
+            2,
+            CLOCK_H,
+            &white,
+        ));
+        digits.extend(spawn_digits(
+            commands,
+            meshes,
+            root,
+            Vec3::new(first(blue_x, 5, sp), SCORE_Y, 0.0),
+            5,
+            SCORE_H,
+            &blue,
+        ));
         let colon_x = min_x + cp + (cp + colon) / 2.0;
         for y in [0.22, -0.22] {
             commands.spawn((
@@ -217,14 +293,21 @@ pub struct ScoreboardPlugin;
 
 impl Plugin for ScoreboardPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Boards>().add_systems(Update, update.run_if(resource_exists::<Game>));
+        app.init_resource::<Boards>()
+            .add_systems(Update, update.run_if(resource_exists::<Game>));
     }
 }
 
 fn update(game: Res<Game>, boards: Res<Boards>, mut vis: Query<&mut Visibility>) {
     let s = game.snap.time_left.max(0.0) as u32;
     let [r, b] = game.snap.scores;
-    let text = format!("{:>5}{:>2}{:02}{:>5}", r.min(99999), (s / 60).min(99), s % 60, b.min(99999));
+    let text = format!(
+        "{:>5}{:>2}{:02}{:>5}",
+        r.min(99999),
+        (s / 60).min(99),
+        s % 60,
+        b.min(99999)
+    );
     for d in &boards.digits {
         show(&text, d, &mut vis);
     }

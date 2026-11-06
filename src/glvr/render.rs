@@ -91,7 +91,10 @@ pub fn eye_views(rig: Mat4, views: &[xr::View], widen: f32) -> Vec<EyeView> {
         .map(|v| {
             let (p, q) = pose(v);
             let world_from_eye = rig * Transform::from_translation(p).with_rotation(q).to_matrix();
-            EyeView { view_proj: projection(v.fov, widen) * world_from_eye.inverse(), eye: world_from_eye.w_axis.truncate() }
+            EyeView {
+                view_proj: projection(v.fov, widen) * world_from_eye.inverse(),
+                eye: world_from_eye.w_axis.truncate(),
+            }
         })
         .collect()
 }
@@ -100,7 +103,10 @@ pub fn eye_views(rig: Mat4, views: &[xr::View], widen: f32) -> Vec<EyeView> {
 pub fn pose(v: &xr::View) -> (Vec3, Quat) {
     let p = v.pose.position;
     let o = v.pose.orientation;
-    (Vec3::new(p.x, p.y, p.z), Quat::from_xyzw(o.x, o.y, o.z, o.w))
+    (
+        Vec3::new(p.x, p.y, p.z),
+        Quat::from_xyzw(o.x, o.y, o.z, o.w),
+    )
 }
 
 /// Per-frame counts for the log.
@@ -129,7 +135,10 @@ fn compile(gl: &glow::Context, shader: &str, defines: &str) -> Result<Program, S
     unsafe {
         let program = gl.create_program()?;
         let mut shaders = Vec::new();
-        for (kind, stage) in [(glow::VERTEX_SHADER, "VERTEX"), (glow::FRAGMENT_SHADER, "FRAGMENT")] {
+        for (kind, stage) in [
+            (glow::VERTEX_SHADER, "VERTEX"),
+            (glow::FRAGMENT_SHADER, "FRAGMENT"),
+        ] {
             let s = gl.create_shader(kind)?;
             let source = format!(
                 "#version 450 core\n#extension GL_OVR_multiview2 : require\n#define VIEW gl_ViewID_OVR\n#define {stage}\n{defines}\n{shader}"
@@ -145,7 +154,10 @@ fn compile(gl: &glow::Context, shader: &str, defines: &str) -> Result<Program, S
         // (The shaders give their attributes' locations.)
         gl.link_program(program);
         if !gl.get_program_link_status(program) {
-            return Err(format!("linking {defines}: {}", gl.get_program_info_log(program)));
+            return Err(format!(
+                "linking {defines}: {}",
+                gl.get_program_info_log(program)
+            ));
         }
         for s in shaders {
             gl.delete_shader(s);
@@ -204,7 +216,13 @@ fn aces(x: Vec3) -> Vec3 {
 /// with the inside positive; the far plane is left out.
 pub fn planes(m: Mat4) -> [Vec4; 5] {
     let r = |i: usize| m.row(i);
-    [r(3) + r(0), r(3) - r(0), r(3) + r(1), r(3) - r(1), r(3) - r(2)]
+    [
+        r(3) + r(0),
+        r(3) - r(0),
+        r(3) + r(1),
+        r(3) - r(1),
+        r(3) - r(2),
+    ]
 }
 
 /// Whether the box `aabb` in the space of `t` is at least partly inside `planes`.
@@ -212,7 +230,11 @@ pub fn inside(planes: &[Vec4; 5], t: &GlobalTransform, aabb: &Aabb) -> bool {
     let m = t.affine();
     let centre = m.transform_point3a(aabb.center);
     let he = aabb.half_extents;
-    let (x, y, z) = (m.matrix3.x_axis.abs(), m.matrix3.y_axis.abs(), m.matrix3.z_axis.abs());
+    let (x, y, z) = (
+        m.matrix3.x_axis.abs(),
+        m.matrix3.y_axis.abs(),
+        m.matrix3.z_axis.abs(),
+    );
     let extent = x * he.x + y * he.y + z * he.z;
     planes.iter().all(|p| {
         let n = bevy::math::Vec3A::from(p.truncate());
@@ -221,14 +243,22 @@ pub fn inside(planes: &[Vec4; 5], t: &GlobalTransform, aabb: &Aabb) -> bool {
 }
 
 impl Renderer {
-    pub fn new(gl: glow::Context, get: impl Fn(&str) -> *const c_void, samples: i32) -> Result<Self, String> {
+    pub fn new(
+        gl: glow::Context,
+        get: impl Fn(&str) -> *const c_void,
+        samples: i32,
+    ) -> Result<Self, String> {
         let exts = gl.supported_extensions();
         if !exts.contains("GL_OVR_multiview2") {
             return Err("OpenGL has no GL_OVR_multiview2 (Mesa: Zink has it, LT_GL_DRIVER=native may lack it)".into());
         }
         // SAFETY: the context is current.
-        let (renderer, version) =
-            unsafe { (gl.get_parameter_string(glow::RENDERER), gl.get_parameter_string(glow::VERSION)) };
+        let (renderer, version) = unsafe {
+            (
+                gl.get_parameter_string(glow::RENDERER),
+                gl.get_parameter_string(glow::VERSION),
+            )
+        };
         let msrtt = exts.contains("GL_OVR_multiview_multisampled_render_to_texture");
         info!("glvr: {renderer}, OpenGL {version}; multiview MSRTT {msrtt}");
         let load = |name: &str| {
@@ -239,12 +269,15 @@ impl Renderer {
         let (multiview, multisample, clip_control) = unsafe {
             (
                 std::mem::transmute::<*const c_void, MultiviewFn>(
-                    load("glFramebufferTextureMultiviewOVR").ok_or("no glFramebufferTextureMultiviewOVR")?,
+                    load("glFramebufferTextureMultiviewOVR")
+                        .ok_or("no glFramebufferTextureMultiviewOVR")?,
                 ),
                 load("glFramebufferTextureMultisampleMultiviewOVR")
                     .filter(|_| msrtt)
                     .map(|f| std::mem::transmute::<*const c_void, MultisampleMultiviewFn>(f)),
-                std::mem::transmute::<*const c_void, ClipControlFn>(load("glClipControl").ok_or("no glClipControl")?),
+                std::mem::transmute::<*const c_void, ClipControlFn>(
+                    load("glClipControl").ok_or("no glClipControl")?,
+                ),
             )
         };
         // SAFETY: as above.
@@ -316,7 +349,8 @@ impl Renderer {
                 buffers.push(vbo);
                 Some(())
             };
-            let bytes = |v: &[f32]| std::slice::from_raw_parts(v.as_ptr().cast::<u8>(), v.len() * 4);
+            let bytes =
+                |v: &[f32]| std::slice::from_raw_parts(v.as_ptr().cast::<u8>(), v.len() * 4);
             attribute(0, 3, bytes(positions.as_flattened()))?;
             match &mesh.normals {
                 Some(n) => attribute(1, 3, bytes(n.as_flattened()))?,
@@ -338,12 +372,16 @@ impl Renderer {
                     gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(ebo));
                     buffers.push(ebo);
                     let (b, n, kind) = match indices {
-                        Indices::U16(i) => {
-                            (std::slice::from_raw_parts(i.as_ptr().cast::<u8>(), i.len() * 2), i.len(), glow::UNSIGNED_SHORT)
-                        }
-                        Indices::U32(i) => {
-                            (std::slice::from_raw_parts(i.as_ptr().cast::<u8>(), i.len() * 4), i.len(), glow::UNSIGNED_INT)
-                        }
+                        Indices::U16(i) => (
+                            std::slice::from_raw_parts(i.as_ptr().cast::<u8>(), i.len() * 2),
+                            i.len(),
+                            glow::UNSIGNED_SHORT,
+                        ),
+                        Indices::U32(i) => (
+                            std::slice::from_raw_parts(i.as_ptr().cast::<u8>(), i.len() * 4),
+                            i.len(),
+                            glow::UNSIGNED_INT,
+                        ),
                     };
                     gl.buffer_data_u8_slice(glow::ELEMENT_ARRAY_BUFFER, b, glow::STATIC_DRAW);
                     (n as i32, Some(kind))
@@ -351,12 +389,22 @@ impl Renderer {
                 None => (positions.len() as i32, None),
             };
             gl.bind_vertex_array(None);
-            Some(GpuMesh { vao, buffers, count, indexed, mode })
+            Some(GpuMesh {
+                vao,
+                buffers,
+                count,
+                indexed,
+                mode,
+            })
         }
     }
 
     /// The framebuffer drawing into image `texture` (both layers), multisampled in tile memory.
-    fn framebuffer(&mut self, texture: glow::Texture, size: (u32, u32)) -> Result<glow::Framebuffer, String> {
+    fn framebuffer(
+        &mut self,
+        texture: glow::Texture,
+        size: (u32, u32),
+    ) -> Result<glow::Framebuffer, String> {
         let gl = &self.gl;
         if self.depth.is_none_or(|(_, s)| s != size) {
             // SAFETY: the context is current.
@@ -369,7 +417,14 @@ impl Renderer {
                 }
                 let depth = gl.create_texture()?;
                 gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(depth));
-                gl.tex_storage_3d(glow::TEXTURE_2D_ARRAY, 1, glow::DEPTH_COMPONENT32F, size.0 as i32, size.1 as i32, 2);
+                gl.tex_storage_3d(
+                    glow::TEXTURE_2D_ARRAY,
+                    1,
+                    glow::DEPTH_COMPONENT32F,
+                    size.0 as i32,
+                    size.1 as i32,
+                    2,
+                );
                 gl.bind_texture(glow::TEXTURE_2D_ARRAY, None);
                 self.depth = Some((depth, size));
             }
@@ -383,13 +438,25 @@ impl Renderer {
         unsafe {
             let fb = gl.create_framebuffer()?;
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fb));
-            for (attachment, tex) in [(glow::COLOR_ATTACHMENT0, texture), (glow::DEPTH_ATTACHMENT, depth)] {
+            for (attachment, tex) in [
+                (glow::COLOR_ATTACHMENT0, texture),
+                (glow::DEPTH_ATTACHMENT, depth),
+            ] {
                 match self.multisample {
-                    Some(ms) if self.samples > 0 => ms(glow::FRAMEBUFFER, attachment, tex.0.get(), 0, self.samples, 0, 2),
+                    Some(ms) if self.samples > 0 => ms(
+                        glow::FRAMEBUFFER,
+                        attachment,
+                        tex.0.get(),
+                        0,
+                        self.samples,
+                        0,
+                        2,
+                    ),
                     _ => (self.multiview)(glow::FRAMEBUFFER, attachment, tex.0.get(), 0, 0, 2),
                 }
             }
-            let complete = gl.check_framebuffer_status(glow::FRAMEBUFFER) == glow::FRAMEBUFFER_COMPLETE;
+            let complete =
+                gl.check_framebuffer_status(glow::FRAMEBUFFER) == glow::FRAMEBUFFER_COMPLETE;
             gl.bind_framebuffer(glow::FRAMEBUFFER, None);
             if !complete {
                 gl.delete_framebuffer(fb);
@@ -412,7 +479,10 @@ impl Renderer {
     ) -> Result<(), String> {
         let fb = self.framebuffer(texture, size)?;
         let eyes = eye_views(list.rig, views, 1.0);
-        let mut stats = Stats { culled: list.culled, ..default() };
+        let mut stats = Stats {
+            culled: list.culled,
+            ..default()
+        };
         let gl = &self.gl;
         // SAFETY: the context is current; the programs and meshes are this renderer's.
         unsafe {
@@ -435,7 +505,10 @@ impl Renderer {
             gl.clear_depth_f32(0.0);
             gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
 
-            let view_proj: Vec<f32> = eyes.iter().flat_map(|e| e.view_proj.to_cols_array()).collect();
+            let view_proj: Vec<f32> = eyes
+                .iter()
+                .flat_map(|e| e.view_proj.to_cols_array())
+                .collect();
             let eye_pos: Vec<f32> = eyes.iter().flat_map(|e| e.eye.to_array()).collect();
             let n = &list.neon;
             let pulse_pos: Vec<f32> = n.pulse_pos.iter().flat_map(|v| v.to_array()).collect();
@@ -500,7 +573,8 @@ impl Renderer {
             // Submitted now: Zink's glFlush leaves the frame's work queued; a wait that flushes
             // and doesn't wait sends it.
             if let Some(f) = fence {
-                self.gl.client_wait_sync(f, glow::SYNC_FLUSH_COMMANDS_BIT, 0);
+                self.gl
+                    .client_wait_sync(f, glow::SYNC_FLUSH_COMMANDS_BIT, 0);
             }
             fence
         }
@@ -510,7 +584,8 @@ impl Renderer {
     pub fn wait(&self, fence: glow::Fence) {
         // SAFETY: the context is current; the fence is this renderer's.
         unsafe {
-            self.gl.client_wait_sync(fence, glow::SYNC_FLUSH_COMMANDS_BIT, 100_000_000);
+            self.gl
+                .client_wait_sync(fence, glow::SYNC_FLUSH_COMMANDS_BIT, 100_000_000);
             self.gl.delete_sync(fence);
         }
     }
@@ -526,7 +601,13 @@ impl Renderer {
             unsafe {
                 let fb = gl.create_framebuffer()?;
                 gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(fb));
-                gl.framebuffer_texture_layer(glow::READ_FRAMEBUFFER, glow::COLOR_ATTACHMENT0, Some(texture), 0, layer);
+                gl.framebuffer_texture_layer(
+                    glow::READ_FRAMEBUFFER,
+                    glow::COLOR_ATTACHMENT0,
+                    Some(texture),
+                    0,
+                    layer,
+                );
                 gl.read_pixels(
                     0,
                     0,
@@ -540,9 +621,15 @@ impl Renderer {
                 gl.delete_framebuffer(fb);
             }
             // OpenGL's rows go bottom up.
-            let rows: Vec<u8> = pixels.chunks_exact(w * 4).rev().flatten().copied().collect();
+            let rows: Vec<u8> = pixels
+                .chunks_exact(w * 4)
+                .rev()
+                .flatten()
+                .copied()
+                .collect();
             let path = format!("xr-eye{layer}.png");
-            image::save_buffer(&path, &rows, size.0, size.1, image::ColorType::Rgba8).map_err(|e| format!("{path}: {e}"))?;
+            image::save_buffer(&path, &rows, size.0, size.1, image::ColorType::Rgba8)
+                .map_err(|e| format!("{path}: {e}"))?;
             info!("glvr: saved {path}");
         }
         Ok(())
@@ -567,7 +654,9 @@ impl Renderer {
 
     /// Draws a lit mesh (the lit program in use): whether it was there to draw.
     fn draw_lit(&self, item: &LitItem) -> bool {
-        let Some(m) = self.bind_mesh(item.mesh) else { return false };
+        let Some(m) = self.bind_mesh(item.mesh) else {
+            return false;
+        };
         let p = &self.lit;
         let gl = &self.gl;
         let normal = Mat3::from_mat4(item.model).inverse().transpose();
@@ -590,7 +679,9 @@ impl Renderer {
 
     /// Draws a neon mesh with `p` (in use): whether it was there to draw.
     fn draw_neon(&self, p: &Program, item: &NeonItem) -> bool {
-        let Some(m) = self.bind_mesh(item.mesh) else { return false };
+        let Some(m) = self.bind_mesh(item.mesh) else {
+            return false;
+        };
         let gl = &self.gl;
         // SAFETY: the context is current.
         unsafe {
@@ -620,7 +711,10 @@ mod tests {
         let up = m * Vec4::new(0.0, 0.5, -1.0, 1.0);
         assert!(up.y / up.w > 0.0);
         let p = planes(m);
-        assert!(p.iter().all(|p| p.dot(Vec4::new(0.0, 0.0, -2.0, 1.0)) > 0.0));
+        assert!(
+            p.iter()
+                .all(|p| p.dot(Vec4::new(0.0, 0.0, -2.0, 1.0)) > 0.0)
+        );
         assert!(p[1].dot(Vec4::new(5.0, 0.0, -1.0, 1.0)) < 0.0);
     }
 }

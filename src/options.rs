@@ -48,8 +48,10 @@ pub struct OptionsPlugin;
 
 impl Plugin for OptionsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Capture>()
-            .add_systems(Update, (show, buttons, capture, refresh).chain().in_set(OptionsSet));
+        app.init_resource::<Capture>().add_systems(
+            Update,
+            (show, buttons, capture, refresh).chain().in_set(OptionsSet),
+        );
     }
 }
 
@@ -60,7 +62,14 @@ const BORDER: Color = Color::srgb(0.5, 0.2, 0.9);
 const GREY: Color = Color::srgb(0.6, 0.6, 0.7);
 
 fn label(s: impl Into<String>, size: f32, color: Color) -> impl Bundle {
-    (Text::new(s.into()), TextFont { font_size: FontSize::Px(size), ..default() }, TextColor(color))
+    (
+        Text::new(s.into()),
+        TextFont {
+            font_size: FontSize::Px(size),
+            ..default()
+        },
+        TextColor(color),
+    )
 }
 
 fn button(p: &mut ChildSpawnerCommands, opt: Opt, width: f32, text: &str, shows: Option<OptText>) {
@@ -85,7 +94,12 @@ fn button(p: &mut ChildSpawnerCommands, opt: Opt, width: f32, text: &str, shows:
     });
 }
 
-fn show(mut commands: Commands, overlays: Res<Overlays>, root: Query<Entity, With<OptionsRoot>>, mut capture: ResMut<Capture>) {
+fn show(
+    mut commands: Commands,
+    overlays: Res<Overlays>,
+    root: Query<Entity, With<OptionsRoot>>,
+    mut capture: ResMut<Capture>,
+) {
     match (overlays.options, root.single()) {
         (true, Err(_)) => {
             commands
@@ -180,7 +194,8 @@ fn buttons(
         return;
     }
     for (i, opt, mut bg) in &mut colors {
-        let waiting = matches!((capture.0, opt), (Some((a, s, _)), Opt::Slot(b, t)) if a == *b && s == *t);
+        let waiting =
+            matches!((capture.0, opt), (Some((a, s, _)), Opt::Slot(b, t)) if a == *b && s == *t);
         let want = if waiting {
             BUTTON_WAIT
         } else if *i == Interaction::None {
@@ -203,11 +218,20 @@ fn buttons(
         }
         match *opt {
             Opt::Slot(a, slot) => capture.0 = Some((a, slot, frames.0)),
-            Opt::SensDown => settings.sensitivity = ((settings.sensitivity - 0.1) * 10.0).round().max(1.0) / 10.0,
-            Opt::SensUp => settings.sensitivity = ((settings.sensitivity + 0.1) * 10.0).round().min(50.0) / 10.0,
+            Opt::SensDown => {
+                settings.sensitivity = ((settings.sensitivity - 0.1) * 10.0).round().max(1.0) / 10.0
+            }
+            Opt::SensUp => {
+                settings.sensitivity =
+                    ((settings.sensitivity + 0.1) * 10.0).round().min(50.0) / 10.0
+            }
             Opt::Invert => settings.invert_y = !settings.invert_y,
-            Opt::Sound(up) => settings.sound_volume = Settings::step_volume(settings.sound_volume, up),
-            Opt::Music(up) => settings.music_volume = Settings::step_volume(settings.music_volume, up),
+            Opt::Sound(up) => {
+                settings.sound_volume = Settings::step_volume(settings.sound_volume, up)
+            }
+            Opt::Music(up) => {
+                settings.music_volume = Settings::step_volume(settings.music_volume, up)
+            }
             Opt::Reset => *settings = Settings::default(),
             Opt::Back => overlays.options = false,
         }
@@ -224,7 +248,9 @@ fn capture(
     mut settings: ResMut<Settings>,
     frames: Res<bevy::diagnostic::FrameCount>,
 ) {
-    let Some((action, slot, since)) = capture.0 else { return };
+    let Some((action, slot, since)) = capture.0 else {
+        return;
+    };
     let mut chosen = None;
     for k in keys.get_just_pressed() {
         match k {
@@ -250,7 +276,11 @@ fn capture(
     }
 }
 
-fn refresh(settings: Res<Settings>, capture: Res<Capture>, mut texts: Query<(&OptText, &mut Text)>) {
+fn refresh(
+    settings: Res<Settings>,
+    capture: Res<Capture>,
+    mut texts: Query<(&OptText, &mut Text)>,
+) {
     for (t, mut text) in &mut texts {
         let s = match *t {
             OptText::Sens => format!("{:.1}x", settings.sensitivity),

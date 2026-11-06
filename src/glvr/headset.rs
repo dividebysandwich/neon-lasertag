@@ -3,8 +3,8 @@
 //! the frame loop's calls (as stealth-mission-89's src/glvr/headset.rs).
 
 use super::controllers::Controllers;
-use crate::vr::HandInput;
 use super::egl::{Context, Egl};
+use crate::vr::HandInput;
 use bevy::log::{info, warn};
 use openxr as xr;
 
@@ -63,7 +63,9 @@ impl Headset {
     pub fn new(context: &Context, chains: usize) -> Result<Self, String> {
         // SAFETY: loads the OpenXR loader library.
         let entry = unsafe { xr::Entry::load() }.map_err(|e| format!("no OpenXR loader: {e}"))?;
-        let offered = entry.enumerate_extensions().map_err(err("the runtime's extensions"))?;
+        let offered = entry
+            .enumerate_extensions()
+            .map_err(err("the runtime's extensions"))?;
         if !offered.mndx_egl_enable || !offered.khr_opengl_enable {
             return Err("the OpenXR runtime has no OpenGL through EGL (XR_MNDX_egl_enable)".into());
         }
@@ -83,8 +85,9 @@ impl Headset {
                 &[],
             )
             .map_err(err("the OpenXR instance"))?;
-        let system =
-            instance.system(xr::FormFactor::HEAD_MOUNTED_DISPLAY).map_err(err("the headset"))?;
+        let system = instance
+            .system(xr::FormFactor::HEAD_MOUNTED_DISPLAY)
+            .map_err(err("the headset"))?;
         // (The runtime wants to be asked before a session is made.)
         let _ = <Egl as xr::Graphics>::requirements(&instance, system);
         let blend = instance
@@ -96,7 +99,10 @@ impl Headset {
         let views = instance
             .enumerate_view_configuration_views(system, xr::ViewConfigurationType::PRIMARY_STEREO)
             .map_err(err("the eyes' views"))?;
-        let size = (views[0].recommended_image_rect_width, views[0].recommended_image_rect_height);
+        let size = (
+            views[0].recommended_image_rect_width,
+            views[0].recommended_image_rect_height,
+        );
         let binding = context.binding()?;
         // SAFETY: the binding is the context current on this thread.
         let (session, waiter, stream) = unsafe { instance.create_session::<Egl>(system, &binding) }
@@ -118,7 +124,9 @@ impl Headset {
             session.create_reference_space(xr::ReferenceSpaceType::LOCAL, pose)
         }
         .map_err(err("the tracking space"))?;
-        let formats = session.enumerate_swapchain_formats().map_err(err("the formats"))?;
+        let formats = session
+            .enumerate_swapchain_formats()
+            .map_err(err("the formats"))?;
         let (format, srgb) = if formats.contains(&SRGB8_ALPHA8) {
             (SRGB8_ALPHA8, true)
         } else if formats.contains(&RGBA8) {
@@ -254,13 +262,23 @@ impl Headset {
             xr::Time::from_nanos(time.as_nanos() + if ahead { self.interval as i64 } else { 0 });
         let (_, views) = self
             .session
-            .locate_views(xr::ViewConfigurationType::PRIMARY_STEREO, shown, &self.space)
+            .locate_views(
+                xr::ViewConfigurationType::PRIMARY_STEREO,
+                shown,
+                &self.space,
+            )
             .map_err(err("the eyes' poses"))?;
         let controllers = self
             .controllers
             .as_ref()
-            .map_or([HandInput::default(); 2], |c| c.read(&self.session, &self.space, shown));
-        Ok(Some(Frame { time, views, controllers }))
+            .map_or([HandInput::default(); 2], |c| {
+                c.read(&self.session, &self.space, shown)
+            });
+        Ok(Some(Frame {
+            time,
+            views,
+            controllers,
+        }))
     }
 
     /// The image to draw the frame into, waited for: its swapchain (for `present`) and texture.
@@ -268,8 +286,12 @@ impl Headset {
         let k = self.next;
         self.next = (k + 1) % self.swapchains.len();
         let (swapchain, images) = &mut self.swapchains[k];
-        let image = swapchain.acquire_image().map_err(err("acquiring the image"))?;
-        swapchain.wait_image(xr::Duration::INFINITE).map_err(err("waiting for the image"))?;
+        let image = swapchain
+            .acquire_image()
+            .map_err(err("acquiring the image"))?;
+        swapchain
+            .wait_image(xr::Duration::INFINITE)
+            .map_err(err("waiting for the image"))?;
         let texture = *images.get(image as usize).ok_or("the headset's image")?;
         Ok((k, texture))
     }
@@ -283,7 +305,9 @@ impl Headset {
 
     /// Ends the frame with nothing drawn (no picture yet).
     pub fn end_empty(&mut self, frame: &Frame) -> Result<(), String> {
-        self.stream.end(frame.time, self.blend, &[]).map_err(err("ending the frame"))
+        self.stream
+            .end(frame.time, self.blend, &[])
+            .map_err(err("ending the frame"))
     }
 
     /// Releases the image of swapchain `chain` (drawn last frame, done on the GPU) and ends
@@ -295,25 +319,37 @@ impl Headset {
         views: &[xr::View],
     ) -> Result<(), String> {
         let swapchain = &mut self.swapchains[chain].0;
-        swapchain.release_image().map_err(err("releasing the image"))?;
+        swapchain
+            .release_image()
+            .map_err(err("releasing the image"))?;
         let swapchain = &self.swapchains[chain].0;
         let rect = xr::Rect2Di {
             offset: xr::Offset2Di { x: 0, y: 0 },
-            extent: xr::Extent2Di { width: self.size.0 as i32, height: self.size.1 as i32 },
+            extent: xr::Extent2Di {
+                width: self.size.0 as i32,
+                height: self.size.1 as i32,
+            },
         };
         let views: Vec<_> = views
             .iter()
             .enumerate()
             .map(|(i, view)| {
-                xr::CompositionLayerProjectionView::new().pose(view.pose).fov(view.fov).sub_image(
-                    xr::SwapchainSubImage::new()
-                        .swapchain(swapchain)
-                        .image_array_index(i as u32)
-                        .image_rect(rect),
-                )
+                xr::CompositionLayerProjectionView::new()
+                    .pose(view.pose)
+                    .fov(view.fov)
+                    .sub_image(
+                        xr::SwapchainSubImage::new()
+                            .swapchain(swapchain)
+                            .image_array_index(i as u32)
+                            .image_rect(rect),
+                    )
             })
             .collect();
-        let layer = xr::CompositionLayerProjection::new().space(&self.space).views(&views);
-        self.stream.end(frame.time, self.blend, &[&layer]).map_err(err("ending the frame"))
+        let layer = xr::CompositionLayerProjection::new()
+            .space(&self.space)
+            .views(&views);
+        self.stream
+            .end(frame.time, self.blend, &[&layer])
+            .map_err(err("ending the frame"))
     }
 }

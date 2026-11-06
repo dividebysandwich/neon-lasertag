@@ -297,7 +297,12 @@ impl BotGraph {
         let pos = nav.pos.clone();
         let valid = nav.valid.clone();
         let mut links: Vec<Vec<(u32, f32)>> = (0..n)
-            .map(|i| nav.links[i].iter().map(|&m| (m, pos[i].distance(pos[m as usize]))).collect())
+            .map(|i| {
+                nav.links[i]
+                    .iter()
+                    .map(|&m| (m, pos[i].distance(pos[m as usize])))
+                    .collect()
+            })
             .collect();
 
         // Diagonals: a 2x2 block of linked cells on one flat floor, walkable corner to corner.
@@ -312,7 +317,12 @@ impl BotGraph {
                         if jx >= dm.w {
                             continue;
                         }
-                        let (a, b, o1, o2) = (node(ix, iz), node(jx, iz + 1), node(jx, iz), node(ix, iz + 1));
+                        let (a, b, o1, o2) = (
+                            node(ix, iz),
+                            node(jx, iz + 1),
+                            node(jx, iz),
+                            node(ix, iz + 1),
+                        );
                         if ![a, b, o1, o2].iter().all(|&m| valid[m]) {
                             continue;
                         }
@@ -383,13 +393,21 @@ impl BotGraph {
     fn tactics_for(&self, level: &Level, world: &World, team: Team) -> Vec<Tactics> {
         let enemy = team.other();
         // Threats: every other enemy spawn pad, and the space in front of the enemy base.
-        let mut threats: Vec<Vec3> =
-            level.spawns[enemy.index()].iter().step_by(2).map(|s| s.pos + Vec3::Y * COVER_H).collect();
+        let mut threats: Vec<Vec3> = level.spawns[enemy.index()]
+            .iter()
+            .step_by(2)
+            .map(|s| s.pos + Vec3::Y * COVER_H)
+            .collect();
         // In front of the enemy base: towards the middle of the arena.
         let base = level.base_centre(enemy);
-        threats.push(base - Vec3::new(base.x, 0.0, base.z).normalize_or_zero() * 6.0 + Vec3::Y * COVER_H);
+        threats.push(
+            base - Vec3::new(base.x, 0.0, base.z).normalize_or_zero() * 6.0 + Vec3::Y * COVER_H,
+        );
         let spawn_nodes = |t: Team| -> Vec<usize> {
-            level.spawns[t.index()].iter().filter_map(|s| level.nav.node_at(s.pos)).collect()
+            level.spawns[t.index()]
+                .iter()
+                .filter_map(|s| level.nav.node_at(s.pos))
+                .collect()
         };
         let home = self.costs_from(&spawn_nodes(team));
         let away = self.costs_from(&spawn_nodes(enemy));
@@ -404,12 +422,17 @@ impl BotGraph {
                 (t.id, [rc, rc + t.normal * 4.0])
             })
             .collect();
-        let enemy_targets: Vec<&level::TargetDef> = level.targets.iter().filter(|t| t.team == enemy).collect();
+        let enemy_targets: Vec<&level::TargetDef> =
+            level.targets.iter().filter(|t| t.team == enemy).collect();
 
         (0..self.pos.len())
             .map(|n| {
                 if !self.valid[n] {
-                    return Tactics { home: f32::INFINITY, enemy_base: f32::INFINITY, ..Default::default() };
+                    return Tactics {
+                        home: f32::INFINITY,
+                        enemy_base: f32::INFINITY,
+                        ..Default::default()
+                    };
                 }
                 let p = self.pos[n];
                 let chest = p + Vec3::Y * COVER_H;
@@ -426,7 +449,10 @@ impl BotGraph {
                 }
                 let mut watches = 0u16;
                 for (id, pts) in &approaches {
-                    if pts.iter().any(|&q| (2.0..20.0).contains(&eye.distance(q)) && clear(world, eye, q)) {
+                    if pts
+                        .iter()
+                        .any(|&q| (2.0..20.0).contains(&eye.distance(q)) && clear(world, eye, q))
+                    {
                         watches |= 1 << id;
                     }
                 }
@@ -484,14 +510,25 @@ impl BotGraph {
     /// Shortest path from `a` to `b` setting out at `tick`: doors are taken if they will be
     /// open on arrival (long enough to get through), or open soon, costing the wait. With the
     /// doors on the way (mover indices).
-    pub fn path_at(&self, a: usize, b: usize, level: &Level, tick: u64) -> Option<(Vec<usize>, Vec<usize>)> {
+    pub fn path_at(
+        &self,
+        a: usize,
+        b: usize,
+        level: &Level,
+        tick: u64,
+    ) -> Option<(Vec<usize>, Vec<usize>)> {
         if !(self.valid[a] && self.valid[b] && self.comp_open[a] == self.comp_open[b]) {
             return None;
         }
         self.astar(a, b, Some((level, tick)))
     }
 
-    fn astar(&self, a: usize, b: usize, doors: Option<(&Level, u64)>) -> Option<(Vec<usize>, Vec<usize>)> {
+    fn astar(
+        &self,
+        a: usize,
+        b: usize,
+        doors: Option<(&Level, u64)>,
+    ) -> Option<(Vec<usize>, Vec<usize>)> {
         let n = self.pos.len();
         let h = |i: usize| self.pos[i].distance(self.pos[b]);
         let mut g = vec![f32::INFINITY; n];
@@ -555,7 +592,9 @@ impl BotGraph {
 
     /// Length of a node path.
     pub fn path_len(&self, path: &[usize]) -> f32 {
-        path.windows(2).map(|w| self.pos[w[0]].distance(self.pos[w[1]])).sum()
+        path.windows(2)
+            .map(|w| self.pos[w[0]].distance(self.pos[w[1]]))
+            .sum()
     }
 
     /// Waypoints for walking `path` from `start`: each waypoint is the farthest node (looking a
@@ -567,7 +606,12 @@ impl BotGraph {
         let mut i = 0;
         while i < pts.len() {
             let mut j = i;
-            for (k, &p) in pts.iter().enumerate().take((i + 8).min(pts.len())).skip(i + 1) {
+            for (k, &p) in pts
+                .iter()
+                .enumerate()
+                .take((i + 8).min(pts.len()))
+                .skip(i + 1)
+            {
                 if walkable(world, from, p) {
                     j = k;
                 } else {
@@ -605,7 +649,8 @@ impl BotGraph {
             .iter()
             .find(|&&(_, n)| {
                 let p = self.pos[n];
-                (p.y - feet.y).abs() > 0.25 || world.clear(feet + Vec3::Y * KNEE, p + Vec3::Y * KNEE)
+                (p.y - feet.y).abs() > 0.25
+                    || world.clear(feet + Vec3::Y * KNEE, p + Vec3::Y * KNEE)
             })
             .or(cands.first())
             .map(|&(_, n)| n)
@@ -678,7 +723,12 @@ impl TeamBoard {
                         && tac[n].enemy_base.is_finite()
                         && !level.reloads_at(p)
                 })
-                .map(|n| (2.0 * tac[n].cover - 0.08 * g.pos[n].x.abs() - 0.02 * tac[n].enemy_base, n))
+                .map(|n| {
+                    (
+                        2.0 * tac[n].cover - 0.08 * g.pos[n].x.abs() - 0.02 * tac[n].enemy_base,
+                        n,
+                    )
+                })
                 .max_by(|a, b| a.0.total_cmp(&b.0))
                 .map(|b| b.1);
         }
@@ -690,10 +740,20 @@ impl TeamBoard {
         if self.push_at.is_some_and(|t| now - t < PUSH_JOIN) {
             return true;
         }
-        let fresh: Vec<&Attacker> = self.attackers.values().filter(|a| now - a.seen < 0.5).collect();
+        let fresh: Vec<&Attacker> = self
+            .attackers
+            .values()
+            .filter(|a| now - a.seen < 0.5)
+            .collect();
         let gated = fresh.iter().filter(|a| a.gated).count();
-        let waiting: Vec<f64> = fresh.iter().filter(|a| a.gated).filter_map(|a| a.waiting).collect();
-        let Some(first) = waiting.iter().copied().reduce(f64::min) else { return false };
+        let waiting: Vec<f64> = fresh
+            .iter()
+            .filter(|a| a.gated)
+            .filter_map(|a| a.waiting)
+            .collect();
+        let Some(first) = waiting.iter().copied().reduce(f64::min) else {
+            return false;
+        };
         let ready = waiting.len();
         let waited = now - first;
         // Alone only after a moment: the others may not have reported yet.
@@ -826,7 +886,11 @@ pub type WanderBot = Bot;
 impl Bot {
     /// A bot of its own (not sharing a map with others); its role follows from the seed.
     pub fn new(seed: u64, skill: f32) -> Bot {
-        let role = if seed.is_multiple_of(2) { Role::Offense } else { Role::Defense };
+        let role = if seed.is_multiple_of(2) {
+            Role::Offense
+        } else {
+            Role::Defense
+        };
         Bot::with_role(seed, skill, role, Shared::default())
     }
 
@@ -837,7 +901,9 @@ impl Bot {
         // difficulty don't all play alike. The floor keeps the best bots human: about 2° at
         // Hard still misses a chest at 20 m now and then, more so on the move.
         let spread = |rng: &mut ChaCha8Rng| 0.75 + 0.5 * rng.random::<f32>();
-        let aim_error = ((7.5 - 6.0 * skill) * spread(&mut rng)).max(1.6).to_radians();
+        let aim_error = ((7.5 - 6.0 * skill) * spread(&mut rng))
+            .max(1.6)
+            .to_radians();
         // Seconds before the first shot at someone new: about 0.75 s at Easy, 0.25 s at Hard.
         let reaction = (0.8 - 0.6 * skill) * spread(&mut rng);
         let turn_rate = (2.5 + 6.5 * skill) * spread(&mut rng);
@@ -898,13 +964,20 @@ impl Bot {
         let g = {
             let mut s = lock(&self.shared);
             match &s.graph {
-                Some(g) if g.seed == sim.level.seed && g.pos.len() == sim.level.nav.pos.len() => g.clone(),
+                Some(g) if g.seed == sim.level.seed && g.pos.len() == sim.level.nav.pos.len() => {
+                    g.clone()
+                }
                 _ => {
                     // The arena with every door shut (the validated one) and no panels: where
                     // the movers are now is only for now.
                     let mut world = sim.level.world();
                     world.set_dynamic(
-                        sim.level.movers.iter().filter(|m| m.kind == MoverKind::Door).flat_map(|m| m.colliders(0.0)).collect(),
+                        sim.level
+                            .movers
+                            .iter()
+                            .filter(|m| m.kind == MoverKind::Door)
+                            .flat_map(|m| m.colliders(0.0))
+                            .collect(),
                     );
                     let g = Arc::new(BotGraph::build(&sim.level, &world));
                     s.graph = Some(g.clone());
@@ -986,7 +1059,10 @@ impl Bot {
             // A hit on one of the team's targets: everyone hears it, and roughly where from.
             b.hits_seen.resize(sim.last_target_hit.len(), 0);
             for t in sim.level.targets.iter().filter(|t| t.team == p.team) {
-                let Some((tick, by)) = sim.last_target_hit.get(t.id as usize).copied().flatten() else { continue };
+                let Some((tick, by)) = sim.last_target_hit.get(t.id as usize).copied().flatten()
+                else {
+                    continue;
+                };
                 if tick <= b.hits_seen[t.id as usize] {
                     continue;
                 }
@@ -1004,9 +1080,15 @@ impl Bot {
                     }
                     None => opening,
                 };
-                b.alarm = Some(Alarm { target: t.id, threat, at: now });
+                b.alarm = Some(Alarm {
+                    target: t.id,
+                    threat,
+                    at: now,
+                });
             }
-            b.sightings.retain(|s| now - s.2 < SHARED_MEMORY && sim.player(s.0).is_some_and(|o| o.alive()));
+            b.sightings.retain(|s| {
+                now - s.2 < SHARED_MEMORY && sim.player(s.0).is_some_and(|o| o.alive())
+            });
             // An enemy seen close to a target's opening.
             for &(_, feet, at) in &b.sightings {
                 if now - at > 0.25 {
@@ -1014,8 +1096,14 @@ impl Bot {
                 }
                 for t in sim.level.targets.iter().filter(|t| t.team == p.team) {
                     let opening = sim.level.dims().cell_centre(t.rear_cell.0, t.rear_cell.1);
-                    if feet.distance(opening) < ALARM_NEAR && b.alarm.is_none_or(|a| now - a.at > 2.0) {
-                        b.alarm = Some(Alarm { target: t.id, threat: feet, at: now });
+                    if feet.distance(opening) < ALARM_NEAR
+                        && b.alarm.is_none_or(|a| now - a.at > 2.0)
+                    {
+                        b.alarm = Some(Alarm {
+                            target: t.id,
+                            threat: feet,
+                            at: now,
+                        });
                     }
                 }
             }
@@ -1040,7 +1128,12 @@ impl Bot {
                         m.feet = feet;
                         m.at = at;
                     }
-                    None => self.memory.push(Seen { id, feet, vel: Vec3::ZERO, at }),
+                    None => self.memory.push(Seen {
+                        id,
+                        feet,
+                        vel: Vec3::ZERO,
+                        at,
+                    }),
                 }
             }
             respond
@@ -1066,7 +1159,13 @@ impl Bot {
 
     /// Answering an alarm: a covered spot overlooking target `t`'s rear approach, a few metres
     /// from its opening, away from team mates' spots.
-    fn pick_guard_spot(&mut self, sim: &Sim, g: &BotGraph, p: &Player, t: &level::TargetDef) -> Option<usize> {
+    fn pick_guard_spot(
+        &mut self,
+        sim: &Sim,
+        g: &BotGraph,
+        p: &Player,
+        t: &level::TargetDef,
+    ) -> Option<usize> {
         let here = g.nearest(&sim.world, p.feet)?;
         let tac = &g.tactics[p.team.index()];
         let approach = sim.level.dims().cell_centre(t.rear_cell.0, t.rear_cell.1) + t.normal * 2.0;
@@ -1080,7 +1179,11 @@ impl Bot {
         for (n, tc) in tac.iter().enumerate() {
             let pos = g.pos[n];
             let d = pos.distance(approach);
-            if tc.watches & (1 << t.id) == 0 || d > 14.0 || !g.connected(here, n) || sim.level.reloads_at(pos) {
+            if tc.watches & (1 << t.id) == 0
+                || d > 14.0
+                || !g.connected(here, n)
+                || sim.level.reloads_at(pos)
+            {
                 continue;
             }
             let mut s = 1.5 * tc.cover - 0.15 * (d - 6.0).abs() - 0.01 * pos.distance(p.feet);
@@ -1097,7 +1200,14 @@ impl Bot {
 
     /// Attackers: until the team pushes, a destination in the enemy half becomes the staging
     /// point (see "Team play"). Reports this bot's state to the board.
-    fn gate(&mut self, sim: &Sim, g: &BotGraph, p: &Player, dest: Option<(usize, Vec3)>, now: f64) -> Option<(usize, Vec3)> {
+    fn gate(
+        &mut self,
+        sim: &Sim,
+        g: &BotGraph,
+        p: &Player,
+        dest: Option<(usize, Vec3)>,
+        now: f64,
+    ) -> Option<(usize, Vec3)> {
         let Some(me) = self.me else { return dest };
         if self.role != Role::Offense {
             return dest;
@@ -1117,7 +1227,11 @@ impl Bot {
         }
         let b = &mut s.boards[p.team.index()];
         let over_there = dest.is_some_and(|(n, _)| g.pos[n].z * side < -0.5);
-        let mut state = Attacker { seen: now, gated: false, waiting: None };
+        let mut state = Attacker {
+            seen: now,
+            gated: false,
+            waiting: None,
+        };
         let mut out = dest;
         // Refilling goes straight; fetching a grenade from the enemy half waits for the push.
         let reloading = matches!(self.errand, Some(Errand::Reload { .. }));
@@ -1127,17 +1241,23 @@ impl Bot {
                 Some(st) if now - since < GATE_GIVE_UP => {
                     let at = g.pos[st];
                     state.gated = true;
-                    let there = Vec2::new(at.x - p.feet.x, at.z - p.feet.z).length() < STAGING_REACH
+                    let there = Vec2::new(at.x - p.feet.x, at.z - p.feet.z).length()
+                        < STAGING_REACH
                         && (at.y - p.feet.y).abs() < 1.0;
                     if there {
-                        state.waiting = Some(b.attackers.get(&me).and_then(|a| a.waiting).unwrap_or(now));
+                        state.waiting =
+                            Some(b.attackers.get(&me).and_then(|a| a.waiting).unwrap_or(now));
                         b.attackers.insert(me, state);
                         if b.push_now(now) {
                             if b.push_at.is_none_or(|t| now - t >= PUSH_JOIN) {
                                 b.push_at = Some(now);
                             }
                             self.pushing = true;
-                            state = Attacker { seen: now, gated: false, waiting: None };
+                            state = Attacker {
+                                seen: now,
+                                gated: false,
+                                waiting: None,
+                            };
                         }
                     }
                     if !self.pushing {
@@ -1166,7 +1286,12 @@ impl Bot {
                 s.feet = feet;
                 s.at = now;
             }
-            None => self.memory.push(Seen { id, feet, vel: Vec3::ZERO, at: now }),
+            None => self.memory.push(Seen {
+                id,
+                feet,
+                vel: Vec3::ZERO,
+                at: now,
+            }),
         }
     }
 
@@ -1205,7 +1330,8 @@ impl Bot {
                 self.remember(o.id, o.feet, now);
             }
         }
-        self.memory.retain(|s| now - s.at < MEMORY && sim.player(s.id).is_some_and(|o| o.alive()));
+        self.memory
+            .retain(|s| now - s.at < MEMORY && sim.player(s.id).is_some_and(|o| o.alive()));
     }
 
     /// After a hit: look for the shooter (the nearest enemy with a line of sight), and maybe
@@ -1227,7 +1353,10 @@ impl Bot {
                 self.alert = Some((o.chest(), 1.5));
                 self.remember(o.id, o.feet, now);
             }
-            if p.hits + 1 >= sim.rules.hits_to_tag && self.plan == Plan::Engage && self.rng.random::<f32>() < 0.6 {
+            if p.hits + 1 >= sim.rules.hits_to_tag
+                && self.plan == Plan::Engage
+                && self.rng.random::<f32>() < 0.6
+            {
                 self.plan_left = 0.0;
                 self.next_plan_hint = Some(Plan::Hold);
             }
@@ -1286,7 +1415,9 @@ pub fn solve_throw(world: &World, from: Vec3, aim: Vec3, max_speed: f32) -> Opti
                 break;
             }
             let vel = Vec3::new(dir.x * v * c, v * s, dir.y * v * c);
-            let Some(q) = first_impact(world, from, vel) else { break };
+            let Some(q) = first_impact(world, from, vel) else {
+                break;
+            };
             let err = Vec2::new(q.x - aim.x, q.z - aim.z).length();
             if err < THROW_LAND && (q.y - aim.y).abs() < 1.2 {
                 if best.is_none_or(|b| err < b.0) {
@@ -1313,7 +1444,9 @@ impl Bot {
         let done = match self.errand {
             Some(Errand::Reload { .. }) => p.ammo >= sim.rules.ammo || self.errand_time > 30.0,
             Some(Errand::Pickup { id, .. }) => {
-                p.grenades >= sim.rules.grenade_max || !sim.pickups().any(|k| k.id == id) || self.errand_time > 15.0
+                p.grenades >= sim.rules.grenade_max
+                    || !sim.pickups().any(|k| k.id == id)
+                    || self.errand_time > 15.0
             }
             None => false,
         };
@@ -1324,7 +1457,9 @@ impl Bot {
         if self.errand_retry > 0.0 {
             return;
         }
-        let Some(here) = g.nearest(&sim.world, p.feet) else { return };
+        let Some(here) = g.nearest(&sim.world, p.feet) else {
+            return;
+        };
         if p.ammo < LOW_AMMO && !matches!(self.errand, Some(Errand::Reload { .. })) {
             // The nearest (by walking) reload station or own spawn pad.
             let cost = g.costs_from(&[here]);
@@ -1348,7 +1483,12 @@ impl Bot {
                 .filter(|k| eye.distance(k.pos) < PICKUP_SIGHT && sim.world.clear(eye, k.pos))
                 .filter_map(|k| {
                     let node = sim.level.nav.node_at(k.pos - Vec3::Y * PICKUP_HEIGHT)?;
-                    g.connected(here, node).then_some((eye.distance(k.pos), k.id, node, k.pos - Vec3::Y * PICKUP_HEIGHT))
+                    g.connected(here, node).then_some((
+                        eye.distance(k.pos),
+                        k.id,
+                        node,
+                        k.pos - Vec3::Y * PICKUP_HEIGHT,
+                    ))
                 })
                 .min_by(|a, b| a.0.total_cmp(&b.0));
             if let Some((_, id, node, pos)) = best {
@@ -1412,7 +1552,11 @@ impl Bot {
         let here = g.nearest(&sim.world, p.feet)?;
         let tac = &g.tactics[p.team.index()];
         let bits = |own: bool| -> u16 {
-            sim.level.targets.iter().filter(|t| (t.team == p.team) == own).fold(0, |b, t| b | 1 << t.id)
+            sim.level
+                .targets
+                .iter()
+                .filter(|t| (t.team == p.team) == own)
+                .fold(0, |b, t| b | 1 << t.id)
         };
         let (enemy_bits, own_bits) = (bits(false), bits(true));
         let mates: Vec<Vec3> = lock(&self.shared)
@@ -1445,7 +1589,10 @@ impl Bot {
                         .filter(|tg| t.shoots & (1 << tg.id) != 0)
                         .map(|tg| tg.centre().distance(pos))
                         .fold(f32::MAX, f32::min);
-                    2.0 * t.cover - 0.01 * dist - 0.1 * (4.0 - d).max(0.0) - 0.04 * (d - 12.0).max(0.0)
+                    2.0 * t.cover
+                        - 0.01 * dist
+                        - 0.1 * (4.0 - d).max(0.0)
+                        - 0.04 * (d - 12.0).max(0.0)
                 }
                 Plan::Defend => {
                     if t.watches & own_bits == 0 || t.home > t.enemy_base {
@@ -1492,10 +1639,19 @@ impl Bot {
         if self.visible.iter().any(|v| v.1 < KEEP_DIST) {
             return None;
         }
-        let known = self.memory.iter().min_by(|a, b| a.feet.distance(p.feet).total_cmp(&b.feet.distance(p.feet))).copied();
+        let known = self
+            .memory
+            .iter()
+            .min_by(|a, b| a.feet.distance(p.feet).total_cmp(&b.feet.distance(p.feet)))
+            .copied();
         if let Some(t) = known {
             if self.chase.is_none_or(|(_, at)| at.distance(t.feet) > 3.0) {
-                self.chase = sim.level.nav.node_at(t.feet).or_else(|| g.nearest(&sim.world, t.feet)).map(|n| (n, t.feet));
+                self.chase = sim
+                    .level
+                    .nav
+                    .node_at(t.feet)
+                    .or_else(|| g.nearest(&sim.world, t.feet))
+                    .map(|n| (n, t.feet));
             }
             if let Some((n, _)) = self.chase {
                 self.patrol = None;
@@ -1552,7 +1708,15 @@ impl Bot {
     }
 
     /// Follows (building when needed) a route to `goal`, ending at `end`.
-    fn steer(&mut self, sim: &Sim, g: &BotGraph, feet: Vec3, goal: usize, end: Vec3, arrive: f32) -> Steer {
+    fn steer(
+        &mut self,
+        sim: &Sim,
+        g: &BotGraph,
+        feet: Vec3,
+        goal: usize,
+        end: Vec3,
+        arrive: f32,
+    ) -> Steer {
         let world = &sim.world;
         let to_end = Vec2::new(end.x - feet.x, end.z - feet.z);
         if to_end.length() < arrive && (end.y - feet.y).abs() < 1.0 {
@@ -1563,8 +1727,12 @@ impl Bot {
         }
         if self.route_goal != Some(goal) || self.route.is_empty() {
             self.route_goal = Some(goal);
-            let Some(start) = g.nearest(world, feet) else { return Steer::Unreachable };
-            let Some((path, doors)) = g.path_at(start, goal, &sim.level, sim.tick) else { return Steer::Unreachable };
+            let Some(start) = g.nearest(world, feet) else {
+                return Steer::Unreachable;
+            };
+            let Some((path, doors)) = g.path_at(start, goal, &sim.level, sim.tick) else {
+                return Steer::Unreachable;
+            };
             self.route = g.smooth(world, feet, &path);
             self.route_doors = doors;
             if end.distance(g.pos[goal]) > 0.05 {
@@ -1575,7 +1743,9 @@ impl Bot {
         // plan again.
         let mut wait_at_door = false;
         for &d in &self.route_doors {
-            let Some(m) = sim.level.movers.get(d) else { continue };
+            let Some(m) = sim.level.movers.get(d) else {
+                continue;
+            };
             if m.passable(sim.tick) {
                 continue;
             }
@@ -1649,7 +1819,9 @@ impl Bot {
         cands.sort_by(|a, b| {
             let key = |c: &(PlayerId, f32, Vec3)| (!hittable(c.0), Some(c.0) != self.enemy, c.1);
             let (ka, kb) = (key(a), key(b));
-            ka.0.cmp(&kb.0).then(ka.1.cmp(&kb.1)).then(ka.2.total_cmp(&kb.2))
+            ka.0.cmp(&kb.0)
+                .then(ka.1.cmp(&kb.1))
+                .then(ka.2.total_cmp(&kb.2))
         });
         cands.first().map(|&(id, d, pt)| (id, d, pt, hittable(id)))
     }
@@ -1688,7 +1860,9 @@ impl Bot {
                 .targets
                 .iter()
                 .filter(|t| t.team == p.team)
-                .map(|t| sim.level.dims().cell_centre(t.rear_cell.0, t.rear_cell.1) + t.normal * 3.0)
+                .map(|t| {
+                    sim.level.dims().cell_centre(t.rear_cell.0, t.rear_cell.1) + t.normal * 3.0
+                })
                 .min_by(|a, b| a.distance(p.feet).total_cmp(&b.distance(p.feet)))
         } else {
             None
@@ -1715,19 +1889,34 @@ impl Bot {
             return None;
         }
         self.grenade_t = 0.4;
-        let known: Vec<Vec3> = self.memory.iter().filter(|s| now - s.at < 3.0).map(|s| s.feet).collect();
-        let mates: Vec<Vec3> =
-            sim.players.iter().filter(|o| o.team == p.team && o.id != p.id && o.alive()).map(|o| o.feet).collect();
+        let known: Vec<Vec3> = self
+            .memory
+            .iter()
+            .filter(|s| now - s.at < 3.0)
+            .map(|s| s.feet)
+            .collect();
+        let mates: Vec<Vec3> = sim
+            .players
+            .iter()
+            .filter(|o| o.team == p.team && o.id != p.id && o.alive())
+            .map(|o| o.feet)
+            .collect();
         let flat = |a: Vec3, b: Vec3| Vec2::new(a.x - b.x, a.z - b.z).length();
         let mut best: Option<(usize, f32, Vec3)> = None;
         for a in &known {
-            let group: Vec<Vec3> = known.iter().filter(|b| b.distance(*a) < GROUP_RADIUS).copied().collect();
+            let group: Vec<Vec3> = known
+                .iter()
+                .filter(|b| b.distance(*a) < GROUP_RADIUS)
+                .copied()
+                .collect();
             if group.len() < 2 {
                 continue;
             }
             let c = group.iter().sum::<Vec3>() / group.len() as f32;
             let d = flat(c, p.feet);
-            if !(THROW_MIN..=THROW_MAX).contains(&d) || mates.iter().any(|m| m.distance(c) < MATE_CLEAR) {
+            if !(THROW_MIN..=THROW_MAX).contains(&d)
+                || mates.iter().any(|m| m.distance(c) < MATE_CLEAR)
+            {
                 continue;
             }
             if best.is_none_or(|b| group.len() > b.0 || group.len() == b.0 && d < b.1) {
@@ -1747,8 +1936,14 @@ impl Bot {
         if !sim.world.clear(p.eye(), p.feet + rel) {
             rel = p.eye() - p.feet;
         }
-        let (vel, land) = solve_throw(&sim.world, p.feet + rel, aim + Vec3::Y * 0.05, sim.rules.grenade_max_speed)?;
-        if land.distance(p.feet) < SELF_CLEAR || mates.iter().any(|m| m.distance(land) < MATE_CLEAR) {
+        let (vel, land) = solve_throw(
+            &sim.world,
+            p.feet + rel,
+            aim + Vec3::Y * 0.05,
+            sim.rules.grenade_max_speed,
+        )?;
+        if land.distance(p.feet) < SELF_CLEAR || mates.iter().any(|m| m.distance(land) < MATE_CLEAR)
+        {
             return None;
         }
         self.grenade_t = 2.0;
@@ -1769,7 +1964,9 @@ impl Controller for Bot {
             self.me = Some(me);
         }
         let g = self.graph_for(sim);
-        let Some(p) = sim.player(me) else { return PlayerCmd::default() };
+        let Some(p) = sim.player(me) else {
+            return PlayerCmd::default();
+        };
         if !self.aim.is_finite() || self.aim.length_squared() < 0.5 {
             self.aim = Vec3::NEG_Z;
         }
@@ -1801,7 +1998,11 @@ impl Controller for Bot {
         let dest = self.gate(sim, &g, p, dest, now);
         match dest {
             Some((node, end)) => {
-                let arrive = if self.errand.is_none() && self.plan != Plan::Engage { 1.0 } else { 0.45 };
+                let arrive = if self.errand.is_none() && self.plan != Plan::Engage {
+                    1.0
+                } else {
+                    0.45
+                };
                 match self.steer(sim, &g, feet, node, end, arrive) {
                     Steer::Move(d) => move_dir = d,
                     Steer::Arrived => anchor = Some(end),
@@ -1832,7 +2033,11 @@ impl Controller for Bot {
             if self.rng.random::<f32>() < TICK * 0.8 {
                 self.strafe = -self.strafe;
             }
-            let fwd = if move_dir != Vec2::ZERO { move_dir } else { Vec2::new(self.aim.x, self.aim.z).normalize_or_zero() };
+            let fwd = if move_dir != Vec2::ZERO {
+                move_dir
+            } else {
+                Vec2::new(self.aim.x, self.aim.z).normalize_or_zero()
+            };
             let side = Vec2::new(-fwd.y, fwd.x) * self.strafe;
             if move_dir != Vec2::ZERO {
                 move_dir = (move_dir * 0.55 + side * 0.65).normalize_or_zero();
@@ -1874,7 +2079,11 @@ impl Controller for Bot {
         let muzzle = feet + body * Vec3::new(0.18, EYE - 0.25, -0.35);
         let shoot_at = match target {
             Some((id, d, point, ok)) => {
-                let vel = self.memory.iter().find(|s| s.id == id).map_or(Vec3::ZERO, |s| s.vel);
+                let vel = self
+                    .memory
+                    .iter()
+                    .find(|s| s.id == id)
+                    .map_or(Vec3::ZERO, |s| s.vel);
                 let lead = vel * (d / sim.rules.bolt_speed) * (0.4 + 0.6 * self.skill);
                 Some((point + lead, ok && self.seen_for >= self.reaction))
             }
@@ -1905,7 +2114,12 @@ impl Controller for Bot {
         self.fire_prev = fire;
 
         let throw = self.try_grenade(sim, p, now);
-        self.pose(PlayerCmd { stick: move_dir.clamp_length_max(1.0), fire, throw, ..Default::default() })
+        self.pose(PlayerCmd {
+            stick: move_dir.clamp_length_max(1.0),
+            fire,
+            throw,
+            ..Default::default()
+        })
     }
 }
 
@@ -1916,11 +2130,23 @@ impl Bot {
         let body = Quat::from_rotation_y(yaw);
         let look = look_rot(self.aim);
         cmd.yaw = yaw;
-        cmd.head = Pose { pos: Vec3::Y * EYE, rot: look };
+        cmd.head = Pose {
+            pos: Vec3::Y * EYE,
+            rot: look,
+        };
         cmd.gun_hand = Some(Hand::Right);
-        cmd.muzzle = Pose { pos: body * Vec3::new(0.18, EYE - 0.25, -0.35), rot: look };
-        cmd.hands[1] = Pose { pos: body * Vec3::new(0.2, 1.3, -0.25), rot: look };
-        cmd.hands[0] = Pose { pos: body * Vec3::new(-0.2, 1.1, -0.15), rot: body };
+        cmd.muzzle = Pose {
+            pos: body * Vec3::new(0.18, EYE - 0.25, -0.35),
+            rot: look,
+        };
+        cmd.hands[1] = Pose {
+            pos: body * Vec3::new(0.2, 1.3, -0.25),
+            rot: look,
+        };
+        cmd.hands[0] = Pose {
+            pos: body * Vec3::new(-0.2, 1.1, -0.15),
+            rot: body,
+        };
         cmd
     }
 }
@@ -1952,11 +2178,25 @@ impl Bots {
 
     fn add(&mut self, sim: &Sim, id: PlayerId, seed: u64, skill: f32) {
         self.skill = Some(skill);
-        let Some(team) = sim.player(id).map(|p| p.team) else { return };
-        let count = |r: Role| self.roles.values().filter(|&&(t, rr)| t == team && rr == r).count();
-        let role = if count(Role::Offense) <= count(Role::Defense) { Role::Offense } else { Role::Defense };
+        let Some(team) = sim.player(id).map(|p| p.team) else {
+            return;
+        };
+        let count = |r: Role| {
+            self.roles
+                .values()
+                .filter(|&&(t, rr)| t == team && rr == r)
+                .count()
+        };
+        let role = if count(Role::Offense) <= count(Role::Defense) {
+            Role::Offense
+        } else {
+            Role::Defense
+        };
         self.roles.insert(id, (team, role));
-        self.bots.insert(id, Box::new(Bot::with_role(seed, skill, role, self.shared.clone())));
+        self.bots.insert(
+            id,
+            Box::new(Bot::with_role(seed, skill, role, self.shared.clone())),
+        );
     }
 
     /// Adds `n` bots, balancing the teams.
@@ -1981,7 +2221,11 @@ impl Bots {
 
     /// Removes one bot of `team`; false if it has none.
     pub fn remove_one(&mut self, sim: &mut Sim, team: Team) -> bool {
-        let Some(id) = sim.players.iter().find(|p| p.bot && p.team == team && self.bots.contains_key(&p.id)).map(|p| p.id)
+        let Some(id) = sim
+            .players
+            .iter()
+            .find(|p| p.bot && p.team == team && self.bots.contains_key(&p.id))
+            .map(|p| p.id)
         else {
             return false;
         };
@@ -2011,14 +2255,18 @@ impl Bots {
 /// A bot name nobody in the game has yet (numbered once the list runs out).
 fn bot_name(sim: &Sim) -> String {
     const NAMES: [&str; 18] = [
-        "Volt", "Pixel", "Quasar", "Neon", "Flux", "Glitch", "Nova", "Ion", "Laser", "Byte", "Photon", "Zap",
-        "Echo", "Spark", "Prism", "Vector", "Pulse", "Arc",
+        "Volt", "Pixel", "Quasar", "Neon", "Flux", "Glitch", "Nova", "Ion", "Laser", "Byte",
+        "Photon", "Zap", "Echo", "Spark", "Prism", "Vector", "Pulse", "Arc",
     ];
     let taken = |n: &str| sim.players.iter().any(|p| p.name == n);
     (0..)
         .map(|k| {
             let base = NAMES[k % NAMES.len()];
-            if k < NAMES.len() { format!("{base} (bot)") } else { format!("{base} {} (bot)", k / NAMES.len() + 1) }
+            if k < NAMES.len() {
+                format!("{base} (bot)")
+            } else {
+                format!("{base} {} (bot)", k / NAMES.len() + 1)
+            }
         })
         .find(|n| !taken(n))
         .unwrap_or_default()
@@ -2047,7 +2295,13 @@ mod tests {
 
     /// Plays a match of `n` bots for `secs` seconds.
     fn play(seed: u64, n: usize, secs: f32, rules: Rules) -> Stats {
-        let mut sim = Sim::new(seed, Rules { match_time: secs, ..rules });
+        let mut sim = Sim::new(
+            seed,
+            Rules {
+                match_time: secs,
+                ..rules
+            },
+        );
         let mut bots = Bots::default();
         bots.fill(&mut sim, n, 0.6);
         let mut s = Stats::default();
@@ -2128,11 +2382,19 @@ mod tests {
             // Some spots exist for both jobs.
             for team in Team::ALL {
                 let tac = &g.tactics[team.index()];
-                assert!(tac.iter().any(|t| t.shoots != 0), "seed {seed}: no spot to hit {team:?}'s enemy targets from");
-                assert!(tac.iter().any(|t| t.watches != 0), "seed {seed}: no spot to guard {team:?}'s targets from");
+                assert!(
+                    tac.iter().any(|t| t.shoots != 0),
+                    "seed {seed}: no spot to hit {team:?}'s enemy targets from"
+                );
+                assert!(
+                    tac.iter().any(|t| t.watches != 0),
+                    "seed {seed}: no spot to guard {team:?}'s targets from"
+                );
             }
-            let diagonals: usize =
-                (0..g.pos.len()).map(|i| g.links[i].len() - level.nav.links[i].len()).sum::<usize>() / 2;
+            let diagonals: usize = (0..g.pos.len())
+                .map(|i| g.links[i].len() - level.nav.links[i].len())
+                .sum::<usize>()
+                / 2;
             assert!(diagonals > 50, "seed {seed}: {diagonals} diagonals");
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let valid: Vec<usize> = (0..g.pos.len()).filter(|&i| g.valid[i]).collect();
@@ -2144,7 +2406,10 @@ mod tests {
                 assert_eq!(bfs.is_some(), astar.is_some(), "seed {seed}: {a} -> {b}");
                 if let (Some(bfs), Some(path)) = (bfs, astar) {
                     assert_eq!((path[0], *path.last().unwrap()), (a, b));
-                    assert!(path.windows(2).all(|w| g.links[w[0]].iter().any(|l| l.0 as usize == w[1])));
+                    assert!(
+                        path.windows(2)
+                            .all(|w| g.links[w[0]].iter().any(|l| l.0 as usize == w[1]))
+                    );
                     assert!(g.path_len(&path) <= g.path_len(&bfs) + 1e-3);
                     // Smoothed waypoints are walkable one to the next on flat stretches.
                     let pts = g.smooth(&world, g.pos[a], &path);
@@ -2170,7 +2435,10 @@ mod tests {
             total.pickups += s.pickups;
             total.grenades += s.grenades;
         }
-        assert!(total.offense_target_hits > 0, "offensive bots hit enemy targets: {total:?}");
+        assert!(
+            total.offense_target_hits > 0,
+            "offensive bots hit enemy targets: {total:?}"
+        );
         assert!(total.reloads > 0, "bots reload: {total:?}");
         assert!(total.pickups > 0, "bots pick up grenades: {total:?}");
         assert!(total.grenades > 0, "bots throw grenades: {total:?}");
@@ -2179,7 +2447,15 @@ mod tests {
     #[test]
     fn bots_miss_a_fair_share() {
         // No grenades, so every hit is a blaster's; shots at panels don't count.
-        let s = play(21, 8, 150.0, Rules { pickup_pairs: 0, ..Rules::default() });
+        let s = play(
+            21,
+            8,
+            150.0,
+            Rules {
+                pickup_pairs: 0,
+                ..Rules::default()
+            },
+        );
         let at_players = s.fired.saturating_sub(s.panel_shots).max(1);
         let rate = s.hits as f32 / at_players as f32;
         println!("hit rate at players: {rate:.2}");
@@ -2195,18 +2471,30 @@ mod tests {
         for _ in 0..6 {
             bots.fill_team(&mut sim, Team::Red, 0.6);
         }
-        let mut attackers: Vec<PlayerId> =
-            bots.roles.iter().filter(|(_, r)| r.1 == Role::Offense).map(|(id, _)| *id).collect();
+        let mut attackers: Vec<PlayerId> = bots
+            .roles
+            .iter()
+            .filter(|(_, r)| r.1 == Role::Offense)
+            .map(|(id, _)| *id)
+            .collect();
         attackers.sort_unstable();
         // One attacker starts out ahead, near the centre line: on its own it would be over
         // long before the others.
         let nav = &sim.level.nav;
         let ahead = (0..sim.level.dims().cells())
-            .filter(|&n| nav.valid[n] && (4.0..6.0).contains(&nav.pos[n].z) && !sim.level.reloads_at(nav.pos[n]))
+            .filter(|&n| {
+                nav.valid[n]
+                    && (4.0..6.0).contains(&nav.pos[n].z)
+                    && !sim.level.reloads_at(nav.pos[n])
+            })
             .min_by(|&a, &b| nav.pos[a].x.abs().total_cmp(&nav.pos[b].x.abs()))
             .map(|n| nav.pos[n])
             .unwrap();
-        let pi = sim.players.iter().position(|p| p.id == attackers[0]).unwrap();
+        let pi = sim
+            .players
+            .iter()
+            .position(|p| p.id == attackers[0])
+            .unwrap();
         sim.players[pi].feet = ahead;
         let mut first: HashMap<PlayerId, f32> = HashMap::new();
         for k in 0..(60.0 / TICK) as usize {
@@ -2218,7 +2506,10 @@ mod tests {
                 }
             }
         }
-        let mut t: Vec<f32> = attackers.iter().map(|id| first.get(id).copied().unwrap_or(60.0)).collect();
+        let mut t: Vec<f32> = attackers
+            .iter()
+            .map(|id| first.get(id).copied().unwrap_or(60.0))
+            .collect();
         t.sort_by(f32::total_cmp);
         t
     }
@@ -2239,7 +2530,10 @@ mod tests {
         let close = |runs: &[Vec<f32>]| runs.iter().filter(|t| t[1] - t[0] < 1.5).count();
         let (c_with, c_without) = (close(&with), close(&without));
         println!("first two together in {c_with} of 6 arenas with team play, {c_without} without");
-        assert!(c_with >= 4 && c_with >= c_without + 3, "together {c_with}, alone {c_without}");
+        assert!(
+            c_with >= 4 && c_with >= c_without + 3,
+            "together {c_with}, alone {c_without}"
+        );
     }
 
     /// A lone team's defenders' mean distance to the opening of one of their targets, some
@@ -2251,15 +2545,23 @@ mod tests {
         for _ in 0..6 {
             bots.fill_team(&mut sim, Team::Red, 0.6);
         }
-        let defenders: Vec<PlayerId> =
-            bots.roles.iter().filter(|(_, r)| r.1 == Role::Defense).map(|(id, _)| *id).collect();
+        let defenders: Vec<PlayerId> = bots
+            .roles
+            .iter()
+            .filter(|(_, r)| r.1 == Role::Defense)
+            .map(|(id, _)| *id)
+            .collect();
         // The red target furthest from the middle of the defenders after they settled.
         for _ in 0..(8.0 / TICK) as usize {
             bots.think(&mut sim);
             sim.step();
         }
         let mean_to = |sim: &Sim, at: Vec3| {
-            defenders.iter().filter_map(|id| sim.player(*id)).map(|p| p.feet.distance(at)).sum::<f32>()
+            defenders
+                .iter()
+                .filter_map(|id| sim.player(*id))
+                .map(|p| p.feet.distance(at))
+                .sum::<f32>()
                 / defenders.len() as f32
         };
         let t = *sim
@@ -2268,8 +2570,12 @@ mod tests {
             .iter()
             .filter(|t| t.team == Team::Red)
             .max_by(|a, b| {
-                let at =
-                    |t: &level::TargetDef| mean_to(&sim, sim.level.dims().cell_centre(t.rear_cell.0, t.rear_cell.1));
+                let at = |t: &level::TargetDef| {
+                    mean_to(
+                        &sim,
+                        sim.level.dims().cell_centre(t.rear_cell.0, t.rear_cell.1),
+                    )
+                };
                 at(a).total_cmp(&at(b))
             })
             .unwrap();
@@ -2290,12 +2596,18 @@ mod tests {
         for seed in 1..=6 {
             let a = guard_distance(seed, true);
             let b = guard_distance(seed, false);
-            println!("seed {seed}: defenders' distance before -> after: together {a:?}, alone {b:?}");
+            println!(
+                "seed {seed}: defenders' distance before -> after: together {a:?}, alone {b:?}"
+            );
             assert!(a.1 < 15.0, "seed {seed}: defenders didn't come: {a:?}");
             with += a.1;
             without += b.1;
         }
-        println!("mean distance after the hit: together {:.1} m, alone {:.1} m", with / 6.0, without / 6.0);
+        println!(
+            "mean distance after the hit: together {:.1} m, alone {:.1} m",
+            with / 6.0,
+            without / 6.0
+        );
         assert!(with < 0.75 * without, "together {with}, alone {without}");
     }
 
@@ -2306,17 +2618,27 @@ mod tests {
             let level = Level::generate(seed, level::ArenaSize::Small);
             let world = level.world();
             let g = BotGraph::build(&level, &world);
-            let Some(&(a, b, door)) = level.nav.doors.first() else { continue };
+            let Some(&(a, b, door)) = level.nav.doors.first() else {
+                continue;
+            };
             let m = level.movers[door];
-            let tick_where = |want: f32| (0..m.period() as u64 * 2).find(|&t| (0..400).all(|k| m.fraction(t + k) == want));
+            let tick_where = |want: f32| {
+                (0..m.period() as u64 * 2).find(|&t| (0..400).all(|k| m.fraction(t + k) == want))
+            };
             // Open (and staying open): straight through.
             let t = tick_where(1.0).unwrap();
             let (path, doors) = g.path_at(a as usize, b as usize, &level, t).unwrap();
             assert_eq!((path.len(), doors), (2, vec![door]), "seed {seed}");
             // Shut for a long while: the long way round (perhaps through another door, open then).
-            let t = (0..m.period() as u64).find(|&t| m.passable_window(t).0 > DOOR_WAIT_MAX + 10).unwrap();
+            let t = (0..m.period() as u64)
+                .find(|&t| m.passable_window(t).0 > DOOR_WAIT_MAX + 10)
+                .unwrap();
             let (path, doors) = g.path_at(a as usize, b as usize, &level, t).unwrap();
-            assert!(path.len() > 2 && !doors.contains(&door), "seed {seed}: {} nodes, doors {doors:?} (shut {door})", path.len());
+            assert!(
+                path.len() > 2 && !doors.contains(&door),
+                "seed {seed}: {} nodes, doors {doors:?} (shut {door})",
+                path.len()
+            );
             checked += 1;
         }
         assert!(checked >= 8);
@@ -2339,8 +2661,15 @@ mod tests {
                 bots.iter().map(|b| b.turn_rate).sum::<f32>() / n,
             )
         };
-        let (easy, normal, hard) = (avg(Difficulty::Easy), avg(Difficulty::Normal), avg(Difficulty::Hard));
-        assert!(easy.0 > normal.0 && normal.0 > hard.0 && hard.0 > 1.5f32.to_radians(), "{easy:?} {normal:?} {hard:?}");
+        let (easy, normal, hard) = (
+            avg(Difficulty::Easy),
+            avg(Difficulty::Normal),
+            avg(Difficulty::Hard),
+        );
+        assert!(
+            easy.0 > normal.0 && normal.0 > hard.0 && hard.0 > 1.5f32.to_radians(),
+            "{easy:?} {normal:?} {hard:?}"
+        );
         assert!(easy.1 > normal.1 && normal.1 > hard.1);
         assert!(easy.2 < normal.2 && normal.2 < hard.2);
     }

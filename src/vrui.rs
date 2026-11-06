@@ -36,7 +36,11 @@ pub struct VrUiPlugin;
 impl Plugin for VrUiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<VrUi>()
-            .add_systems(Update, make_mats.run_if(resource_exists::<Palette>.and_then(not(resource_exists::<UiMats>))))
+            .add_systems(
+                Update,
+                make_mats
+                    .run_if(resource_exists::<Palette>.and_then(not(resource_exists::<UiMats>))),
+            )
             .add_systems(
                 Update,
                 (panels, pointer, hit_flash)
@@ -128,8 +132,16 @@ fn make_mats(
     mut std: ResMut<Assets<StandardMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    let fixed = |accents: &mut Assets<AccentMaterial>, c: Vec3, i: f32| accents.add(AccentMaterial { neon: NeonUniform::fixed(c, i) });
-    let glow = |glows: &mut Assets<GlowMaterial>, c: Vec3, i: f32| glows.add(GlowMaterial { neon: NeonUniform::fixed(c, i) });
+    let fixed = |accents: &mut Assets<AccentMaterial>, c: Vec3, i: f32| {
+        accents.add(AccentMaterial {
+            neon: NeonUniform::fixed(c, i),
+        })
+    };
+    let glow = |glows: &mut Assets<GlowMaterial>, c: Vec3, i: f32| {
+        glows.add(GlowMaterial {
+            neon: NeonUniform::fixed(c, i),
+        })
+    };
     let purple = Vec3::new(0.5, 0.15, 1.0);
     let teams = [Some(Team::Red), Some(Team::Blue), None];
     // A square glowing evenly (uv.y sets a halo's strength).
@@ -156,7 +168,9 @@ fn make_mats(
             reflectance: 0.0,
             ..default()
         }),
-        flash: (0..SECTORS).map(|_| glow(&mut glows, Vec3::new(1.0, 0.04, 0.02), 0.0)).collect(),
+        flash: (0..SECTORS)
+            .map(|_| glow(&mut glows, Vec3::new(1.0, 0.04, 0.02), 0.0))
+            .collect(),
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         fill: meshes.add(fill.to_mesh()),
     };
@@ -172,8 +186,26 @@ struct Builder<'a, 'w, 's> {
 }
 
 impl Builder<'_, '_, '_> {
-    fn text(&mut self, s: &str, h: f32, at: Vec2, align: Align, mat: &Handle<AccentMaterial>, glow: Option<&Handle<GlowMaterial>>) -> Entity {
-        segtext::spawn(self.commands, self.meshes, self.root, s, h, at.extend(0.004), align, mat, glow)
+    fn text(
+        &mut self,
+        s: &str,
+        h: f32,
+        at: Vec2,
+        align: Align,
+        mat: &Handle<AccentMaterial>,
+        glow: Option<&Handle<GlowMaterial>>,
+    ) -> Entity {
+        segtext::spawn(
+            self.commands,
+            self.meshes,
+            self.root,
+            s,
+            h,
+            at.extend(0.004),
+            align,
+            mat,
+            glow,
+        )
     }
 
     /// A strip from `a` to `b`.
@@ -191,7 +223,12 @@ impl Builder<'_, '_, '_> {
 
     fn outline(&mut self, c: Vec2, size: Vec2, w: f32, mat: &Handle<AccentMaterial>) {
         let h = size / 2.0;
-        let corners = [c + Vec2::new(-h.x, -h.y), c + Vec2::new(h.x, -h.y), c + Vec2::new(h.x, h.y), c + Vec2::new(-h.x, h.y)];
+        let corners = [
+            c + Vec2::new(-h.x, -h.y),
+            c + Vec2::new(h.x, -h.y),
+            c + Vec2::new(h.x, h.y),
+            c + Vec2::new(-h.x, h.y),
+        ];
         for k in 0..4 {
             self.strip(corners[k], corners[(k + 1) % 4], w, mat);
         }
@@ -203,7 +240,11 @@ impl Builder<'_, '_, '_> {
                 Mesh3d(self.mats.fill.clone()),
                 MeshMaterial3d(mat.clone()),
                 Transform::from_translation(c.extend(0.001)).with_scale(size.extend(1.0)),
-                if shown { Visibility::Inherited } else { Visibility::Hidden },
+                if shown {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                },
                 ChildOf(self.root),
             ))
             .id()
@@ -222,11 +263,20 @@ impl Builder<'_, '_, '_> {
     }
 
     fn button(&mut self, label: &str, act: Act, c: Vec2, size: Vec2) -> Button {
-        let (white, frame, hover) = (self.mats.white.clone(), self.mats.frame.clone(), self.mats.hover.clone());
+        let (white, frame, hover) = (
+            self.mats.white.clone(),
+            self.mats.frame.clone(),
+            self.mats.hover.clone(),
+        );
         self.outline(c, size, 0.006, &frame);
         let hover = self.fill(c, size, &hover, false);
         self.text(label, size.y * 0.42, c, Align::Center, &white, None);
-        Button { act, center: c, half: size / 2.0, hover }
+        Button {
+            act,
+            center: c,
+            half: size / 2.0,
+            hover,
+        }
     }
 }
 
@@ -244,7 +294,14 @@ fn build_menu(b: &mut Builder, local: bool) -> Vec<Button> {
     b.backing(size);
     let (white, glow) = (b.mats.white.clone(), b.mats.glow[2].clone());
     let top = size.y / 2.0;
-    b.text("MENU", 0.07, Vec2::new(0.0, top - 0.1), Align::Center, &white, Some(&glow));
+    b.text(
+        "MENU",
+        0.07,
+        Vec2::new(0.0, top - 0.1),
+        Align::Center,
+        &white,
+        Some(&glow),
+    );
     let mut acts = vec![("RESUME", Act::Resume)];
     if local {
         acts.push(("NEW MATCH", Act::NewMatch));
@@ -252,7 +309,14 @@ fn build_menu(b: &mut Builder, local: bool) -> Vec<Button> {
     acts.push(("QUIT", Act::Quit));
     acts.iter()
         .enumerate()
-        .map(|(k, (label, act))| b.button(label, *act, Vec2::new(0.0, top - 0.25 - k as f32 * 0.16), Vec2::new(0.56, 0.12)))
+        .map(|(k, (label, act))| {
+            b.button(
+                label,
+                *act,
+                Vec2::new(0.0, top - 0.25 - k as f32 * 0.16),
+                Vec2::new(0.56, 0.12),
+            )
+        })
         .collect()
 }
 
@@ -262,13 +326,31 @@ const ROW: f32 = 0.042;
 
 fn team_block(b: &mut Builder, team: Team, score: u32, rows: &[Row], top: f32, width: f32) -> f32 {
     let k = team.index();
-    let (mat, glow, dim) = (b.mats.team[k].clone(), b.mats.glow[k].clone(), b.mats.dim.clone());
+    let (mat, glow, dim) = (
+        b.mats.team[k].clone(),
+        b.mats.glow[k].clone(),
+        b.mats.dim.clone(),
+    );
     let left = -width / 2.0 + 0.05;
     let right = width / 2.0 - 0.04;
     let name = if team == Team::Red { "RED" } else { "BLUE" };
     let mut y = top - 0.03;
-    b.text(name, 0.04, Vec2::new(left, y), Align::Left, &mat, Some(&glow));
-    b.text(&score.to_string(), 0.04, Vec2::new(right, y), Align::Right, &mat, Some(&glow));
+    b.text(
+        name,
+        0.04,
+        Vec2::new(left, y),
+        Align::Left,
+        &mat,
+        Some(&glow),
+    );
+    b.text(
+        &score.to_string(),
+        0.04,
+        Vec2::new(right, y),
+        Align::Right,
+        &mat,
+        Some(&glow),
+    );
     y -= 0.04;
     b.strip(Vec2::new(left, y), Vec2::new(right, y), 0.005, &mat);
     y -= 0.03;
@@ -278,14 +360,36 @@ fn team_block(b: &mut Builder, team: Team, score: u32, rows: &[Row], top: f32, w
     }
     y -= ROW;
     for r in rows {
-        let text = if r.me { b.mats.white.clone() } else { b.mats.dim.clone() };
+        let text = if r.me {
+            b.mats.white.clone()
+        } else {
+            b.mats.dim.clone()
+        };
         if r.me {
             let mine = b.mats.mine[k].clone();
-            b.fill(Vec2::new(0.0, y), Vec2::new(width - 0.04, ROW * 0.9), &mine, true);
+            b.fill(
+                Vec2::new(0.0, y),
+                Vec2::new(width - 0.04, ROW * 0.9),
+                &mine,
+                true,
+            );
         }
-        b.text(&short(&r.name, 12), 0.024, Vec2::new(left, y), Align::Left, &text, None);
+        b.text(
+            &short(&r.name, 12),
+            0.024,
+            Vec2::new(left, y),
+            Align::Left,
+            &text,
+            None,
+        );
         let acc = r.accuracy.map_or("-".to_string(), |a| format!("{a}%"));
-        let cells = [r.score.to_string(), r.tags.to_string(), r.tagged.to_string(), acc, r.target_hits.to_string()];
+        let cells = [
+            r.score.to_string(),
+            r.tags.to_string(),
+            r.tagged.to_string(),
+            acc,
+            r.target_hits.to_string(),
+        ];
         for (c, x) in cells.iter().zip(COLUMNS) {
             b.text(c, 0.024, Vec2::new(x, y), Align::Right, &text, None);
         }
@@ -300,26 +404,63 @@ fn build_end(b: &mut Builder, game: &Game) -> (Vec<Button>, Vec3) {
     let local = game.is_local();
     let width = 1.0;
     let n = rows[0].len() + rows[1].len();
-    let height = 0.06 + 0.13 + 0.09 + 2.0 * (0.12 + 0.02) + n as f32 * ROW + 0.06 + if local { 0.14 } else { 0.0 } + 0.03;
+    let height = 0.06
+        + 0.13
+        + 0.09
+        + 2.0 * (0.12 + 0.02)
+        + n as f32 * ROW
+        + 0.06
+        + if local { 0.14 } else { 0.0 }
+        + 0.03;
     b.backing(Vec2::new(width, height));
     let (text, team) = winner(game.snap.scores);
     let ti = team_index(team);
     let (mat, glow) = (b.mats.team[ti].clone(), b.mats.glow[ti].clone());
     let mut y = height / 2.0 - 0.06 - 0.055;
-    b.text(text, 0.11, Vec2::new(0.0, y), Align::Center, &mat, Some(&glow));
+    b.text(
+        text,
+        0.11,
+        Vec2::new(0.0, y),
+        Align::Center,
+        &mat,
+        Some(&glow),
+    );
     y -= 0.12;
     let [r, bl] = game.snap.scores;
-    let (red, blue, white) = (b.mats.team[0].clone(), b.mats.team[1].clone(), b.mats.white.clone());
-    b.text(&r.to_string(), 0.055, Vec2::new(-0.06, y), Align::Right, &red, None);
+    let (red, blue, white) = (
+        b.mats.team[0].clone(),
+        b.mats.team[1].clone(),
+        b.mats.white.clone(),
+    );
+    b.text(
+        &r.to_string(),
+        0.055,
+        Vec2::new(-0.06, y),
+        Align::Right,
+        &red,
+        None,
+    );
     b.text(":", 0.055, Vec2::new(0.0, y), Align::Center, &white, None);
-    b.text(&bl.to_string(), 0.055, Vec2::new(0.06, y), Align::Left, &blue, None);
+    b.text(
+        &bl.to_string(),
+        0.055,
+        Vec2::new(0.06, y),
+        Align::Left,
+        &blue,
+        None,
+    );
     y -= 0.06;
     y = team_block(b, Team::Red, r, &rows[0], y, width);
     y = team_block(b, Team::Blue, bl, &rows[1], y, width);
     let countdown_at = Vec3::new(0.0, y - 0.02, 0.004);
     let mut buttons = Vec::new();
     if local {
-        buttons.push(b.button("NEXT MATCH", Act::NewMatch, Vec2::new(0.0, y - 0.12), Vec2::new(0.44, 0.1)));
+        buttons.push(b.button(
+            "NEXT MATCH",
+            Act::NewMatch,
+            Vec2::new(0.0, y - 0.12),
+            Vec2::new(0.44, 0.1),
+        ));
     }
     (buttons, countdown_at)
 }
@@ -358,17 +499,36 @@ fn panels(
         ui.pointed = [None; 2];
         if let Some(kind) = want {
             // In front of the eyes, level, a little below them.
-            let head = input.head.unwrap_or(Transform::from_xyz(0.0, lt_sim::sim::EYE, 0.0));
+            let head = input
+                .head
+                .unwrap_or(Transform::from_xyz(0.0, lt_sim::sim::EYE, 0.0));
             let f = head.rotation * Vec3::NEG_Z;
             let rot = Quat::from_rotation_y(lt_sim::sim::yaw_of(Vec3::new(f.x, 0.0, f.z)));
-            let pose = Transform::from_translation(head.translation + rot * Vec3::new(0.0, -0.12, -PANEL_DISTANCE)).with_rotation(rot);
-            let root = commands.spawn((Name::new("VR panel"), vr.rig * pose, Visibility::default())).id();
-            let mut b = Builder { commands: &mut commands, meshes: &mut meshes, mats: &mats, root };
+            let pose = Transform::from_translation(
+                head.translation + rot * Vec3::new(0.0, -0.12, -PANEL_DISTANCE),
+            )
+            .with_rotation(rot);
+            let root = commands
+                .spawn((Name::new("VR panel"), vr.rig * pose, Visibility::default()))
+                .id();
+            let mut b = Builder {
+                commands: &mut commands,
+                meshes: &mut meshes,
+                mats: &mats,
+                root,
+            };
             let (buttons, countdown_at) = match kind {
                 Kind::Menu => (build_menu(&mut b, game.is_local()), Vec3::ZERO),
                 Kind::End => build_end(&mut b, &game),
             };
-            ui.panel = Some(Panel { kind, root, pose, buttons, countdown: None, countdown_at });
+            ui.panel = Some(Panel {
+                kind,
+                root,
+                pose,
+                buttons,
+                countdown: None,
+                countdown_at,
+            });
         }
     }
     vr.ui = ui.panel.is_some();
@@ -378,7 +538,11 @@ fn panels(
     }
     // The end panel's countdown.
     if p.kind == Kind::End {
-        let secs = if game.is_local() { session.next_in().map_or(-1, |s| s.ceil() as i32) } else { -2 };
+        let secs = if game.is_local() {
+            session.next_in().map_or(-1, |s| s.ceil() as i32)
+        } else {
+            -2
+        };
         if p.countdown.map(|c| c.1) != Some(secs) {
             if let Some((e, _)) = p.countdown.take() {
                 commands.entity(e).despawn();
@@ -388,9 +552,21 @@ fn panels(
                 s if s >= 0 => format!("NEXT MATCH IN {s}"),
                 _ => String::new(),
             };
-            let mut b = Builder { commands: &mut commands, meshes: &mut meshes, mats: &mats, root: p.root };
+            let mut b = Builder {
+                commands: &mut commands,
+                meshes: &mut meshes,
+                mats: &mats,
+                root: p.root,
+            };
             let dim = b.mats.dim.clone();
-            let e = b.text(&text, 0.026, p.countdown_at.truncate(), Align::Center, &dim, None);
+            let e = b.text(
+                &text,
+                0.026,
+                p.countdown_at.truncate(),
+                Align::Center,
+                &dim,
+                None,
+            );
             p.countdown = Some((e, secs));
         }
     }
@@ -413,11 +589,24 @@ fn pointer(
     let lasers = *ui.lasers.get_or_insert_with(|| {
         [0, 1].map(|_| {
             commands
-                .spawn((Mesh3d(mats.cube.clone()), MeshMaterial3d(mats.laser.clone()), Transform::IDENTITY, Visibility::Hidden))
+                .spawn((
+                    Mesh3d(mats.cube.clone()),
+                    MeshMaterial3d(mats.laser.clone()),
+                    Transform::IDENTITY,
+                    Visibility::Hidden,
+                ))
                 .id()
         })
     });
-    let panel_pose = ui.panel.as_ref().map(|p| (vr.rig * p.pose, p.buttons.iter().map(|b| (b.center, b.half)).collect::<Vec<_>>()));
+    let panel_pose = ui.panel.as_ref().map(|p| {
+        (
+            vr.rig * p.pose,
+            p.buttons
+                .iter()
+                .map(|b| (b.center, b.half))
+                .collect::<Vec<_>>(),
+        )
+    });
     let mut pressed = None;
     let mut pointed = [None; 2];
     for i in 0..2 {
@@ -437,15 +626,26 @@ fn pointer(
                 let t = -lo.z / ld.z;
                 let hit = (lo + ld * t).truncate();
                 len = t;
-                pointed[i] = buttons.iter().position(|(c, h)| (hit - *c).abs().cmplt(*h).all());
+                pointed[i] = buttons
+                    .iter()
+                    .position(|(c, h)| (hit - *c).abs().cmplt(*h).all());
             }
             if let Ok(mut t) = transforms.get_mut(lasers[i]) {
-                *t = Transform::from_translation(o + d * len / 2.0).with_rotation(w.rotation).with_scale(Vec3::new(0.003, 0.003, len));
+                *t = Transform::from_translation(o + d * len / 2.0)
+                    .with_rotation(w.rotation)
+                    .with_scale(Vec3::new(0.003, 0.003, len));
             }
             shown = true;
             // Pressed with the trigger.
-            let held = if ui.trigger[i] { hand.trigger > 0.5 } else { hand.trigger > 0.75 };
-            if held && !ui.trigger[i] && let Some(k) = pointed[i] {
+            let held = if ui.trigger[i] {
+                hand.trigger > 0.5
+            } else {
+                hand.trigger > 0.75
+            };
+            if held
+                && !ui.trigger[i]
+                && let Some(k) = pointed[i]
+            {
                 pressed = Some(k);
                 rumble.play(i, 0.0, 0.03, 0.6);
             }
@@ -453,31 +653,51 @@ fn pointer(
                 rumble.play(i, 0.0, 0.01, 0.15);
             }
         }
-        ui.trigger[i] = if ui.trigger[i] { hand.trigger > 0.5 } else { hand.trigger > 0.75 };
+        ui.trigger[i] = if ui.trigger[i] {
+            hand.trigger > 0.5
+        } else {
+            hand.trigger > 0.75
+        };
         if let Ok(mut v) = vis.get_mut(lasers[i]) {
-            let want = if shown { Visibility::Inherited } else { Visibility::Hidden };
+            let want = if shown {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            };
             if *v != want {
                 *v = want;
             }
         }
         if let Ok(mut m) = laser_mats.get_mut(lasers[i]) {
-            let want = if pointed[i].is_some() { mats.laser_hot.clone() } else { mats.laser.clone() };
+            let want = if pointed[i].is_some() {
+                mats.laser_hot.clone()
+            } else {
+                mats.laser.clone()
+            };
             if m.0 != want {
                 m.0 = want;
             }
         }
     }
     ui.pointed = pointed;
-    let Some(panel) = ui.panel.as_ref() else { return };
+    let Some(panel) = ui.panel.as_ref() else {
+        return;
+    };
     for (k, b) in panel.buttons.iter().enumerate() {
         if let Ok(mut v) = vis.get_mut(b.hover) {
-            let want = if pointed.contains(&Some(k)) { Visibility::Inherited } else { Visibility::Hidden };
+            let want = if pointed.contains(&Some(k)) {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            };
             if *v != want {
                 *v = want;
             }
         }
     }
-    let Some(act) = pressed.and_then(|k| panel.buttons.get(k)).map(|b| b.act) else { return };
+    let Some(act) = pressed.and_then(|k| panel.buttons.get(k)).map(|b| b.act) else {
+        return;
+    };
     match act {
         Act::Resume => ui.menu = false,
         Act::NewMatch => {
@@ -506,7 +726,11 @@ fn sector(angle: f32, span: f32, r0: f32, r1: f32, z: f32) -> MeshData {
             m.pos.push([p.x, p.y, z]);
             m.nrm.push([0.0, 0.0, 1.0]);
             // (A halo's strength falls with uv.y.)
-            let radial = if t < 1.0 / 3.0 { t * 3.0 } else { (1.0 - t) * 1.5 };
+            let radial = if t < 1.0 / 3.0 {
+                t * 3.0
+            } else {
+                (1.0 - t) * 1.5
+            };
             m.uv.push([0.0, 1.0 - radial * (1.0 - s.abs())]);
         }
     }
@@ -536,11 +760,22 @@ fn hit_flash(
     mut vis: Query<&mut Visibility>,
 ) {
     let ring = *ui.ring.get_or_insert_with(|| {
-        let root = commands.spawn((Name::new("hit flash"), Transform::IDENTITY, Visibility::Hidden)).id();
+        let root = commands
+            .spawn((
+                Name::new("hit flash"),
+                Transform::IDENTITY,
+                Visibility::Hidden,
+            ))
+            .id();
         let span = std::f32::consts::TAU / SECTORS as f32;
         for (k, m) in mats.flash.iter().enumerate() {
             let mesh = meshes.add(sector(k as f32 * span, span * 2.0, 0.42, 1.1, -0.9).to_mesh());
-            commands.spawn((Mesh3d(mesh), MeshMaterial3d(m.clone()), Transform::IDENTITY, ChildOf(root)));
+            commands.spawn((
+                Mesh3d(mesh),
+                MeshMaterial3d(m.clone()),
+                Transform::IDENTITY,
+                ChildOf(root),
+            ));
         }
         root
     });
@@ -548,10 +783,13 @@ fn hit_flash(
         match *e {
             SimEvent::Hit { player, by, .. } if Some(player) == game.me => {
                 let from = crate::hud::shooter_pos(&game, by).map(|pos| HitFrom { by, pos });
-                ui.hits.retain(|h| h.0.is_none_or(|f| f.by != by) || from.is_none());
+                ui.hits
+                    .retain(|h| h.0.is_none_or(|f| f.by != by) || from.is_none());
                 ui.hits.push((from, FLASH_LIFE));
             }
-            SimEvent::TaggedOut { player, .. } if Some(player) == game.me => ui.hits.push((None, FLASH_LIFE * 1.5)),
+            SimEvent::TaggedOut { player, .. } if Some(player) == game.me => {
+                ui.hits.push((None, FLASH_LIFE * 1.5))
+            }
             _ => {}
         }
     }
@@ -565,9 +803,16 @@ fn hit_flash(
         }
     }
     ui.hits.retain(|h| h.1 > 0.0);
-    let head = vr.rig * input.head.unwrap_or(Transform::from_xyz(0.0, lt_sim::sim::EYE, 0.0));
+    let head = vr.rig
+        * input
+            .head
+            .unwrap_or(Transform::from_xyz(0.0, lt_sim::sim::EYE, 0.0));
     if let Ok(mut v) = vis.get_mut(ring) {
-        let want = if ui.hits.is_empty() { Visibility::Hidden } else { Visibility::Inherited };
+        let want = if ui.hits.is_empty() {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
         if *v != want {
             *v = want;
         }

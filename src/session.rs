@@ -37,7 +37,10 @@ pub struct Session {
 impl Session {
     /// The rules for the next local match: the command line's, in an arena of the chosen size.
     pub fn rules(&self, args: &crate::Args) -> lt_sim::Rules {
-        lt_sim::Rules { arena: self.arena.pick(rand::random()), ..args.rules() }
+        lt_sim::Rules {
+            arena: self.arena.pick(rand::random()),
+            ..args.rules()
+        }
     }
 
     /// Seconds until a local game's next match.
@@ -61,14 +64,20 @@ impl Plugin for SessionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Session>()
             .add_message::<SessionCmd>()
-            .add_systems(Update, (dev_script, run_commands, match_over, leave).chain().before(InputSet));
+            .add_systems(
+                Update,
+                (dev_script, run_commands, match_over, leave)
+                    .chain()
+                    .before(InputSet),
+            );
     }
 }
 
 /// A bot plays the local player (`--autopilot`).
 pub fn autopilot(game: &mut Game, seed: u64) {
     if let (Some(me), Source::Local { bots, .. }) = (game.me, &mut game.source) {
-        bots.bots.insert(me, Box::new(lt_sim::bots::WanderBot::new(seed, 0.7)));
+        bots.bots
+            .insert(me, Box::new(lt_sim::bots::WanderBot::new(seed, 0.7)));
     }
 }
 
@@ -88,11 +97,16 @@ fn dev_script(
         std::env::var("LT_DEV")
             .unwrap_or_default()
             .split(',')
-            .filter_map(|s| s.split_once(':').and_then(|(t, a)| Some((t.trim().parse().ok()?, a.trim().to_string()))))
+            .filter_map(|s| {
+                s.split_once(':')
+                    .and_then(|(t, a)| Some((t.trim().parse().ok()?, a.trim().to_string())))
+            })
             .collect()
     });
     let now = time.elapsed_secs();
-    let Some(k) = script.iter().position(|(t, _)| *t <= now) else { return };
+    let Some(k) = script.iter().position(|(t, _)| *t <= now) else {
+        return;
+    };
     let (_, action) = script.remove(k);
     info!("LT_DEV: {action}");
     match action.as_str() {
@@ -112,7 +126,11 @@ fn dev_script(
         "target" => {
             let Some(game) = game else { return };
             if let (Some(t), Some(me)) = (game.level.targets.first(), game.me) {
-                events.write(crate::game::GameEvent(lt_sim::SimEvent::TargetHit { target: t.id, by: me, pos: t.centre() }));
+                events.write(crate::game::GameEvent(lt_sim::SimEvent::TargetHit {
+                    target: t.id,
+                    by: me,
+                    pos: t.centre(),
+                }));
             }
         }
         "options" => {
@@ -128,13 +146,22 @@ fn dev_script(
         }
         "hit" => {
             let Some(game) = game else { return };
-            let Some(me) = game.me.and_then(|me| game.snap.players.iter().find(|p| p.id == me)) else { return };
+            let Some(me) = game
+                .me
+                .and_then(|me| game.snap.players.iter().find(|p| p.id == me))
+            else {
+                return;
+            };
             let enemy = game
                 .snap
                 .players
                 .iter()
                 .filter(|p| p.team != me.team)
-                .min_by(|a, b| a.feet.distance(me.feet).total_cmp(&b.feet.distance(me.feet)));
+                .min_by(|a, b| {
+                    a.feet
+                        .distance(me.feet)
+                        .total_cmp(&b.feet.distance(me.feet))
+                });
             if let Some(e) = enemy {
                 events.write(crate::game::GameEvent(lt_sim::SimEvent::Hit {
                     player: me.id,
@@ -145,7 +172,10 @@ fn dev_script(
             }
         }
         a if a.starts_with("play") => {
-            let d = a.strip_prefix("play-").and_then(Difficulty::parse).unwrap_or_default();
+            let d = a
+                .strip_prefix("play-")
+                .and_then(Difficulty::parse)
+                .unwrap_or_default();
             commands.insert_resource(crate::menu::DevPick(d));
         }
         a => warn!("LT_DEV: unknown action {a}"),
@@ -163,7 +193,11 @@ fn next_match(game: &mut Game, local: &LocalCmd, session: &mut Session) {
         autopilot(game, seed);
     }
     session.over_for = None;
-    info!("next match: arena {seed} ({})\n{}", game.rules.arena.name(), lt_sim::level::ascii(&game.level));
+    info!(
+        "next match: arena {seed} ({})\n{}",
+        game.rules.arena.name(),
+        lt_sim::level::ascii(&game.level)
+    );
 }
 
 fn run_commands(
@@ -195,7 +229,12 @@ fn run_commands(
     }
 }
 
-fn match_over(game: Option<ResMut<Game>>, mut session: ResMut<Session>, local: Res<LocalCmd>, time: Res<Time>) {
+fn match_over(
+    game: Option<ResMut<Game>>,
+    mut session: ResMut<Session>,
+    local: Res<LocalCmd>,
+    time: Res<Time>,
+) {
     let Some(mut game) = game else {
         session.over_for = None;
         return;
@@ -246,7 +285,10 @@ fn leave(
     commands.remove_resource::<crate::menu::Start>();
     commands.insert_resource(crate::menu::ShowMenu);
     let autopilot = local.autopilot;
-    *local = LocalCmd { autopilot, ..default() };
+    *local = LocalCmd {
+        autopilot,
+        ..default()
+    };
     mover.valid = false;
     if let Some(mut o) = overlays {
         o.menu = false;

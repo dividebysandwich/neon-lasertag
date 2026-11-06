@@ -52,7 +52,11 @@ pub fn serve(mut req: Request, list: &Mutex<List>) {
         eprintln!("{from} reports from a LAN address: a server not joinable from the internet");
     }
     let mut body = Vec::new();
-    let ok = req.as_reader().take(MAX_BODY as u64 + 1).read_to_end(&mut body).is_ok();
+    let ok = req
+        .as_reader()
+        .take(MAX_BODY as u64 + 1)
+        .read_to_end(&mut body)
+        .is_ok();
     let method = req.method().as_str().to_string();
     let url = req.url().to_string();
     let r = if ok {

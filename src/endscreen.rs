@@ -43,7 +43,12 @@ pub fn standings(game: &Game) -> [Vec<Row>; 2] {
         });
     }
     for team in &mut out {
-        team.sort_by(|a, b| b.score.cmp(&a.score).then(b.tags.cmp(&a.tags)).then(a.id.cmp(&b.id)));
+        team.sort_by(|a, b| {
+            b.score
+                .cmp(&a.score)
+                .then(b.tags.cmp(&a.tags))
+                .then(a.id.cmp(&b.id))
+        });
     }
     out
 }
@@ -91,19 +96,39 @@ const BUTTON_HOVER: Color = Color::srgb(0.16, 0.12, 0.3);
 const COLUMNS: [f32; 6] = [190.0, 76.0, 64.0, 84.0, 104.0, 88.0];
 
 fn label(s: impl Into<String>, size: f32, color: Color) -> impl Bundle {
-    (Text::new(s.into()), TextFont { font_size: FontSize::Px(size), ..default() }, TextColor(color))
+    (
+        Text::new(s.into()),
+        TextFont {
+            font_size: FontSize::Px(size),
+            ..default()
+        },
+        TextColor(color),
+    )
 }
 
-fn row(p: &mut ChildSpawnerCommands, cells: [String; 6], color: Color, size: f32, highlight: Option<Color>) {
+fn row(
+    p: &mut ChildSpawnerCommands,
+    cells: [String; 6],
+    color: Color,
+    size: f32,
+    highlight: Option<Color>,
+) {
     p.spawn((
-        Node { padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)), ..default() },
+        Node {
+            padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
+            ..default()
+        },
         BackgroundColor(highlight.unwrap_or(Color::NONE)),
     ))
     .with_children(|r| {
         for (k, (text, w)) in cells.into_iter().zip(COLUMNS).enumerate() {
             r.spawn(Node {
                 width: Val::Px(w),
-                justify_content: if k == 0 { JustifyContent::FlexStart } else { JustifyContent::FlexEnd },
+                justify_content: if k == 0 {
+                    JustifyContent::FlexStart
+                } else {
+                    JustifyContent::FlexEnd
+                },
                 overflow: Overflow::clip(),
                 ..default()
             })
@@ -117,18 +142,39 @@ fn row(p: &mut ChildSpawnerCommands, cells: [String; 6], color: Color, size: f32
 fn table(p: &mut ChildSpawnerCommands, team: Team, score: u32, rows: &[Row]) {
     let color = team_ui_color(Some(team));
     let name = if team == Team::Red { "RED" } else { "BLUE" };
-    p.spawn(Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(2.0), ..default() }).with_children(|t| {
+    p.spawn(Node {
+        flex_direction: FlexDirection::Column,
+        row_gap: Val::Px(2.0),
+        ..default()
+    })
+    .with_children(|t| {
         t.spawn((
-            Node { justify_content: JustifyContent::SpaceBetween, padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)), ..default() },
+            Node {
+                justify_content: JustifyContent::SpaceBetween,
+                padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+                ..default()
+            },
             BorderColor::all(color),
         ))
         .with_children(|h| {
             h.spawn(label(name, 34.0, color));
             h.spawn(label(score.to_string(), 34.0, color));
         });
-        t.spawn((Node { height: Val::Px(3.0), ..default() }, BackgroundColor(color)));
+        t.spawn((
+            Node {
+                height: Val::Px(3.0),
+                ..default()
+            },
+            BackgroundColor(color),
+        ));
         let grey = Color::srgb(0.6, 0.6, 0.7);
-        row(t, ["player", "score", "tags", "tagged", "accuracy", "targets"].map(String::from), grey, 16.0, None);
+        row(
+            t,
+            ["player", "score", "tags", "tagged", "accuracy", "targets"].map(String::from),
+            grey,
+            16.0,
+            None,
+        );
         for r in rows {
             let cells = [
                 r.name.clone(),
@@ -139,7 +185,17 @@ fn table(p: &mut ChildSpawnerCommands, team: Team, score: u32, rows: &[Row]) {
                 r.target_hits.to_string(),
             ];
             let hl = r.me.then(|| color.with_alpha(0.3));
-            row(t, cells, if r.me { Color::WHITE } else { Color::srgb(0.85, 0.85, 0.9) }, 20.0, hl);
+            row(
+                t,
+                cells,
+                if r.me {
+                    Color::WHITE
+                } else {
+                    Color::srgb(0.85, 0.85, 0.9)
+                },
+                20.0,
+                hl,
+            );
         }
     });
 }
@@ -199,22 +255,46 @@ fn show(
                     p.spawn(label("MATCH OVER", 22.0, Color::srgb(0.6, 0.6, 0.7)));
                     p.spawn(label(text, 72.0, team_ui_color(team)));
                     let [r, b] = game.snap.scores;
-                    p.spawn(Node { column_gap: Val::Px(24.0), align_items: AlignItems::Center, ..default() }).with_children(|s| {
+                    p.spawn(Node {
+                        column_gap: Val::Px(24.0),
+                        align_items: AlignItems::Center,
+                        ..default()
+                    })
+                    .with_children(|s| {
                         s.spawn(label(r.to_string(), 40.0, team_ui_color(Some(Team::Red))));
                         s.spawn(label(":", 40.0, Color::WHITE));
                         s.spawn(label(b.to_string(), 40.0, team_ui_color(Some(Team::Blue))));
                     });
                     if let Some(d) = difficulty {
-                        p.spawn(label(format!("bots: {d}"), 16.0, Color::srgb(0.6, 0.6, 0.7)));
+                        p.spawn(label(
+                            format!("bots: {d}"),
+                            16.0,
+                            Color::srgb(0.6, 0.6, 0.7),
+                        ));
                     }
-                    p.spawn(Node { height: Val::Px(6.0), ..default() });
-                    p.spawn(Node { column_gap: Val::Px(40.0), align_items: AlignItems::FlexStart, ..default() }).with_children(|t| {
+                    p.spawn(Node {
+                        height: Val::Px(6.0),
+                        ..default()
+                    });
+                    p.spawn(Node {
+                        column_gap: Val::Px(40.0),
+                        align_items: AlignItems::FlexStart,
+                        ..default()
+                    })
+                    .with_children(|t| {
                         table(t, Team::Red, r, &rows[0]);
                         table(t, Team::Blue, b, &rows[1]);
                     });
-                    p.spawn(Node { height: Val::Px(6.0), ..default() });
+                    p.spawn(Node {
+                        height: Val::Px(6.0),
+                        ..default()
+                    });
                     p.spawn((Countdown, label("", 20.0, Color::srgb(0.8, 0.8, 0.9))));
-                    p.spawn(Node { column_gap: Val::Px(14.0), ..default() }).with_children(|b| {
+                    p.spawn(Node {
+                        column_gap: Val::Px(14.0),
+                        ..default()
+                    })
+                    .with_children(|b| {
                         if local {
                             button(b, "Next match", EndButton::Next);
                         }
@@ -236,8 +316,14 @@ fn show(
     }
 }
 
-fn countdown(game: Option<Res<Game>>, session: Res<Session>, mut q: Query<&mut Text, With<Countdown>>) {
-    let (Some(game), Ok(mut t)) = (game, q.single_mut()) else { return };
+fn countdown(
+    game: Option<Res<Game>>,
+    session: Res<Session>,
+    mut q: Query<&mut Text, With<Countdown>>,
+) {
+    let (Some(game), Ok(mut t)) = (game, q.single_mut()) else {
+        return;
+    };
     let want = match session.next_in() {
         Some(s) if game.is_local() => format!("next match on a new arena in {:.0} s", s.ceil()),
         _ if !game.is_local() => "the server opens the next arena shortly".to_string(),
@@ -251,11 +337,18 @@ fn countdown(game: Option<Res<Game>>, session: Res<Session>, mut q: Query<&mut T
 #[allow(clippy::type_complexity)]
 fn buttons(
     q: Query<(&Interaction, &EndButton), Changed<Interaction>>,
-    mut colors: Query<(&Interaction, &mut BackgroundColor), (Changed<Interaction>, With<EndButton>)>,
+    mut colors: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<EndButton>),
+    >,
     mut cmds: MessageWriter<SessionCmd>,
 ) {
     for (i, mut bg) in &mut colors {
-        bg.0 = if *i == Interaction::None { BUTTON } else { BUTTON_HOVER };
+        bg.0 = if *i == Interaction::None {
+            BUTTON
+        } else {
+            BUTTON_HOVER
+        };
     }
     for (i, b) in &q {
         if *i == Interaction::Pressed {

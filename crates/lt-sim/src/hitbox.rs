@@ -27,7 +27,11 @@ pub enum Part {
 }
 
 fn unit(q: Quat) -> Quat {
-    if q.is_finite() && q.length_squared() > 0.5 { q.normalize() } else { Quat::IDENTITY }
+    if q.is_finite() && q.length_squared() > 0.5 {
+        q.normalize()
+    } else {
+        Quat::IDENTITY
+    }
 }
 
 /// Distance along the ray `o` + t·`d` (`d` unit length) to a sphere, within `len`.
@@ -47,7 +51,15 @@ fn ray_sphere(o: Vec3, d: Vec3, c: Vec3, r: f32, len: f32) -> Option<f32> {
 }
 
 /// Distance to a box turned by `rot` about `centre` (its extents `min`..`max` in its frame).
-fn ray_obb(o: Vec3, d: Vec3, centre: Vec3, rot: Quat, min: Vec3, max: Vec3, len: f32) -> Option<f32> {
+fn ray_obb(
+    o: Vec3,
+    d: Vec3,
+    centre: Vec3,
+    rot: Quat,
+    min: Vec3,
+    max: Vec3,
+    len: f32,
+) -> Option<f32> {
     let inv = rot.inverse();
     let lo = inv * (o - centre);
     let ld = inv * d;
@@ -81,10 +93,22 @@ pub fn first_hit(feet: Vec3, eye: Vec3, cmd: &PlayerCmd, a: Vec3, b: Vec3) -> Op
         }
     };
     let head_rot = unit(cmd.head.rot);
-    take(ray_sphere(a, d, eye + head_rot * Vec3::new(0.0, 0.02, 0.06), HEAD_RADIUS, len), Part::Head);
+    take(
+        ray_sphere(
+            a,
+            d,
+            eye + head_rot * Vec3::new(0.0, 0.02, 0.06),
+            HEAD_RADIUS,
+            len,
+        ),
+        Part::Head,
+    );
     let body = Quat::from_rotation_y(if cmd.yaw.is_finite() { cmd.yaw } else { 0.0 });
     let chest = eye - Vec3::Y * (CHEST_DROP + CHEST_HALF.y);
-    take(ray_obb(a, d, chest, body, -CHEST_HALF, CHEST_HALF, len), Part::Chest);
+    take(
+        ray_obb(a, d, chest, body, -CHEST_HALF, CHEST_HALF, len),
+        Part::Chest,
+    );
     for h in &cmd.hands {
         let p = feet + h.pos;
         if h.pos != Vec3::ZERO && p.is_finite() && (p - eye).length() < 1.3 {
@@ -94,7 +118,10 @@ pub fn first_hit(feet: Vec3, eye: Vec3, cmd: &PlayerCmd, a: Vec3, b: Vec3) -> Op
     if cmd.gun_hand.is_some() {
         let p = feet + cmd.muzzle.pos;
         if cmd.muzzle.pos != Vec3::ZERO && p.is_finite() && (p - eye).length() < 1.5 {
-            take(ray_obb(a, d, p, unit(cmd.muzzle.rot), GUN_MIN, GUN_MAX, len), Part::Gun);
+            take(
+                ray_obb(a, d, p, unit(cmd.muzzle.rot), GUN_MIN, GUN_MAX, len),
+                Part::Gun,
+            );
         }
     }
     best.map(|(t, p)| (t / len, p))
@@ -107,20 +134,39 @@ mod tests {
 
     fn cmd() -> PlayerCmd {
         PlayerCmd {
-            head: Pose { pos: Vec3::Y * 1.65, rot: Quat::IDENTITY },
+            head: Pose {
+                pos: Vec3::Y * 1.65,
+                rot: Quat::IDENTITY,
+            },
             hands: [
-                Pose { pos: Vec3::new(-0.3, 1.0, -0.2), rot: Quat::IDENTITY },
-                Pose { pos: Vec3::new(0.3, 1.3, -0.4), rot: Quat::IDENTITY },
+                Pose {
+                    pos: Vec3::new(-0.3, 1.0, -0.2),
+                    rot: Quat::IDENTITY,
+                },
+                Pose {
+                    pos: Vec3::new(0.3, 1.3, -0.4),
+                    rot: Quat::IDENTITY,
+                },
             ],
             gun_hand: Some(Hand::Right),
-            muzzle: Pose { pos: Vec3::new(0.3, 1.35, -0.6), rot: Quat::IDENTITY },
+            muzzle: Pose {
+                pos: Vec3::new(0.3, 1.35, -0.6),
+                rot: Quat::IDENTITY,
+            },
             ..Default::default()
         }
     }
 
     fn shot(y: f32, x: f32) -> Option<Part> {
         let eye = Vec3::Y * 1.65;
-        first_hit(Vec3::ZERO, eye, &cmd(), Vec3::new(x, y, -5.0), Vec3::new(x, y, 5.0)).map(|h| h.1)
+        first_hit(
+            Vec3::ZERO,
+            eye,
+            &cmd(),
+            Vec3::new(x, y, -5.0),
+            Vec3::new(x, y, 5.0),
+        )
+        .map(|h| h.1)
     }
 
     #[test]
@@ -128,7 +174,11 @@ mod tests {
         assert_eq!(shot(1.65, 0.0), Some(Part::Head));
         assert_eq!(shot(1.1, 0.0), Some(Part::Chest));
         assert_eq!(shot(1.0, -0.3), Some(Part::Hand));
-        assert_eq!(shot(1.3, 0.3), Some(Part::Gun), "the blaster is in front of the glove");
+        assert_eq!(
+            shot(1.3, 0.3),
+            Some(Part::Gun),
+            "the blaster is in front of the glove"
+        );
         // Between the chest and the head, beside the head, below the chest: misses.
         assert_eq!(shot(1.45, 0.0), None);
         assert_eq!(shot(1.65, 0.25), None);

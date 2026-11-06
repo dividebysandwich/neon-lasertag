@@ -11,11 +11,19 @@ use crate::transport::{Channel, Endpoint, NetEvent};
 
 #[derive(Clone, Debug)]
 pub enum ClientEvent {
-    Welcome { id: PlayerId, seed: u64, rules: Rules },
+    Welcome {
+        id: PlayerId,
+        seed: u64,
+        rules: Rules,
+    },
     Snapshot(Snapshot),
     Events(Vec<SimEvent>),
     Roster(Vec<(PlayerId, String, Team)>),
-    NewLevel { id: PlayerId, seed: u64, rules: Rules },
+    NewLevel {
+        id: PlayerId,
+        seed: u64,
+        rules: Rules,
+    },
     Disconnected(String),
 }
 
@@ -31,7 +39,11 @@ pub struct Client {
 impl Client {
     /// Starts connecting to `addr` ("host:port"; the default port if none is given).
     pub fn connect(addr: &str, name: &str) -> std::io::Result<Client> {
-        let addr = if addr.contains(':') { addr.to_string() } else { format!("{addr}:{}", crate::protocol::DEFAULT_PORT) };
+        let addr = if addr.contains(':') {
+            addr.to_string()
+        } else {
+            format!("{addr}:{}", crate::protocol::DEFAULT_PORT)
+        };
         Ok(Client {
             endpoint: Endpoint::client(&addr)?,
             name: name.to_string(),
@@ -56,7 +68,9 @@ impl Client {
         if self.recent.len() > RECENT {
             self.recent.remove(0);
         }
-        let msg = ToServer::Input { recent: self.recent.clone() };
+        let msg = ToServer::Input {
+            recent: self.recent.clone(),
+        };
         self.endpoint.send(0, Channel::Unreliable, &encode(&msg));
         self.endpoint.flush(Instant::now());
     }
@@ -68,7 +82,10 @@ impl Client {
             match ev {
                 NetEvent::Connected(_) => {
                     self.connected = true;
-                    let hello = ToServer::Hello { protocol: PROTOCOL, name: self.name.clone() };
+                    let hello = ToServer::Hello {
+                        protocol: PROTOCOL,
+                        name: self.name.clone(),
+                    };
                     self.endpoint.send(0, Channel::Reliable, &encode(&hello));
                 }
                 NetEvent::Disconnected(_, why) => {
@@ -106,7 +123,8 @@ impl Client {
     }
 
     pub fn close(&mut self) {
-        self.endpoint.send(0, Channel::Reliable, &encode(&ToServer::Bye));
+        self.endpoint
+            .send(0, Channel::Reliable, &encode(&ToServer::Bye));
         self.endpoint.flush(Instant::now());
         self.endpoint.close(0, "Bye");
     }

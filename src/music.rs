@@ -54,10 +54,16 @@ impl SpectrumData {
         let fps = f32::from_bits(u32_at(8));
         let frames = u32_at(12) as usize;
         let duration = f32::from_bits(u32_at(16));
-        if u16_at(4) != 1 || channels < BANDS + 1 || fps <= 0.0 || b.len() < 20 + frames * channels {
+        if u16_at(4) != 1 || channels < BANDS + 1 || fps <= 0.0 || b.len() < 20 + frames * channels
+        {
             return None;
         }
-        Some(SpectrumData { fps, channels, duration, values: b[20..20 + frames * channels].to_vec() })
+        Some(SpectrumData {
+            fps,
+            channels,
+            duration,
+            values: b[20..20 + frames * channels].to_vec(),
+        })
     }
 
     fn frames(&self) -> usize {
@@ -115,7 +121,11 @@ struct Tracks {
 
 impl Tracks {
     fn of(&self, mood: Mood) -> impl Iterator<Item = usize> + '_ {
-        self.files.iter().enumerate().filter(move |(_, f)| f.0 == mood).map(|(i, _)| i)
+        self.files
+            .iter()
+            .enumerate()
+            .filter(move |(_, f)| f.0 == mood)
+            .map(|(i, _)| i)
     }
 }
 
@@ -151,7 +161,10 @@ fn mood_of(name: &str) -> Option<Mood> {
 fn load(mut commands: Commands) {
     let dir = crate::assets::asset_dir().join("music");
     let mut names: Vec<String> = match std::fs::read_dir(&dir) {
-        Ok(entries) => entries.flatten().filter_map(|e| e.file_name().into_string().ok()).collect(),
+        Ok(entries) => entries
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect(),
         Err(e) => {
             warn!("{}: {e}; no music", dir.display());
             Vec::new()
@@ -168,7 +181,10 @@ fn load(mut commands: Commands) {
                 SpectrumData::default()
             }),
             Err(e) => {
-                warn!("{}: {e}; the spectrum displays stay dark for it", path.display());
+                warn!(
+                    "{}: {e}; the spectrum displays stay dark for it",
+                    path.display()
+                );
                 SpectrumData::default()
             }
         };
@@ -184,7 +200,10 @@ fn load(mut commands: Commands) {
 
 /// The local player's team won (a draw isn't a win).
 fn won(game: &Game) -> bool {
-    let mine = game.me.and_then(|me| game.snap.players.iter().find(|p| p.id == me)).map(|p| p.team);
+    let mine = game
+        .me
+        .and_then(|me| game.snap.players.iter().find(|p| p.id == me))
+        .map(|p| p.team);
     mine.is_some() && winner(game.snap.scores).1 == mine
 }
 
@@ -223,7 +242,11 @@ fn choose(
     }
     // A track (another than the last, if there are others) for the mood.
     let choices: Vec<usize> = tracks.of(mood).collect();
-    let fresh: Vec<usize> = choices.iter().copied().filter(|&i| Some(i) != playing.last).collect();
+    let fresh: Vec<usize> = choices
+        .iter()
+        .copied()
+        .filter(|&i| Some(i) != playing.last)
+        .collect();
     let pool = if fresh.is_empty() { &choices } else { &fresh };
     playing.started = true;
     if pool.is_empty() {
@@ -259,12 +282,18 @@ fn follow(
     sinks: Query<(&Music, &AudioSink)>,
     mut spectrum: ResMut<MusicSpectrum>,
 ) {
-    let Some((music, sink)) = sinks.iter().next() else { return };
+    let Some((music, sink)) = sinks.iter().next() else {
+        return;
+    };
     let data = &tracks.files[music.0].2;
     if data.frames() == 0 || sink.is_paused() {
         return;
     }
-    let duration = if data.duration > 0.0 { data.duration } else { data.frames() as f32 / data.fps };
+    let duration = if data.duration > 0.0 {
+        data.duration
+    } else {
+        data.frames() as f32 / data.fps
+    };
     let t = sink.position().as_secs_f32().min(duration);
     let dt = time.delta_secs();
     for (b, level) in spectrum.bands.iter_mut().enumerate() {
@@ -274,7 +303,11 @@ fn follow(
         *level += (target - *level) * (1.0 - (-rate * dt).exp());
     }
     let bass = data.sample(t, BANDS);
-    spectrum.bass = if bass > spectrum.bass { bass } else { spectrum.bass + (bass - spectrum.bass) * (1.0 - (-12.0 * dt).exp()) };
+    spectrum.bass = if bass > spectrum.bass {
+        bass
+    } else {
+        spectrum.bass + (bass - spectrum.bass) * (1.0 - (-12.0 * dt).exp())
+    };
 }
 
 #[cfg(test)]

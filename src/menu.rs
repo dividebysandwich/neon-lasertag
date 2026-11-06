@@ -55,7 +55,12 @@ struct Choices {
 /// The menu has made its choice: start this game.
 #[derive(Resource, Clone)]
 pub enum Start {
-    Local { host: bool, bots: usize, difficulty: Difficulty, arena: SizeChoice },
+    Local {
+        host: bool,
+        bots: usize,
+        difficulty: Difficulty,
+        arena: SizeChoice,
+    },
     Join(String),
 }
 
@@ -73,7 +78,10 @@ impl Plugin for MenuPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, first)
             .add_systems(Update, spawn.run_if(resource_exists::<ShowMenu>))
-            .add_systems(Update, (buttons, typing, show_list, hover).run_if(resource_exists::<MenuState>));
+            .add_systems(
+                Update,
+                (buttons, typing, show_list, hover).run_if(resource_exists::<MenuState>),
+            );
     }
 }
 
@@ -96,7 +104,14 @@ const BORDER: Color = Color::srgb(0.5, 0.2, 0.9);
 const BORDER_ON: Color = Color::srgb(1.0, 0.85, 0.3);
 
 fn label(s: impl Into<String>, size: f32, color: Color) -> impl Bundle {
-    (Text::new(s.into()), TextFont { font_size: FontSize::Px(size), ..default() }, TextColor(color))
+    (
+        Text::new(s.into()),
+        TextFont {
+            font_size: FontSize::Px(size),
+            ..default()
+        },
+        TextColor(color),
+    )
 }
 
 fn button(p: &mut ChildSpawnerCommands, text: &str, action: Action) {
@@ -125,7 +140,11 @@ fn spawn(mut commands: Commands, old: Query<Entity, With<MenuRoot>>) {
     let master = std::env::var("LT_MASTER").unwrap_or_else(|_| lt_net::DEFAULT_MASTER.to_string());
     let list = ListSlot::default();
     fetch_list_into(&master, list.clone());
-    commands.insert_resource(MenuState { list, shown: None, master });
+    commands.insert_resource(MenuState {
+        list,
+        shown: None,
+        master,
+    });
     commands
         .spawn((
             MenuRoot,
@@ -203,7 +222,11 @@ fn spawn(mut commands: Commands, old: Query<Entity, With<MenuRoot>>) {
 #[allow(clippy::type_complexity)]
 fn hover(mut q: Query<(&Interaction, &mut BackgroundColor), (Changed<Interaction>, With<Button>)>) {
     for (i, mut bg) in &mut q {
-        bg.0 = if *i == Interaction::None { BUTTON } else { BUTTON_HOVER };
+        bg.0 = if *i == Interaction::None {
+            BUTTON
+        } else {
+            BUTTON_HOVER
+        };
     }
 }
 
@@ -241,7 +264,11 @@ fn buttons(
         t.0 = format!("{} bots", choices.bots);
     }
     if let Ok(mut t) = addr_text.single_mut() {
-        let caret = if (time.elapsed_secs() * 2.0).fract() < 0.5 { "_" } else { " " };
+        let caret = if (time.elapsed_secs() * 2.0).fract() < 0.5 {
+            "_"
+        } else {
+            " "
+        };
         t.0 = format!("{}{caret}", choices.address);
     }
     for (a, mut b) in &mut borders {
@@ -272,7 +299,9 @@ fn buttons(
                 difficulty: choices.difficulty,
                 arena: choices.arena,
             }),
-            Action::Join if !choices.address.trim().is_empty() => Some(Start::Join(choices.address.trim().to_string())),
+            Action::Join if !choices.address.trim().is_empty() => {
+                Some(Start::Join(choices.address.trim().to_string()))
+            }
             Action::JoinServer(addr) => Some(Start::Join(addr)),
             Action::MoreBots(d) => {
                 choices.bots = (choices.bots as i32 + d).clamp(0, 15) as usize;
@@ -330,7 +359,9 @@ fn typing(
         match &k.logical_key {
             Key::Character(c) => {
                 for ch in c.chars() {
-                    if (ch.is_ascii_alphanumeric() || ".:-[]".contains(ch)) && state.address.len() < 60 {
+                    if (ch.is_ascii_alphanumeric() || ".:-[]".contains(ch))
+                        && state.address.len() < 60
+                    {
                         state.address.push(ch);
                     }
                 }
@@ -352,21 +383,35 @@ fn typing(
     }
 }
 
-fn show_list(mut commands: Commands, mut state: ResMut<MenuState>, list: Query<Entity, With<ServerList>>) {
+fn show_list(
+    mut commands: Commands,
+    mut state: ResMut<MenuState>,
+    list: Query<Entity, With<ServerList>>,
+) {
     let Ok(parent) = list.single() else { return };
     let fetched = state.list.lock().ok().and_then(|mut s| s.take());
     let Some(result) = fetched else {
         if state.shown.is_none() {
             state.shown = Some(Vec::new());
             commands.entity(parent).despawn_children();
-            commands.spawn((label("asking the master server...", 18.0, Color::srgb(0.6, 0.6, 0.7)), ChildOf(parent)));
+            commands.spawn((
+                label(
+                    "asking the master server...",
+                    18.0,
+                    Color::srgb(0.6, 0.6, 0.7),
+                ),
+                ChildOf(parent),
+            ));
         }
         return;
     };
     commands.entity(parent).despawn_children();
     match result {
         Ok(servers) if servers.is_empty() => {
-            commands.spawn((label("no servers listed", 18.0, Color::srgb(0.6, 0.6, 0.7)), ChildOf(parent)));
+            commands.spawn((
+                label("no servers listed", 18.0, Color::srgb(0.6, 0.6, 0.7)),
+                ChildOf(parent),
+            ));
         }
         Ok(servers) => {
             for s in servers.iter().take(8) {
@@ -387,7 +432,14 @@ fn show_list(mut commands: Commands, mut state: ResMut<MenuState>, list: Query<E
             state.shown = Some(servers);
         }
         Err(e) => {
-            commands.spawn((label(format!("server list unavailable: {e}"), 18.0, Color::srgb(0.8, 0.5, 0.5)), ChildOf(parent)));
+            commands.spawn((
+                label(
+                    format!("server list unavailable: {e}"),
+                    18.0,
+                    Color::srgb(0.8, 0.5, 0.5),
+                ),
+                ChildOf(parent),
+            ));
         }
     }
 }

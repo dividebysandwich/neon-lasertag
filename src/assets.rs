@@ -24,19 +24,27 @@ impl MeshData {
     /// Appends `other` turned by `rot` and moved by `offset`.
     pub fn append(&mut self, other: &MeshData, rot: Quat, offset: Vec3) {
         let base = self.pos.len() as u32;
-        self.pos.extend(other.pos.iter().map(|p| (rot * Vec3::from(*p) + offset).to_array()));
-        self.nrm.extend(other.nrm.iter().map(|n| (rot * Vec3::from(*n)).to_array()));
+        self.pos.extend(
+            other
+                .pos
+                .iter()
+                .map(|p| (rot * Vec3::from(*p) + offset).to_array()),
+        );
+        self.nrm
+            .extend(other.nrm.iter().map(|n| (rot * Vec3::from(*n)).to_array()));
         if other.uv.len() == other.pos.len() {
             self.uv.extend_from_slice(&other.uv);
         } else {
-            self.uv.extend(std::iter::repeat_n([0.0, 0.0], other.pos.len()));
+            self.uv
+                .extend(std::iter::repeat_n([0.0, 0.0], other.pos.len()));
         }
         if !self.col.is_empty() || !other.col.is_empty() {
             self.col.resize(base as usize, [0.0; 4]);
             if other.col.len() == other.pos.len() {
                 self.col.extend_from_slice(&other.col);
             } else {
-                self.col.extend(std::iter::repeat_n([0.0; 4], other.pos.len()));
+                self.col
+                    .extend(std::iter::repeat_n([0.0; 4], other.pos.len()));
             }
         }
         self.idx.extend(other.idx.iter().map(|i| i + base));
@@ -56,11 +64,22 @@ impl MeshData {
     }
 
     pub fn to_mesh(&self) -> Mesh {
-        let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+        let mut m = Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        );
         m.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.pos.clone());
-        let nrm = if self.nrm.len() == self.pos.len() { self.nrm.clone() } else { vec![[0.0, 1.0, 0.0]; self.pos.len()] };
+        let nrm = if self.nrm.len() == self.pos.len() {
+            self.nrm.clone()
+        } else {
+            vec![[0.0, 1.0, 0.0]; self.pos.len()]
+        };
         m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, nrm);
-        let uv = if self.uv.len() == self.pos.len() { self.uv.clone() } else { vec![[0.0, 0.0]; self.pos.len()] };
+        let uv = if self.uv.len() == self.pos.len() {
+            self.uv.clone()
+        } else {
+            vec![[0.0, 0.0]; self.pos.len()]
+        };
         m.insert_attribute(Mesh::ATTRIBUTE_UV_0, uv);
         if !self.col.is_empty() {
             let mut col = self.col.clone();
@@ -72,9 +91,10 @@ impl MeshData {
     }
 
     pub fn bounds(&self) -> (Vec3, Vec3) {
-        self.pos.iter().fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(a, b), p| {
-            (a.min(Vec3::from(*p)), b.max(Vec3::from(*p)))
-        })
+        self.pos.iter().fold(
+            (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
+            |(a, b), p| (a.min(Vec3::from(*p)), b.max(Vec3::from(*p))),
+        )
     }
 }
 
@@ -103,7 +123,8 @@ pub fn asset_dir() -> PathBuf {
 
 pub fn load_glb(rel: &str) -> anyhow::Result<GlbFile> {
     let path = asset_dir().join(rel);
-    let (doc, buffers, _images) = gltf::import(&path).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+    let (doc, buffers, _images) =
+        gltf::import(&path).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
     let mut out = GlbFile::default();
     for mesh in doc.meshes() {
         let name = mesh.name().unwrap_or("").to_string();
@@ -114,16 +135,30 @@ pub fn load_glb(rel: &str) -> anyhow::Result<GlbFile> {
             }
             let mat = prim.material().name().unwrap_or("body").to_string();
             let r = prim.reader(|b| Some(&buffers[b.index()]));
-            let Some(pos) = r.read_positions() else { continue };
+            let Some(pos) = r.read_positions() else {
+                continue;
+            };
             let pos: Vec<[f32; 3]> = pos.collect();
             let nrm: Vec<[f32; 3]> = r.read_normals().map(|n| n.collect()).unwrap_or_default();
-            let uv: Vec<[f32; 2]> = r.read_tex_coords(0).map(|t| t.into_f32().collect()).unwrap_or_default();
+            let uv: Vec<[f32; 2]> = r
+                .read_tex_coords(0)
+                .map(|t| t.into_f32().collect())
+                .unwrap_or_default();
             let idx: Vec<u32> = match r.read_indices() {
                 Some(i) => i.into_u32().collect(),
                 None => (0..pos.len() as u32).collect(),
             };
-            let part = MeshData { pos, nrm, uv, idx, ..default() };
-            parts.entry(mat).or_default().append(&part, Quat::IDENTITY, Vec3::ZERO);
+            let part = MeshData {
+                pos,
+                nrm,
+                uv,
+                idx,
+                ..default()
+            };
+            parts
+                .entry(mat)
+                .or_default()
+                .append(&part, Quat::IDENTITY, Vec3::ZERO);
         }
     }
     for node in doc.nodes() {
@@ -156,7 +191,10 @@ impl Model {
             }
         }
         parts.sort_by(|a, b| a.0.cmp(&b.0));
-        Model { parts, nodes: file.nodes.clone() }
+        Model {
+            parts,
+            nodes: file.nodes.clone(),
+        }
     }
 }
 
@@ -177,10 +215,15 @@ pub struct Models {
     pub reload: Model,
 }
 
-pub const ANIMALS: [&str; 8] = ["wolf", "cat", "deer", "fox", "bear", "rabbit", "owl", "boar"];
+pub const ANIMALS: [&str; 8] = [
+    "wolf", "cat", "deer", "fox", "bear", "rabbit", "owl", "boar",
+];
 
 pub fn load_models(meshes: &mut Assets<Mesh>) -> Models {
-    let mut models = Models { muzzle: Vec3::new(0.0, 0.06, -0.2), ..default() };
+    let mut models = Models {
+        muzzle: Vec3::new(0.0, 0.06, -0.2),
+        ..default()
+    };
     match load_glb("models/blaster.glb") {
         Ok(f) => {
             models.blaster = Model::from_glb(&f, None, meshes);
@@ -220,24 +263,73 @@ pub fn load_models(meshes: &mut Assets<Mesh>) -> Models {
     // Stand-ins for missing models.
     if models.reload.parts.is_empty() {
         models.reload.parts = vec![
-            ("body".into(), meshes.add(Cylinder::new(0.8, 0.03).mesh().resolution(8).build().translated_by(Vec3::Y * 0.015))),
-            ("glow_white".into(), meshes.add(Torus::new(0.6, 0.66).mesh().build().translated_by(Vec3::Y * 0.035))),
-            ("glow_white".into(), meshes.add(Torus::new(0.55, 0.7).mesh().build().translated_by(Vec3::Y * 2.6))),
+            (
+                "body".into(),
+                meshes.add(
+                    Cylinder::new(0.8, 0.03)
+                        .mesh()
+                        .resolution(8)
+                        .build()
+                        .translated_by(Vec3::Y * 0.015),
+                ),
+            ),
+            (
+                "glow_white".into(),
+                meshes.add(
+                    Torus::new(0.6, 0.66)
+                        .mesh()
+                        .build()
+                        .translated_by(Vec3::Y * 0.035),
+                ),
+            ),
+            (
+                "glow_white".into(),
+                meshes.add(
+                    Torus::new(0.55, 0.7)
+                        .mesh()
+                        .build()
+                        .translated_by(Vec3::Y * 2.6),
+                ),
+            ),
         ];
     }
     if models.heads.is_empty() {
         models.heads.push(Model {
             parts: vec![
-                ("body".into(), meshes.add(Sphere::new(0.13).mesh().ico(1).unwrap())),
-                ("accent".into(), meshes.add(Cuboid::new(0.2, 0.045, 0.03).mesh().build().translated_by(Vec3::new(0.0, 0.0, -0.12)))),
+                (
+                    "body".into(),
+                    meshes.add(Sphere::new(0.13).mesh().ico(1).unwrap()),
+                ),
+                (
+                    "accent".into(),
+                    meshes.add(
+                        Cuboid::new(0.2, 0.045, 0.03)
+                            .mesh()
+                            .build()
+                            .translated_by(Vec3::new(0.0, 0.0, -0.12)),
+                    ),
+                ),
             ],
             ..default()
         });
     }
     if models.torso.parts.is_empty() {
-        let bar = |y: f32| Cuboid::new(0.3, 0.045, 0.26).mesh().build().translated_by(Vec3::new(0.0, y, 0.0));
+        let bar = |y: f32| {
+            Cuboid::new(0.3, 0.045, 0.26)
+                .mesh()
+                .build()
+                .translated_by(Vec3::new(0.0, y, 0.0))
+        };
         models.torso.parts = vec![
-            ("body".into(), meshes.add(Cuboid::new(0.4, 0.48, 0.22).mesh().build().translated_by(Vec3::new(0.0, -0.25, 0.0)))),
+            (
+                "body".into(),
+                meshes.add(
+                    Cuboid::new(0.4, 0.48, 0.22)
+                        .mesh()
+                        .build()
+                        .translated_by(Vec3::new(0.0, -0.25, 0.0)),
+                ),
+            ),
             ("hit_1".into(), meshes.add(bar(-0.12))),
             ("hit_2".into(), meshes.add(bar(-0.22))),
             ("hit_3".into(), meshes.add(bar(-0.32))),
@@ -249,12 +341,24 @@ pub fn load_models(meshes: &mut Assets<Mesh>) -> Models {
         }
     }
     if models.blaster.parts.is_empty() {
-        models.blaster.parts.push(("body".into(), meshes.add(Cuboid::new(0.05, 0.08, 0.26))));
-        models.blaster.parts.push(("accent".into(), meshes.add(Cuboid::new(0.055, 0.015, 0.2))));
+        models
+            .blaster
+            .parts
+            .push(("body".into(), meshes.add(Cuboid::new(0.05, 0.08, 0.26))));
+        models
+            .blaster
+            .parts
+            .push(("accent".into(), meshes.add(Cuboid::new(0.055, 0.015, 0.2))));
     }
     if models.grenade.parts.is_empty() {
-        models.grenade.parts.push(("body".into(), meshes.add(Sphere::new(0.045))));
-        models.grenade.parts.push(("glow_white".into(), meshes.add(Torus::new(0.04, 0.05))));
+        models
+            .grenade
+            .parts
+            .push(("body".into(), meshes.add(Sphere::new(0.045))));
+        models
+            .grenade
+            .parts
+            .push(("glow_white".into(), meshes.add(Torus::new(0.04, 0.05))));
     }
     models
 }

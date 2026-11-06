@@ -128,7 +128,11 @@ impl Conn {
     }
 
     fn in_flight(&self) -> usize {
-        self.out.iter().filter(|p| p.sent.is_some()).map(|p| p.data.len()).sum()
+        self.out
+            .iter()
+            .filter(|p| p.sent.is_some())
+            .map(|p| p.data.len())
+            .sum()
     }
 
     /// The peer's packet `seq` arrived: false if it is a duplicate.
@@ -142,7 +146,11 @@ impl Conn {
         let d = seq.wrapping_sub(self.remote_seq) as i16;
         if d > 0 {
             let d = d as u32;
-            self.remote_bits = if d >= 32 { 0 } else { (self.remote_bits << d) | (1 << (d - 1)) };
+            self.remote_bits = if d >= 32 {
+                0
+            } else {
+                (self.remote_bits << d) | (1 << (d - 1))
+            };
             self.remote_seq = seq;
             true
         } else if d == 0 {
@@ -162,8 +170,9 @@ impl Conn {
     /// The peer acknowledged our packets up to `ack` (and `bits` before it).
     fn note_acks(&mut self, ack: u16, bits: u32, now: Instant) {
         let mut acked = Vec::new();
-        for (k, seq) in
-            std::iter::once(ack).chain((1..=32).map(|i| ack.wrapping_sub(i))).enumerate()
+        for (k, seq) in std::iter::once(ack)
+            .chain((1..=32).map(|i| ack.wrapping_sub(i)))
+            .enumerate()
         {
             if k > 0 && bits & (1 << (k - 1)) == 0 {
                 continue;
@@ -181,7 +190,8 @@ impl Conn {
         }
         // Forget packets too old to be acknowledged any more (their parts get resent).
         let horizon = Duration::from_secs(5);
-        self.sent.retain(|_, (at, _)| now.duration_since(*at) < horizon);
+        self.sent
+            .retain(|_, (at, _)| now.duration_since(*at) < horizon);
     }
 
     /// A reliable part arrived: the whole messages it completes.
@@ -288,7 +298,11 @@ impl Endpoint {
             .to_socket_addrs()?
             .next()
             .ok_or_else(|| std::io::Error::new(ErrorKind::NotFound, "no such host"))?;
-        let bind = if target.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" };
+        let bind = if target.is_ipv6() {
+            "[::]:0"
+        } else {
+            "0.0.0.0:0"
+        };
         let socket = UdpSocket::bind(bind)?;
         socket.set_nonblocking(true)?;
         Ok(Self::client_over(Box::new(socket), target))
@@ -336,7 +350,11 @@ impl Endpoint {
 
     /// Connected connections.
     pub fn connections(&self) -> Vec<ConnId> {
-        self.conns.iter().filter(|c| c.connected).map(|c| c.id).collect()
+        self.conns
+            .iter()
+            .filter(|c| c.connected)
+            .map(|c| c.id)
+            .collect()
     }
 
     pub fn addr_of(&self, id: ConnId) -> Option<SocketAddr> {
@@ -345,7 +363,10 @@ impl Endpoint {
 
     /// Round trip time (seconds).
     pub fn rtt(&self, id: ConnId) -> f32 {
-        self.conns.iter().find(|c| c.id == id).map_or(0.0, |c| c.rtt)
+        self.conns
+            .iter()
+            .find(|c| c.id == id)
+            .map_or(0.0, |c| c.rtt)
     }
 
     /// Reliable data not yet acknowledged (bytes).
@@ -410,7 +431,15 @@ impl Endpoint {
         let mut gone = Vec::new();
         for c in &self.conns {
             if now.duration_since(c.last_recv) > TIMEOUT {
-                gone.push((c.id, if c.connected { "Timed out" } else { "No answer" }.to_string()));
+                gone.push((
+                    c.id,
+                    if c.connected {
+                        "Timed out"
+                    } else {
+                        "No answer"
+                    }
+                    .to_string(),
+                ));
             }
         }
         for (id, why) in gone {
@@ -436,7 +465,8 @@ impl Endpoint {
                         // The same address with a new salt: a new client there.
                         let id = self.conns[i].id;
                         self.conns.remove(i);
-                        self.events.push(NetEvent::Disconnected(id, "Reconnected".into()));
+                        self.events
+                            .push(NetEvent::Disconnected(id, "Reconnected".into()));
                         return self.receive(p, from, now);
                     }
                     None => {
@@ -487,7 +517,9 @@ impl Endpoint {
                 }
             }
             DATA => {
-                let Some(i) = known.filter(|&i| self.conns[i].salt == salt) else { return };
+                let Some(i) = known.filter(|&i| self.conns[i].salt == salt) else {
+                    return;
+                };
                 if !self.conns[i].connected {
                     return;
                 }
@@ -526,7 +558,9 @@ impl Endpoint {
                     let last = b[at + 3] != 0;
                     let len = u16::from_le_bytes([b[at + 4], b[at + 5]]) as usize;
                     at += 6;
-                    let Some(data) = b.get(at..at + len) else { return };
+                    let Some(data) = b.get(at..at + len) else {
+                        return;
+                    };
                     at += len;
                     for m in c.receive_reliable(id, last, data.to_vec()) {
                         events.push(NetEvent::Message(c.id, Channel::Reliable, m));
@@ -541,7 +575,9 @@ impl Endpoint {
                     let count = b[at + 4];
                     let len = u16::from_le_bytes([b[at + 5], b[at + 6]]) as usize;
                     at += 7;
-                    let Some(data) = b.get(at..at + len) else { return };
+                    let Some(data) = b.get(at..at + len) else {
+                        return;
+                    };
                     at += len;
                     if fresh && let Some(m) = c.receive_fragment(msg, frag, count, data.to_vec()) {
                         events.push(NetEvent::Message(c.id, Channel::Unreliable, m));
@@ -571,7 +607,9 @@ impl Endpoint {
     /// Sends what is queued, resends what is due, keeps the connections alive.
     pub fn flush(&mut self, now: Instant) {
         if !self.server
-            && self.connect_at.is_none_or(|at| now.duration_since(at) >= CONNECT_EVERY)
+            && self
+                .connect_at
+                .is_none_or(|at| now.duration_since(at) >= CONNECT_EVERY)
             && let Some(c) = self.conns.first_mut()
             && !c.connected
         {
@@ -647,7 +685,9 @@ impl Endpoint {
                 chunks.push((None, b));
             }
         }
-        let quiet = c.last_send.is_none_or(|t| now.duration_since(t) >= KEEPALIVE);
+        let quiet = c
+            .last_send
+            .is_none_or(|t| now.duration_since(t) >= KEEPALIVE);
         if chunks.is_empty() && !quiet {
             return Vec::new();
         }
@@ -731,8 +771,9 @@ mod tests {
     #[test]
     fn reliable_messages_arrive_in_order_despite_loss() {
         let (mut s, mut c, sid, cid) = pair(0.3);
-        let msgs: Vec<Vec<u8>> =
-            (0..60u32).map(|i| (0..(i * 97 % 5000)).map(|k| (k ^ i) as u8).collect()).collect();
+        let msgs: Vec<Vec<u8>> = (0..60u32)
+            .map(|i| (0..(i * 97 % 5000)).map(|k| (k ^ i) as u8).collect())
+            .collect();
         for m in &msgs {
             s.send(sid, Channel::Reliable, m);
         }
@@ -782,7 +823,10 @@ mod tests {
         let (mut s, _c, sid, _) = pair(0.0);
         let later = Instant::now() + TIMEOUT + Duration::from_secs(1);
         let ev = s.poll(later);
-        assert!(ev.iter().any(|e| matches!(e, NetEvent::Disconnected(id, _) if *id == sid)));
+        assert!(
+            ev.iter()
+                .any(|e| matches!(e, NetEvent::Disconnected(id, _) if *id == sid))
+        );
     }
 
     #[test]

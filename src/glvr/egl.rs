@@ -35,7 +35,8 @@ impl Context {
         }
         .map_err(|e| format!("no surfaceless EGL display: {e}"))?;
         egl.initialize(display).map_err(|e| format!("EGL: {e}"))?;
-        egl.bind_api(egl::OPENGL_API).map_err(|e| format!("EGL has no desktop OpenGL: {e}"))?;
+        egl.bind_api(egl::OPENGL_API)
+            .map_err(|e| format!("EGL has no desktop OpenGL: {e}"))?;
         let attributes = [
             egl::RENDERABLE_TYPE,
             egl::OPENGL_BIT,
@@ -71,12 +72,20 @@ impl Context {
                     // SAFETY: the library EGL was just loaded from.
                     let library = unsafe { libloading::Library::new("libEGL.so.1") }
                         .map_err(|e| format!("EGL can't be loaded: {e}"))?;
-                    return Ok(Context { egl, display, config, context, library });
+                    return Ok(Context {
+                        egl,
+                        display,
+                        config,
+                        context,
+                        library,
+                    });
                 }
                 Err(e) => last = format!("OpenGL {major}.{minor}: {e}"),
             }
         }
-        Err(format!("EGL can't make an OpenGL 4.5 core context ({last})"))
+        Err(format!(
+            "EGL can't make an OpenGL 4.5 core context ({last})"
+        ))
     }
 
     /// OpenGL's functions, for glow.
@@ -84,7 +93,9 @@ impl Context {
         // SAFETY: the context is current on this thread.
         unsafe {
             glow::Context::from_loader_function(|name| {
-                self.egl.get_proc_address(name).map_or(ptr::null(), |f| f as *const c_void)
+                self.egl
+                    .get_proc_address(name)
+                    .map_or(ptr::null(), |f| f as *const c_void)
             })
         }
     }
@@ -162,7 +173,11 @@ impl xr::Graphics for Egl {
         let mut out = sys::Session::NULL;
         // SAFETY: the binding is the context current on this thread.
         let result = unsafe { (instance.fp().create_session)(instance.as_raw(), &info, &mut out) };
-        if result.into_raw() < 0 { Err(result) } else { Ok(out) }
+        if result.into_raw() < 0 {
+            Err(result)
+        } else {
+            Ok(out)
+        }
     }
 
     fn enumerate_swapchain_images(swapchain: &xr::Swapchain<Self>) -> xr::Result<Vec<u32>> {

@@ -31,24 +31,49 @@ fn err(what: &'static str) -> impl Fn(xr::sys::Result) -> String {
 impl Controllers {
     /// The actions, their suggested bindings (as `crate::xr::suggest_bindings`), attached to
     /// `session`.
-    pub fn new<G: xr::Graphics>(instance: &xr::Instance, session: &xr::Session<G>) -> Result<Self, String> {
+    pub fn new<G: xr::Graphics>(
+        instance: &xr::Instance,
+        session: &xr::Session<G>,
+    ) -> Result<Self, String> {
         let path = |s: &str| instance.string_to_path(s).map_err(err("an OpenXR path"));
         let hands = [path("/user/hand/left")?, path("/user/hand/right")?];
-        let set = instance.create_action_set("lasertag", "Lasertag", 0).map_err(err("the action set"))?;
+        let set = instance
+            .create_action_set("lasertag", "Lasertag", 0)
+            .map_err(err("the action set"))?;
         let e = err("an action");
-        let grip = set.create_action("grip_pose", "Grip pose", &hands).map_err(&e)?;
-        let aim = set.create_action("aim_pose", "Aim pose", &hands).map_err(&e)?;
-        let squeeze = set.create_action("grab", "Hold the blaster", &hands).map_err(&e)?;
+        let grip = set
+            .create_action("grip_pose", "Grip pose", &hands)
+            .map_err(&e)?;
+        let aim = set
+            .create_action("aim_pose", "Aim pose", &hands)
+            .map_err(&e)?;
+        let squeeze = set
+            .create_action("grab", "Hold the blaster", &hands)
+            .map_err(&e)?;
         let trigger = set.create_action("fire", "Fire", &hands).map_err(&e)?;
         let primary = set.create_action("primary", "A / X", &hands).map_err(&e)?;
-        let secondary = set.create_action("grenade", "Grenade (B / Y)", &hands).map_err(&e)?;
+        let secondary = set
+            .create_action("grenade", "Grenade (B / Y)", &hands)
+            .map_err(&e)?;
         let menu = set.create_action("menu", "Menu", &hands).map_err(&e)?;
-        let thumbstick = set.create_action("thumbstick", "Move / turn", &hands).map_err(&e)?;
+        let thumbstick = set
+            .create_action("thumbstick", "Move / turn", &hands)
+            .map_err(&e)?;
         let haptic = set.create_action("haptic", "Haptics", &hands).map_err(&e)?;
 
         type B = Vec<String>;
-        let both = |s: &str| -> B { vec![format!("/user/hand/left/{s}"), format!("/user/hand/right/{s}")] };
-        let per_hand = |l: &str, r: &str| -> B { vec![format!("/user/hand/left/{l}"), format!("/user/hand/right/{r}")] };
+        let both = |s: &str| -> B {
+            vec![
+                format!("/user/hand/left/{s}"),
+                format!("/user/hand/right/{s}"),
+            ]
+        };
+        let per_hand = |l: &str, r: &str| -> B {
+            vec![
+                format!("/user/hand/left/{l}"),
+                format!("/user/hand/right/{r}"),
+            ]
+        };
         let left = |s: &str| -> B { vec![format!("/user/hand/left/{s}")] };
         // (profile, squeeze, trigger, primary, secondary, thumbstick, menu)
         let profiles: Vec<(&str, B, B, B, B, B, B)> = vec![
@@ -128,15 +153,22 @@ impl Controllers {
                 bindings.push(xr::Binding::new(&menu, path(p)?));
             }
             // (A runtime without the profile refuses it: the others still bind.)
-            if let Err(e) = instance.suggest_interaction_profile_bindings(path(profile)?, &bindings) {
+            if let Err(e) = instance.suggest_interaction_profile_bindings(path(profile)?, &bindings)
+            {
                 info!("glvr: no bindings for {profile}: {e}");
             }
         }
-        session.attach_action_sets(&[&set]).map_err(err("attaching the actions"))?;
+        session
+            .attach_action_sets(&[&set])
+            .map_err(err("attaching the actions"))?;
         let space = |a: &xr::Action<xr::Posef>, hand: xr::Path| {
-            a.create_space(session, hand, xr::Posef::IDENTITY).map_err(err("a hand's space"))
+            a.create_space(session, hand, xr::Posef::IDENTITY)
+                .map_err(err("a hand's space"))
         };
-        let spaces = [[space(&grip, hands[0])?, space(&aim, hands[0])?], [space(&grip, hands[1])?, space(&aim, hands[1])?]];
+        let spaces = [
+            [space(&grip, hands[0])?, space(&aim, hands[0])?],
+            [space(&grip, hands[1])?, space(&aim, hands[1])?],
+        ];
         Ok(Controllers {
             set,
             _grip: grip,
@@ -154,7 +186,12 @@ impl Controllers {
     }
 
     /// Both controllers at `time`, their poses in `base` (the tracking space).
-    pub fn read<G: xr::Graphics>(&self, session: &xr::Session<G>, base: &xr::Space, time: xr::Time) -> [HandInput; 2] {
+    pub fn read<G: xr::Graphics>(
+        &self,
+        session: &xr::Session<G>,
+        base: &xr::Space,
+        time: xr::Time,
+    ) -> [HandInput; 2] {
         if let Err(e) = session.sync_actions(&[xr::ActiveActionSet::new(&self.set)]) {
             debug!("glvr: syncing the actions: {e}");
             return [HandInput::default(); 2];
@@ -172,13 +209,17 @@ impl Controllers {
             c.stick = self
                 .thumbstick
                 .state(session, path)
-                .map_or(Vec2::ZERO, |s| Vec2::new(s.current_state.x, s.current_state.y));
+                .map_or(Vec2::ZERO, |s| {
+                    Vec2::new(s.current_state.x, s.current_state.y)
+                });
             let locate = |space: &xr::Space| {
                 let l = space.locate(base, time).ok()?;
-                let flags = xr::SpaceLocationFlags::POSITION_VALID | xr::SpaceLocationFlags::ORIENTATION_VALID;
+                let flags = xr::SpaceLocationFlags::POSITION_VALID
+                    | xr::SpaceLocationFlags::ORIENTATION_VALID;
                 l.location_flags.contains(flags).then(|| {
                     let (p, o) = (l.pose.position, l.pose.orientation);
-                    Transform::from_xyz(p.x, p.y, p.z).with_rotation(Quat::from_xyzw(o.x, o.y, o.z, o.w))
+                    Transform::from_xyz(p.x, p.y, p.z)
+                        .with_rotation(Quat::from_xyzw(o.x, o.y, o.z, o.w))
                 })
             };
             c.grip = locate(&self.spaces[i][0]);

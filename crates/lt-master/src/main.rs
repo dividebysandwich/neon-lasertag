@@ -17,9 +17,17 @@ fn main() {
         println!("{USAGE}");
         return;
     }
-    let get = |f: &str| args.iter().position(|a| a == f).and_then(|i| args.get(i + 1)).cloned();
+    let get = |f: &str| {
+        args.iter()
+            .position(|a| a == f)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
     let bind = get("--bind").unwrap_or_else(|| DEFAULT_BIND.into());
-    let threads: usize = get("--threads").and_then(|t| t.parse().ok()).unwrap_or(4).max(1);
+    let threads: usize = get("--threads")
+        .and_then(|t| t.parse().ok())
+        .unwrap_or(4)
+        .max(1);
     let server = match Server::http(&bind) {
         Ok(s) => Arc::new(s),
         Err(e) => {

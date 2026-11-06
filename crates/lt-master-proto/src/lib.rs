@@ -132,7 +132,10 @@ mod tests {
         let r = ServerReport {
             name: "x".repeat(200),
             players: (0..100)
-                .map(|k| ReportPlayer { name: format!("P{k}"), team: "green".into() })
+                .map(|k| ReportPlayer {
+                    name: format!("P{k}"),
+                    team: "green".into(),
+                })
                 .collect(),
             ..Default::default()
         }

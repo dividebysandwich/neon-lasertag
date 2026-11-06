@@ -88,17 +88,29 @@ pub fn render(servers: &[ServerEntry]) -> String {
 
 fn row(h: &mut String, s: &ServerEntry) {
     let r = &s.report;
-    let bots = if r.bots > 0 { format!(" +{} bots", r.bots) } else { String::new() };
+    let bots = if r.bots > 0 {
+        format!(" +{} bots", r.bots)
+    } else {
+        String::new()
+    };
     let _ = write!(
         h,
         "<tr id=\"{}\"><td><span class=\"name\">{}</span>{}<div class=\"players\">",
         esc(&s.id),
         esc(&r.name),
-        if r.dedicated { " <small>(dedicated)</small>" } else { "" },
+        if r.dedicated {
+            " <small>(dedicated)</small>"
+        } else {
+            ""
+        },
     );
     for team in [TEAM_RED, TEAM_BLUE] {
-        let names: Vec<String> =
-            r.players.iter().filter(|p| p.team == team).map(|p| esc(&p.name)).collect();
+        let names: Vec<String> = r
+            .players
+            .iter()
+            .filter(|p| p.team == team)
+            .map(|p| esc(&p.name))
+            .collect();
         if !names.is_empty() {
             let _ = write!(h, "<div class=\"{team}\">{}</div>", names.join(", "));
         }

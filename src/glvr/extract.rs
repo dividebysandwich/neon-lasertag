@@ -91,7 +91,13 @@ type Common = (
 );
 
 /// A mesh's common components, as a query gives them.
-type CommonItem<'a> = (&'a Mesh3d, &'a GlobalTransform, &'a InheritedVisibility, Option<&'a Aabb>, bool);
+type CommonItem<'a> = (
+    &'a Mesh3d,
+    &'a GlobalTransform,
+    &'a InheritedVisibility,
+    Option<&'a Aabb>,
+    bool,
+);
 
 /// Whether `c` is seen: None if hidden, Some(false) if outside the eyes' frusta.
 fn seen(frusta: &[[Vec4; 5]], c: &CommonItem) -> Option<bool> {
@@ -115,7 +121,11 @@ struct Queries {
     accents: QueryState<(Common, &'static MeshMaterial3d<AccentMaterial>)>,
     glows: QueryState<(Common, &'static MeshMaterial3d<GlowMaterial>)>,
     lights: QueryState<(&'static DirectionalLight, &'static GlobalTransform)>,
-    points: QueryState<(&'static PointLight, &'static GlobalTransform, &'static InheritedVisibility)>,
+    points: QueryState<(
+        &'static PointLight,
+        &'static GlobalTransform,
+        &'static InheritedVisibility,
+    )>,
     transforms: QueryState<&'static GlobalTransform>,
 }
 
@@ -128,7 +138,11 @@ pub struct Extractor {
 
 impl Extractor {
     pub fn new(assets: Sender<AssetMsg>) -> Self {
-        Extractor { assets, sent: HashSet::new(), queries: None }
+        Extractor {
+            assets,
+            sent: HashSet::new(),
+            queries: None,
+        }
     }
 
     /// Meshes changed or gone: the render thread drops them, they are sent again when drawn.
@@ -145,14 +159,22 @@ impl Extractor {
         if self.sent.contains(&id) {
             return true;
         }
-        let Some(data) = meshes.get(id).and_then(mesh_data) else { return false };
+        let Some(data) = meshes.get(id).and_then(mesh_data) else {
+            return false;
+        };
         let _ = self.assets.send(AssetMsg::Mesh(id, data));
         self.sent.insert(id);
         true
     }
 
     /// Whether `c` is drawn (its mesh sent if need be).
-    fn take(&mut self, frusta: &[[Vec4; 5]], list: &mut DrawList, meshes: &Assets<Mesh>, c: &CommonItem) -> bool {
+    fn take(
+        &mut self,
+        frusta: &[[Vec4; 5]],
+        list: &mut DrawList,
+        meshes: &Assets<Mesh>,
+        c: &CommonItem,
+    ) -> bool {
         match seen(frusta, c) {
             None => false,
             Some(false) => {
@@ -180,25 +202,39 @@ impl Extractor {
         }
         let world: &World = world;
         let rig = world.get_resource::<XrRig>().map(|r| r.0);
-        list.rig = rig.and_then(|r| q.transforms.get(world, r).ok()).map_or(Mat4::IDENTITY, |t| t.to_matrix());
+        list.rig = rig
+            .and_then(|r| q.transforms.get(world, r).ok())
+            .map_or(Mat4::IDENTITY, |t| t.to_matrix());
         let frusta: Vec<[Vec4; 5]> = eyes
-            .map(|e| eye_views(list.rig, &e.views, CULL_MARGIN).iter().map(|v| planes(v.view_proj)).collect())
+            .map(|e| {
+                eye_views(list.rig, &e.views, CULL_MARGIN)
+                    .iter()
+                    .map(|v| planes(v.view_proj))
+                    .collect()
+            })
             .unwrap_or_default();
         list.clear = world
             .get_resource::<ClearColor>()
-            .map_or(Vec4::new(0.0, 0.0, 0.0, 1.0), |c| Vec4::from_array(c.0.to_linear().to_f32_array()));
+            .map_or(Vec4::new(0.0, 0.0, 0.0, 1.0), |c| {
+                Vec4::from_array(c.0.to_linear().to_f32_array())
+            });
         let (dir, colour) = q
             .lights
             .iter(world)
             .next()
             .map_or((Vec3::Y, Vec3::ZERO), |(l, t)| {
                 let c = l.color.to_linear();
-                (t.back().as_vec3(), Vec3::new(c.red, c.green, c.blue) * l.illuminance * EXPOSURE)
+                (
+                    t.back().as_vec3(),
+                    Vec3::new(c.red, c.green, c.blue) * l.illuminance * EXPOSURE,
+                )
             });
-        let ambient = world.get_resource::<GlobalAmbientLight>().map_or(Vec3::ZERO, |a| {
-            let c = a.color.to_linear();
-            Vec3::new(c.red, c.green, c.blue) * a.brightness * EXPOSURE
-        });
+        let ambient = world
+            .get_resource::<GlobalAmbientLight>()
+            .map_or(Vec3::ZERO, |a| {
+                let c = a.color.to_linear();
+                Vec3::new(c.red, c.green, c.blue) * a.brightness * EXPOSURE
+            });
         list.light = (dir, colour, ambient);
         // The point lights nearest the eyes (lumens to candela at 1 m, then exposure).
         let centre = eyes
@@ -212,13 +248,26 @@ impl Extractor {
                 let p = t.translation();
                 let c = l.color.to_linear();
                 let strength = l.intensity / (4.0 * std::f32::consts::PI) * EXPOSURE;
-                ((p - centre).length_squared(), p.extend(l.range), Vec3::new(c.red, c.green, c.blue) * strength)
+                (
+                    (p - centre).length_squared(),
+                    p.extend(l.range),
+                    Vec3::new(c.red, c.green, c.blue) * strength,
+                )
             })
             .collect();
         points.sort_by(|a, b| a.0.total_cmp(&b.0));
-        list.points = points.into_iter().take(POINT_LIGHTS).map(|(_, p, c)| (p, c)).collect();
+        list.points = points
+            .into_iter()
+            .take(POINT_LIGHTS)
+            .map(|(_, p, c)| (p, c))
+            .collect();
         if let Some(g) = world.get_resource::<NeonGlobals>() {
-            let mut n = NeonFrame { time: g.time, red: RED, blue: BLUE, ..default() };
+            let mut n = NeonFrame {
+                time: g.time,
+                red: RED,
+                blue: BLUE,
+                ..default()
+            };
             for (i, p) in g.pulses.iter().enumerate() {
                 n.pulse_pos[i] = p.0.extend(p.1);
                 n.pulse_colour[i] = p.2.extend(1.0);
@@ -228,7 +277,9 @@ impl Extractor {
         let meshes = world.resource::<Assets<Mesh>>();
         let materials = world.resource::<Assets<StandardMaterial>>();
         for (common, material) in q.standard.iter(world) {
-            let Some(m) = materials.get(&material.0) else { continue };
+            let Some(m) = materials.get(&material.0) else {
+                continue;
+            };
             if !self.take(&frusta, &mut list, meshes, &common) {
                 continue;
             }
@@ -241,7 +292,9 @@ impl Extractor {
         }
         let materials = world.resource::<Assets<AccentMaterial>>();
         for (common, material) in q.accents.iter(world) {
-            let Some(m) = materials.get(&material.0) else { continue };
+            let Some(m) = materials.get(&material.0) else {
+                continue;
+            };
             if !self.take(&frusta, &mut list, meshes, &common) {
                 continue;
             }
@@ -255,7 +308,9 @@ impl Extractor {
         }
         let materials = world.resource::<Assets<GlowMaterial>>();
         for (common, material) in q.glows.iter(world) {
-            let Some(m) = materials.get(&material.0) else { continue };
+            let Some(m) = materials.get(&material.0) else {
+                continue;
+            };
             if !self.take(&frusta, &mut list, meshes, &common) {
                 continue;
             }
@@ -274,7 +329,9 @@ impl Extractor {
 
 /// What the render thread needs of `mesh`: positions, normals, UVs, indices, topology.
 fn mesh_data(mesh: &Mesh) -> Option<MeshData> {
-    let Some(VertexAttributeValues::Float32x3(positions)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else {
+    let Some(VertexAttributeValues::Float32x3(positions)) =
+        mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+    else {
         return None;
     };
     let normals = match mesh.attribute(Mesh::ATTRIBUTE_NORMAL) {

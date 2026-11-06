@@ -2,10 +2,10 @@
 //! eyes (with bloom); controllers and the head are read into `vr::XrInput`. The action set
 //! and bindings follow stealth-mission-89's src/xr.rs.
 
+use bevy::camera::Hdr;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
-use bevy::camera::Hdr;
 use bevy_mod_openxr::action_binding::{OxrSendActionBindings, OxrSuggestActionBinding};
 use bevy_mod_openxr::action_set_attaching::OxrAttachActionSet;
 use bevy_mod_openxr::action_set_syncing::{OxrActionSetSyncSet, OxrSyncActionSet};
@@ -14,7 +14,9 @@ use bevy_mod_openxr::session::OxrSession;
 use bevy_mod_openxr::spaces::OxrSpaceLocationFlags;
 use bevy_mod_openxr::{add_xr_plugins, openxr_session_running};
 use bevy_mod_xr::camera::XrCamera;
-use bevy_mod_xr::session::{XrPreDestroySession, XrSessionCreated, XrTrackingRoot, session_available};
+use bevy_mod_xr::session::{
+    XrPreDestroySession, XrSessionCreated, XrTrackingRoot, session_available,
+};
 use bevy_mod_xr::spaces::XrSpaceSyncSet;
 use openxr::{Haptic, Posef};
 
@@ -49,9 +51,15 @@ pub fn add_plugins(app: &mut App, asset_root: &str) -> bool {
     }
     app.add_plugins(add_xr_plugins(
         DefaultPlugins
-            .set(AssetPlugin { file_path: asset_root.to_string(), ..default() })
+            .set(AssetPlugin {
+                file_path: asset_root.to_string(),
+                ..default()
+            })
             .set(WindowPlugin {
-                primary_window: Some(Window { title: "Neon Lasertag (VR)".into(), ..default() }),
+                primary_window: Some(Window {
+                    title: "Neon Lasertag (VR)".into(),
+                    ..default()
+                }),
                 ..default()
             }),
     ))
@@ -81,7 +89,9 @@ impl Plugin for OxrInputPlugin {
             .add_systems(Update, eye_shots.run_if(openxr_session_running))
             .add_systems(
                 PostUpdate,
-                haptics.run_if(openxr_session_running).run_if(resource_exists::<XrActions>),
+                haptics
+                    .run_if(openxr_session_running)
+                    .run_if(resource_exists::<XrActions>),
             );
     }
 }
@@ -109,7 +119,10 @@ struct HandSpace {
 
 fn create_actions(instance: Res<OxrInstance>, mut commands: Commands) {
     let result = (|| -> openxr::Result<XrActions> {
-        let hands = [instance.string_to_path("/user/hand/left")?, instance.string_to_path("/user/hand/right")?];
+        let hands = [
+            instance.string_to_path("/user/hand/left")?,
+            instance.string_to_path("/user/hand/right")?,
+        ];
         let set = instance.create_action_set("lasertag", "Lasertag", 0)?;
         Ok(XrActions {
             grip: set.create_action("grip_pose", "Grip pose", &hands)?,
@@ -131,11 +144,24 @@ fn create_actions(instance: Res<OxrInstance>, mut commands: Commands) {
     }
 }
 
-fn suggest_bindings(actions: Option<Res<XrActions>>, mut out: MessageWriter<OxrSuggestActionBinding>) {
+fn suggest_bindings(
+    actions: Option<Res<XrActions>>,
+    mut out: MessageWriter<OxrSuggestActionBinding>,
+) {
     let Some(a) = actions else { return };
     type B = Vec<std::borrow::Cow<'static, str>>;
-    let both = |s: &str| -> B { vec![format!("/user/hand/left/{s}").into(), format!("/user/hand/right/{s}").into()] };
-    let per_hand = |l: &str, r: &str| -> B { vec![format!("/user/hand/left/{l}").into(), format!("/user/hand/right/{r}").into()] };
+    let both = |s: &str| -> B {
+        vec![
+            format!("/user/hand/left/{s}").into(),
+            format!("/user/hand/right/{s}").into(),
+        ]
+    };
+    let per_hand = |l: &str, r: &str| -> B {
+        vec![
+            format!("/user/hand/left/{l}").into(),
+            format!("/user/hand/right/{r}").into(),
+        ]
+    };
     let left = |s: &str| -> B { vec![format!("/user/hand/left/{s}").into()] };
     // (profile, squeeze, trigger, primary, secondary, thumbstick, menu). Where the menu button
     // is the grenade's, holding it opens the menu (src/vr.rs).
@@ -189,7 +215,11 @@ fn suggest_bindings(actions: Option<Res<XrActions>>, mut out: MessageWriter<OxrS
     for (profile, squeeze, trigger, primary, secondary, stick, menu) in profiles {
         let mut add = |action: openxr::sys::Action, bindings: B| {
             if !bindings.is_empty() {
-                out.write(OxrSuggestActionBinding { action, interaction_profile: profile.into(), bindings });
+                out.write(OxrSuggestActionBinding {
+                    action,
+                    interaction_profile: profile.into(),
+                    bindings,
+                });
             }
         };
         add(a.grip.as_raw(), both("input/grip/pose"));
@@ -214,7 +244,11 @@ fn sync_actions(actions: Res<XrActions>, mut sync: MessageWriter<OxrSyncActionSe
     sync.write(OxrSyncActionSet(actions.set.clone()));
 }
 
-fn spawn_hand_spaces(actions: Option<Res<XrActions>>, session: Res<OxrSession>, mut commands: Commands) {
+fn spawn_hand_spaces(
+    actions: Option<Res<XrActions>>,
+    session: Res<OxrSession>,
+    mut commands: Commands,
+) {
     let Some(a) = actions else { return };
     for hand in 0..2 {
         for aim in [false, true] {
@@ -243,14 +277,23 @@ fn read(
 ) {
     for (i, hand) in input.hands.iter_mut().enumerate() {
         let path = actions.hands[i];
-        let f = |a: &openxr::Action<f32>| a.state(&session, path).map(|s| s.current_state).unwrap_or(0.0);
+        let f = |a: &openxr::Action<f32>| {
+            a.state(&session, path)
+                .map(|s| s.current_state)
+                .unwrap_or(0.0)
+        };
         let b = |a: &openxr::Action<bool>| a.state(&session, path).is_ok_and(|s| s.current_state);
         hand.squeeze = f(&actions.squeeze);
         hand.trigger = f(&actions.trigger);
         hand.primary = b(&actions.primary);
         hand.secondary = b(&actions.secondary);
         hand.menu = b(&actions.menu);
-        hand.stick = actions.thumbstick.state(&session, path).map_or(Vec2::ZERO, |s| Vec2::new(s.current_state.x, s.current_state.y));
+        hand.stick = actions
+            .thumbstick
+            .state(&session, path)
+            .map_or(Vec2::ZERO, |s| {
+                Vec2::new(s.current_state.x, s.current_state.y)
+            });
         hand.grip = None;
         hand.aim = None;
         for (s, tf, flags) in &spaces {
@@ -276,10 +319,18 @@ fn head(cams: Query<&Transform, With<XrCamera>>, mut input: ResMut<XrInput>) {
         return;
     }
     let rot = cams.iter().next().unwrap().rotation;
-    input.head = Some(Transform { translation: pos, rotation: rot, ..default() });
+    input.head = Some(Transform {
+        translation: pos,
+        rotation: rot,
+        ..default()
+    });
 }
 
-fn find_rig(mut commands: Commands, root: Query<Entity, With<XrTrackingRoot>>, rig: Option<Res<XrRig>>) {
+fn find_rig(
+    mut commands: Commands,
+    root: Query<Entity, With<XrTrackingRoot>>,
+    rig: Option<Res<XrRig>>,
+) {
     if rig.is_none()
         && let Ok(r) = root.single()
     {
@@ -288,12 +339,23 @@ fn find_rig(mut commands: Commands, root: Query<Entity, With<XrTrackingRoot>>, r
 }
 
 /// The eye cameras: HDR with bloom (`LT_XR_BLOOM=0` turns it off); one of them listens.
-fn setup_cameras(mut commands: Commands, cams: Query<Entity, Added<XrCamera>>, mut first: Local<bool>) {
+fn setup_cameras(
+    mut commands: Commands,
+    cams: Query<Entity, Added<XrCamera>>,
+    mut first: Local<bool>,
+) {
     let bloom = std::env::var("LT_XR_BLOOM").map_or(true, |v| v != "0");
     for e in &cams {
         let mut c = commands.entity(e);
         if bloom {
-            c.insert((Hdr, Tonemapping::AcesFitted, Bloom { intensity: 0.2, ..Bloom::NATURAL }));
+            c.insert((
+                Hdr,
+                Tonemapping::AcesFitted,
+                Bloom {
+                    intensity: 0.2,
+                    ..Bloom::NATURAL
+                },
+            ));
         } else {
             c.insert(Tonemapping::None);
         }
@@ -314,7 +376,10 @@ fn haptics(actions: Res<XrActions>, session: Res<OxrSession>, mut input: ResMut<
                 .amplitude(a.min(1.0))
                 .duration(openxr::Duration::from_nanos(crate::vr::HAPTIC_NANOS))
                 .frequency(openxr::FREQUENCY_UNSPECIFIED);
-            if let Err(e) = actions.haptic.apply_feedback(&session, actions.hands[i], &v) {
+            if let Err(e) = actions
+                .haptic
+                .apply_feedback(&session, actions.hands[i], &v)
+            {
                 debug!("haptics: {e}");
             }
             input.haptic[i] = 0.0;
@@ -328,7 +393,10 @@ fn eye_shots(mut commands: Commands, time: Res<Time>, mut done: Local<bool>) {
     if *done {
         return;
     }
-    let Some(at) = std::env::var("LT_XR_SHOT").ok().and_then(|v| v.parse::<f32>().ok()) else {
+    let Some(at) = std::env::var("LT_XR_SHOT")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+    else {
         *done = true;
         return;
     };
@@ -337,7 +405,10 @@ fn eye_shots(mut commands: Commands, time: Res<Time>, mut done: Local<bool>) {
     }
     *done = true;
     for eye in 0..2 {
-        let handle = bevy::camera::ManualTextureViewHandle(bevy_mod_openxr::render::XR_TEXTURE_INDEX + eye);
-        commands.spawn(Screenshot::texture_view(handle)).observe(save_to_disk(format!("xr-eye{eye}.png")));
+        let handle =
+            bevy::camera::ManualTextureViewHandle(bevy_mod_openxr::render::XR_TEXTURE_INDEX + eye);
+        commands
+            .spawn(Screenshot::texture_view(handle))
+            .observe(save_to_disk(format!("xr-eye{eye}.png")));
     }
 }

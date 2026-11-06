@@ -3,11 +3,11 @@
 //! the end of match screen (src/endscreen.rs) is up, the mouse is free and the game ignores
 //! the input.
 
+use bevy::camera::Hdr;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
-use bevy::camera::Hdr;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use lt_sim::sim::{EYE, look_rot};
 use lt_sim::{Hand, Pose, SimEvent};
@@ -104,13 +104,21 @@ pub struct DesktopPlugin {
 
 impl Plugin for DesktopPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(Look { follow_sim: self.autopilot, ..default() })
-            .init_resource::<Overlays>()
-            .init_resource::<Sway>()
-            .init_resource::<ThrowArc>()
-            .add_systems(Startup, (spawn_camera, spawn_arc))
-            .add_systems(Update, (grab_cursor, read_input.in_set(InputSet)).chain())
-            .add_systems(Update, (on_events, place_camera, draw_arc).chain().after(PredictSet));
+        app.insert_resource(Look {
+            follow_sim: self.autopilot,
+            ..default()
+        })
+        .init_resource::<Overlays>()
+        .init_resource::<Sway>()
+        .init_resource::<ThrowArc>()
+        .add_systems(Startup, (spawn_camera, spawn_arc))
+        .add_systems(Update, (grab_cursor, read_input.in_set(InputSet)).chain())
+        .add_systems(
+            Update,
+            (on_events, place_camera, draw_arc)
+                .chain()
+                .after(PredictSet),
+        );
     }
 }
 
@@ -119,8 +127,15 @@ pub fn camera_bundle() -> impl Bundle {
         Camera3d::default(),
         Hdr,
         Tonemapping::AcesFitted,
-        Bloom { intensity: 0.22, ..Bloom::NATURAL },
-        Projection::Perspective(PerspectiveProjection { fov: 80f32.to_radians(), near: 0.03, ..default() }),
+        Bloom {
+            intensity: 0.22,
+            ..Bloom::NATURAL
+        },
+        Projection::Perspective(PerspectiveProjection {
+            fov: 80f32.to_radians(),
+            near: 0.03,
+            ..default()
+        }),
         Msaa::Sample4,
     )
 }
@@ -141,7 +156,9 @@ fn grab_cursor(
     mut overlays: ResMut<Overlays>,
     game: Option<Res<Game>>,
 ) {
-    let Ok(mut c) = cursor.single_mut() else { return };
+    let Ok(mut c) = cursor.single_mut() else {
+        return;
+    };
     if overlays.any() || game.is_none() {
         if c.grab_mode != CursorGrabMode::None {
             set_grab(&mut c, false);
@@ -159,7 +176,11 @@ fn grab_cursor(
 }
 
 pub fn set_grab(c: &mut CursorOptions, grab: bool) {
-    c.grab_mode = if grab { CursorGrabMode::Locked } else { CursorGrabMode::None };
+    c.grab_mode = if grab {
+        CursorGrabMode::Locked
+    } else {
+        CursorGrabMode::None
+    };
     c.visible = !grab;
 }
 
@@ -167,7 +188,12 @@ pub fn set_grab(c: &mut CursorOptions, grab: bool) {
 pub fn my_feet(game: &Game, a: f32) -> Option<Vec3> {
     let me = game.me?;
     let now = game.snap.players.iter().find(|p| p.id == me)?;
-    let before = game.prev.players.iter().find(|p| p.id == me).map_or(now.feet, |p| p.feet);
+    let before = game
+        .prev
+        .players
+        .iter()
+        .find(|p| p.id == me)
+        .map_or(now.feet, |p| p.feet);
     Some(before.lerp(now.feet, a))
 }
 
@@ -193,14 +219,24 @@ fn read_input(
     mut arc: ResMut<ThrowArc>,
 ) {
     let Some(game) = game else { return };
-    let grabbed = !overlays.any() && cursor.single().is_ok_and(|c| c.grab_mode != CursorGrabMode::None);
-    let input = Inputs { keys: &keys, mouse: &mouse };
+    let grabbed = !overlays.any()
+        && cursor
+            .single()
+            .is_ok_and(|c| c.grab_mode != CursorGrabMode::None);
+    let input = Inputs {
+        keys: &keys,
+        mouse: &mouse,
+    };
     let on = |a: Action| settings.pressed(a, &input);
     let dt = real.delta_secs().clamp(1e-4, 0.05);
     let mut turned = Vec2::ZERO;
     if grabbed {
         let s = 0.0022 * settings.sensitivity;
-        let dy = if settings.invert_y { -motion.delta.y } else { motion.delta.y };
+        let dy = if settings.invert_y {
+            -motion.delta.y
+        } else {
+            motion.delta.y
+        };
         let pitch = (look.pitch - dy * s).clamp(-1.45, 1.45);
         turned = Vec2::new(-motion.delta.x * s, pitch - look.pitch);
         look.yaw -= motion.delta.x * s;
@@ -222,7 +258,11 @@ fn read_input(
     if on(Action::Left) {
         stick -= right;
     }
-    let crouching = if grabbed && on(Action::Crouch) { 1.0 } else { 0.0 };
+    let crouching = if grabbed && on(Action::Crouch) {
+        1.0
+    } else {
+        0.0
+    };
     look.crouch += (crouching - look.crouch) * (1.0 - (-dt / CROUCH_TIME).exp());
     let mut stick = stick.normalize_or_zero() * (1.0 - (1.0 - CROUCH_SPEED) * look.crouch);
     if on(Action::Walk) {
@@ -234,7 +274,11 @@ fn read_input(
     let grip_rot = view * gun_rot;
     let muzzle = grip + grip_rot * models.muzzle;
     // Aim the bolts at whatever is under the crosshair.
-    let feet = if mover.valid { mover.feet } else { my_feet(&game, alpha(&time)).unwrap_or_default() };
+    let feet = if mover.valid {
+        mover.feet
+    } else {
+        my_feet(&game, alpha(&time)).unwrap_or_default()
+    };
     let eye = feet + head;
     let ahead = eye + view * Vec3::NEG_Z * 80.0;
     let aim = game.world.ray(eye, ahead).map_or(ahead, |h| h.1);
@@ -244,21 +288,36 @@ fn read_input(
     cmd.stick = if grabbed { stick } else { Vec2::ZERO };
     cmd.walk = Vec2::ZERO;
     cmd.yaw = look.yaw;
-    cmd.head = Pose { pos: head, rot: view };
+    cmd.head = Pose {
+        pos: head,
+        rot: view,
+    };
     cmd.gun_hand = Some(Hand::Right);
-    cmd.hands[1] = Pose { pos: grip, rot: grip_rot };
-    cmd.muzzle = Pose { pos: muzzle, rot: muzzle_rot };
+    cmd.hands[1] = Pose {
+        pos: grip,
+        rot: grip_rot,
+    };
+    cmd.muzzle = Pose {
+        pos: muzzle,
+        rot: muzzle_rot,
+    };
     cmd.fire = grabbed && !overlays.hold_fire && on(Action::Fire);
     if grabbed && !overlays.hold_fire && settings.just_pressed(Action::Fire, &input) {
         local.fire_latch = true;
     }
     let cmd = &mut local.cmd;
-    let has = game.me.and_then(|id| game.snap.players.iter().find(|p| p.id == id)).is_some_and(|p| p.grenades > 0);
+    let has = game
+        .me
+        .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
+        .is_some_and(|p| p.grenades > 0);
     // (`.1`: shown for testing, `LT_DEV` "arc".)
     let holding = grabbed && has && on(Action::Grenade) || arc.1;
     let released = settings.just_released(Action::Grenade, &input);
     let off_hand = head + view * Vec3::new(-0.22, -0.18, -0.35);
-    cmd.hands[0] = Pose { pos: off_hand, rot: view };
+    cmd.hands[0] = Pose {
+        pos: off_hand,
+        rot: view,
+    };
     let throw_vel = view * Vec3::NEG_Z * 11.0 + Vec3::Y * 2.5;
     arc.0 = None;
     if holding {
@@ -276,18 +335,27 @@ impl Sway {
     /// Eases the walking and turning, and gives the blaster's offset and turn in view space
     /// (`turned`: the view's yaw and pitch change this frame).
     fn update(&mut self, dt: f32, turned: Vec2, mover: &Mover, max_speed: f32) -> (Vec3, Quat) {
-        let speed = if mover.valid && mover.vy.abs() < 0.5 { mover.vel.length() } else { 0.0 };
+        let speed = if mover.valid && mover.vy.abs() < 0.5 {
+            mover.vel.length()
+        } else {
+            0.0
+        };
         let k = |tau: f32| 1.0 - (-dt / tau).exp();
         self.amount += ((speed / max_speed.max(0.1)).min(1.0) - self.amount) * k(0.15);
-        self.phase = (self.phase + speed * dt / STRIDE * BOB_RATE * std::f32::consts::PI) % std::f32::consts::TAU;
-        self.turn = self.turn.lerp((turned / dt).clamp(Vec2::splat(-12.0), Vec2::splat(12.0)), k(0.07));
+        self.phase = (self.phase + speed * dt / STRIDE * BOB_RATE * std::f32::consts::PI)
+            % std::f32::consts::TAU;
+        self.turn = self.turn.lerp(
+            (turned / dt).clamp(Vec2::splat(-12.0), Vec2::splat(12.0)),
+            k(0.07),
+        );
         let (a, p) = (self.amount, self.phase);
         // The head dips at each step and sways a little sideways every other.
         self.camera = Vec3::new(p.sin() * 0.012, (2.0 * p).cos() * 0.016, 0.0) * a;
         // The blaster: a figure of eight while walking, lagging behind when the view turns.
         let walk = Vec3::new(p.sin() * 0.008, (2.0 * p).cos() * 0.006 - 0.004, 0.0) * a;
         let t = self.turn;
-        let lag = Vec3::new(t.x * 0.006, -t.y * 0.006, 0.0).clamp(Vec3::splat(-0.03), Vec3::splat(0.03));
+        let lag =
+            Vec3::new(t.x * 0.006, -t.y * 0.006, 0.0).clamp(Vec3::splat(-0.03), Vec3::splat(0.03));
         let rot = Quat::from_euler(
             EulerRot::YXZ,
             (-t.x * 0.025).clamp(-0.1, 0.1),
@@ -308,12 +376,21 @@ pub fn spawn_yaw(game: &Game, pos: Vec3) -> f32 {
         .map_or(0.0, |s| s.yaw)
 }
 
-fn spawn_arc(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, palette: Res<crate::materials::Palette>) {
+fn spawn_arc(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    palette: Res<crate::materials::Palette>,
+) {
     let dot = meshes.add(Sphere::new(0.03).mesh().ico(1).unwrap());
     let dots = (0..ARC_DOTS)
         .map(|_| {
             commands
-                .spawn((Mesh3d(dot.clone()), MeshMaterial3d(palette.bolt_for(None)), Transform::default(), Visibility::Hidden))
+                .spawn((
+                    Mesh3d(dot.clone()),
+                    MeshMaterial3d(palette.bolt_for(None)),
+                    Transform::default(),
+                    Visibility::Hidden,
+                ))
                 .id()
         })
         .collect();
@@ -338,7 +415,12 @@ fn draw_arc(
     mut q: Query<(&mut Transform, &mut Visibility)>,
 ) {
     let path = match (&arc.0, &game) {
-        (Some((from, vel)), Some(game)) => Some(lt_sim::sim::grenade_path(&game.world, &game.rules, *from, *vel)),
+        (Some((from, vel)), Some(game)) => Some(lt_sim::sim::grenade_path(
+            &game.world,
+            &game.rules,
+            *from,
+            *vel,
+        )),
         _ => None,
     };
     let (points, end) = match &path {
@@ -348,7 +430,9 @@ fn draw_arc(
     // The dots move along the path (a third of the stride a tick): it reads as a throw.
     let shift = ((time.elapsed_secs() * 20.0) as usize) % ARC_STRIDE;
     for (k, &e) in view.dots.iter().enumerate() {
-        let Ok((mut t, mut v)) = q.get_mut(e) else { continue };
+        let Ok((mut t, mut v)) = q.get_mut(e) else {
+            continue;
+        };
         // Not the first metre or so (right at the eye).
         let i = 6 + k * ARC_STRIDE + shift;
         match points.get(i) {
@@ -365,7 +449,8 @@ fn draw_arc(
         match end {
             Some(p) => {
                 let pulse = 1.0 + 0.12 * (time.elapsed_secs() * 6.0).sin();
-                *t = Transform::from_translation(p + Vec3::Y * 0.03).with_scale(Vec3::new(pulse, 0.4, pulse));
+                *t = Transform::from_translation(p + Vec3::Y * 0.03)
+                    .with_scale(Vec3::new(pulse, 0.4, pulse));
                 *v = Visibility::Inherited;
             }
             None => *v = Visibility::Hidden,
@@ -373,9 +458,16 @@ fn draw_arc(
     }
 }
 
-fn on_events(mut events: MessageReader<GameEvent>, game: Option<Res<Game>>, mut look: ResMut<Look>, mut faced: Local<Option<u64>>) {
+fn on_events(
+    mut events: MessageReader<GameEvent>,
+    game: Option<Res<Game>>,
+    mut look: ResMut<Look>,
+    mut faced: Local<Option<u64>>,
+) {
     let Some(game) = game else { return };
-    let me = game.me.and_then(|me| game.snap.players.iter().find(|p| p.id == me));
+    let me = game
+        .me
+        .and_then(|me| game.snap.players.iter().find(|p| p.id == me));
     // Facing the middle of the arena on entering it and after respawning.
     if *faced != Some(game.level.seed)
         && let Some(p) = me
@@ -405,11 +497,22 @@ fn place_camera(
     let Some(game) = game else { return };
     let Ok(mut t) = cam.single_mut() else { return };
     let a = alpha(&time);
-    let Some(snap_feet) = my_feet(&game, a) else { return };
-    let alive = game.me.and_then(|me| game.snap.players.iter().find(|p| p.id == me)).is_some_and(|p| p.respawn.is_none());
-    let feet = if mover.valid && alive && !look.follow_sim { mover.feet } else { snap_feet };
+    let Some(snap_feet) = my_feet(&game, a) else {
+        return;
+    };
+    let alive = game
+        .me
+        .and_then(|me| game.snap.players.iter().find(|p| p.id == me))
+        .is_some_and(|p| p.respawn.is_none());
+    let feet = if mover.valid && alive && !look.follow_sim {
+        mover.feet
+    } else {
+        snap_feet
+    };
     let (yaw, pitch) = if look.follow_sim {
-        let me = game.me.and_then(|me| game.snap.players.iter().find(|p| p.id == me));
+        let me = game
+            .me
+            .and_then(|me| game.snap.players.iter().find(|p| p.id == me));
         me.map_or((look.yaw, look.pitch), |p| {
             let (_, x, _) = p.head.rot.to_euler(EulerRot::YXZ);
             (p.yaw, x)
@@ -418,8 +521,16 @@ fn place_camera(
         (look.yaw, look.pitch)
     };
     t.rotation = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
-    let bob = if alive && !look.follow_sim { Quat::from_rotation_y(yaw) * sway.camera } else { Vec3::ZERO };
-    let eye = if look.follow_sim { EYE } else { look.eye_height() };
+    let bob = if alive && !look.follow_sim {
+        Quat::from_rotation_y(yaw) * sway.camera
+    } else {
+        Vec3::ZERO
+    };
+    let eye = if look.follow_sim {
+        EYE
+    } else {
+        look.eye_height()
+    };
     t.translation = feet + Vec3::Y * eye + bob;
 }
 
@@ -437,7 +548,11 @@ mod tests {
         };
         let mut mover = still();
         let (off, rot) = sway.update(1.0 / 60.0, Vec2::ZERO, &mover, 4.0);
-        assert_eq!((off.length(), sway.camera.length()), (0.0, 0.0), "still: nothing moves");
+        assert_eq!(
+            (off.length(), sway.camera.length()),
+            (0.0, 0.0),
+            "still: nothing moves"
+        );
         assert!(rot.angle_between(Quat::IDENTITY) < 1e-4);
         mover.vel = Vec2::new(4.0, 0.0);
         let mut ys = Vec::new();
@@ -445,7 +560,9 @@ mod tests {
             sway.update(1.0 / 60.0, Vec2::ZERO, &mover, 4.0);
             ys.push(sway.camera.y);
         }
-        let (lo, hi) = ys.iter().fold((f32::MAX, f32::MIN), |(a, b), &y| (a.min(y), b.max(y)));
+        let (lo, hi) = ys
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(a, b), &y| (a.min(y), b.max(y)));
         assert!(hi - lo > 0.02 && hi - lo < 0.05, "a slight bob: {lo}..{hi}");
         // Turning left: the blaster lags to the right and points a little right.
         let (off, rot) = sway.update(1.0 / 60.0, Vec2::new(0.05, 0.0), &still(), 4.0);

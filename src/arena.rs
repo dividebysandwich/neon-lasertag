@@ -83,7 +83,11 @@ fn islands(m: &MeshData) -> Vec<MeshData> {
     }
     let mut out: Vec<MeshData> = groups.into_values().collect();
     out.sort_by(|a, b| {
-        a.bounds().0.to_array().partial_cmp(&b.bounds().0.to_array()).unwrap_or(std::cmp::Ordering::Equal)
+        a.bounds()
+            .0
+            .to_array()
+            .partial_cmp(&b.bounds().0.to_array())
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
     out
 }
@@ -95,7 +99,11 @@ fn split_shapes(parts: &HashMap<String, MeshData>) -> Vec<Shape3> {
         if mat != "body" && mat != "glow" {
             for a in islands(data) {
                 let (lo, hi) = a.bounds();
-                shapes.push(Shape3 { size: (hi - lo).length(), accent: a, glow: MeshData::default() });
+                shapes.push(Shape3 {
+                    size: (hi - lo).length(),
+                    accent: a,
+                    glow: MeshData::default(),
+                });
             }
         }
     }
@@ -104,7 +112,9 @@ fn split_shapes(parts: &HashMap<String, MeshData>) -> Vec<Shape3> {
         for g in islands(glow) {
             let (lo, hi) = g.bounds();
             let gap = |(a, b): &(Vec3, Vec3)| (lo - *b).max(*a - hi).max(Vec3::ZERO).length();
-            if let Some(i) = (0..boxes.len()).min_by(|&i, &j| gap(&boxes[i]).total_cmp(&gap(&boxes[j]))) {
+            if let Some(i) =
+                (0..boxes.len()).min_by(|&i, &j| gap(&boxes[i]).total_cmp(&gap(&boxes[j])))
+            {
                 shapes[i].glow.append(&g, Quat::IDENTITY, Vec3::ZERO);
             }
         }
@@ -143,7 +153,14 @@ fn fallback_piece(k: PieceKind) -> HashMap<String, MeshData> {
     let mut accent = MeshData::default();
     let shapes = k.shapes();
     let (bmin, bmax) = k.bounds();
-    let shapes = if shapes.is_empty() { vec![Shape::Box { min: bmin, max: bmax }] } else { shapes };
+    let shapes = if shapes.is_empty() {
+        vec![Shape::Box {
+            min: bmin,
+            max: bmax,
+        }]
+    } else {
+        shapes
+    };
     for s in shapes {
         match s {
             Shape::Box { min, max } => add_box(&mut body, min, max),
@@ -154,14 +171,24 @@ fn fallback_piece(k: PieceKind) -> HashMap<String, MeshData> {
     let s = 0.03;
     if k == PieceKind::FloorTile {
         for (a, b) in [
-            (Vec3::new(bmin.x, 0.0, bmin.z), Vec3::new(bmax.x, 0.004, bmin.z + s)),
-            (Vec3::new(bmin.x, 0.0, bmin.z), Vec3::new(bmin.x + s, 0.004, bmax.z)),
+            (
+                Vec3::new(bmin.x, 0.0, bmin.z),
+                Vec3::new(bmax.x, 0.004, bmin.z + s),
+            ),
+            (
+                Vec3::new(bmin.x, 0.0, bmin.z),
+                Vec3::new(bmin.x + s, 0.004, bmax.z),
+            ),
         ] {
             add_box(&mut accent, a, b);
         }
     } else if bmax.y > 0.1 {
         let y = bmax.y - 0.12;
-        add_box(&mut accent, Vec3::new(bmin.x, y, bmin.z - 0.005), Vec3::new(bmax.x, y + 0.05, bmax.z + 0.005));
+        add_box(
+            &mut accent,
+            Vec3::new(bmin.x, y, bmin.z - 0.005),
+            Vec3::new(bmax.x, y + 0.05, bmax.z + 0.005),
+        );
     }
     HashMap::from([("body".to_string(), body), ("accent".to_string(), accent)])
 }
@@ -197,18 +224,55 @@ fn quad(m: &mut MeshData, v: [Vec3; 4], n: Vec3) {
         m.nrm.push(n.to_array());
         m.uv.push([(i == 1 || i == 2) as u8 as f32, (i >= 2) as u8 as f32]);
     }
-    m.idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+    m.idx
+        .extend([base, base + 1, base + 2, base, base + 2, base + 3]);
 }
 
 /// A wedge climbing along +Z.
 fn add_ramp(m: &mut MeshData, min: Vec3, max: Vec3) {
     let (x0, x1, y0, y1, z0, z1) = (min.x, max.x, min.y, max.y, min.z, max.z);
     let n_top = Vec3::new(0.0, z1 - z0, -(y1 - y0)).normalize();
-    quad(m, [Vec3::new(x0, y0, z0), Vec3::new(x1, y0, z0), Vec3::new(x1, y1, z1), Vec3::new(x0, y1, z1)], n_top);
-    quad(m, [Vec3::new(x1, y0, z1), Vec3::new(x0, y0, z1), Vec3::new(x0, y1, z1), Vec3::new(x1, y1, z1)], Vec3::Z);
+    quad(
+        m,
+        [
+            Vec3::new(x0, y0, z0),
+            Vec3::new(x1, y0, z0),
+            Vec3::new(x1, y1, z1),
+            Vec3::new(x0, y1, z1),
+        ],
+        n_top,
+    );
+    quad(
+        m,
+        [
+            Vec3::new(x1, y0, z1),
+            Vec3::new(x0, y0, z1),
+            Vec3::new(x0, y1, z1),
+            Vec3::new(x1, y1, z1),
+        ],
+        Vec3::Z,
+    );
     // Sides as degenerate quads (triangles).
-    quad(m, [Vec3::new(x1, y0, z0), Vec3::new(x1, y0, z1), Vec3::new(x1, y1, z1), Vec3::new(x1, y0, z0)], Vec3::X);
-    quad(m, [Vec3::new(x0, y0, z1), Vec3::new(x0, y0, z0), Vec3::new(x0, y0, z0), Vec3::new(x0, y1, z1)], Vec3::NEG_X);
+    quad(
+        m,
+        [
+            Vec3::new(x1, y0, z0),
+            Vec3::new(x1, y0, z1),
+            Vec3::new(x1, y1, z1),
+            Vec3::new(x1, y0, z0),
+        ],
+        Vec3::X,
+    );
+    quad(
+        m,
+        [
+            Vec3::new(x0, y0, z1),
+            Vec3::new(x0, y0, z0),
+            Vec3::new(x0, y0, z0),
+            Vec3::new(x0, y1, z1),
+        ],
+        Vec3::NEG_X,
+    );
 }
 
 /// Accents nearer the centre line than this (m) take their zone's colour; further out (the
@@ -230,12 +294,18 @@ const BASE_RADIUS: f32 = 2.6;
 /// the arena (zones of a few cells, mirrored like the arena), the team colour of the half behind
 /// the targets. Everything at half brightness except the bases, the targets and the stations.
 fn zone_tint(level: &Level, kind: PieceKind, pos: Vec3) -> ([f32; 4], bool) {
-    let near = |c: Vec3, r: f32| (pos.y - c.y).abs() < 0.5 && Vec2::new(pos.x - c.x, pos.z - c.z).length() < r;
+    let near = |c: Vec3, r: f32| {
+        (pos.y - c.y).abs() < 0.5 && Vec2::new(pos.x - c.x, pos.z - c.z).length() < r
+    };
     let border = matches!(kind, PieceKind::BorderWall | PieceKind::BorderPost);
     if !border && level.reloads.iter().any(|r| near(*r, RELOAD_RADIUS)) {
         return (WHITE.extend(1.0).to_array(), true);
     }
-    let base = level.spawns.iter().flatten().any(|s| Vec2::new(pos.x - s.pos.x, pos.z - s.pos.z).length() < BASE_RADIUS);
+    let base = level
+        .spawns
+        .iter()
+        .flatten()
+        .any(|s| Vec2::new(pos.x - s.pos.x, pos.z - s.pos.z).length() < BASE_RADIUS);
     let bright = base
         || kind == PieceKind::TargetAlcove
         // (On both floors and the roof: the target's walls go all the way up.)
@@ -292,13 +362,27 @@ const KEEP: f32 = 0.6;
 
 /// Spawns the doors and sliding panels: their kit piece in full colour (moving parts stand
 /// out), as entities of their own.
-fn spawn_movers(commands: &mut Commands, level: &Level, kit: &Kit, palette: &Palette, meshes: &mut Assets<Mesh>) {
+fn spawn_movers(
+    commands: &mut Commands,
+    level: &Level,
+    kit: &Kit,
+    palette: &Palette,
+    meshes: &mut Assets<Mesh>,
+) {
     for (i, m) in level.movers.iter().enumerate() {
-        let Some(parts) = kit.pieces.get(&m.piece) else { continue };
+        let Some(parts) = kit.pieces.get(&m.piece) else {
+            continue;
+        };
         let rot = kit::turn(m.rot);
         let tint = zone_color(level, m.pos).extend(1.0).to_array();
         let root = commands
-            .spawn((ArenaPart, MoverView(i), Transform::from_translation(m.pos), Visibility::default(), Name::new("mover")))
+            .spawn((
+                ArenaPart,
+                MoverView(i),
+                Transform::from_translation(m.pos),
+                Visibility::default(),
+                Name::new("mover"),
+            ))
             .id();
         for (mat, data) in parts {
             let mut d = MeshData::default();
@@ -307,7 +391,11 @@ fn spawn_movers(commands: &mut Commands, level: &Level, kit: &Kit, palette: &Pal
             } else {
                 d.append_tinted(data, rot, Vec3::ZERO, tint);
             }
-            let mut e = commands.spawn((Mesh3d(meshes.add(d.to_mesh())), Transform::IDENTITY, ChildOf(root)));
+            let mut e = commands.spawn((
+                Mesh3d(meshes.add(d.to_mesh())),
+                Transform::IDENTITY,
+                ChildOf(root),
+            ));
             match mat.as_str() {
                 "body" => e.insert(MeshMaterial3d(palette.body.clone())),
                 "glow" => e.insert(MeshMaterial3d(palette.arena_glow.clone())),
@@ -334,7 +422,10 @@ pub fn spawn_arena(
         let Some(parts) = kit.pieces.get(&p.kind) else {
             continue;
         };
-        let key = (((p.pos.x + hw + 2.0) / CHUNK).floor() as i32, ((p.pos.z + hl + 2.0) / CHUNK).floor() as i32);
+        let key = (
+            ((p.pos.x + hw + 2.0) / CHUNK).floor() as i32,
+            ((p.pos.z + hl + 2.0) / CHUNK).floor() as i32,
+        );
         let chunk = chunks.entry(key).or_default();
         let rot = kit::turn(p.rot);
         let (tint, important) = zone_tint(level, p.kind, p.pos);
@@ -343,17 +434,33 @@ pub fn spawn_arena(
         }
         // Fewer accents on ordinary pieces: a random share of their shapes, the outline kept.
         let thin = !important
-            && !matches!(p.kind, PieceKind::FloorTile | PieceKind::UpperTile | PieceKind::BorderWall | PieceKind::BorderPost);
+            && !matches!(
+                p.kind,
+                PieceKind::FloorTile
+                    | PieceKind::UpperTile
+                    | PieceKind::BorderWall
+                    | PieceKind::BorderPost
+            );
         // The border walls' accents have their own rainbow material.
         let border = matches!(p.kind, PieceKind::BorderWall | PieceKind::BorderPost);
-        let (accent_slot, glow_slot) = if border { ("border accent", "border glow") } else { ("accent", "glow") };
+        let (accent_slot, glow_slot) = if border {
+            ("border accent", "border glow")
+        } else {
+            ("accent", "glow")
+        };
         for (i, shape) in kit.shapes.get(&p.kind).into_iter().flatten().enumerate() {
             if thin && i > 0 && piece_random(level, p.kind, p.pos, 10 + i as u64) > KEEP {
                 continue;
             }
-            chunk.entry(accent_slot).or_default().append_tinted(&shape.accent, rot, p.pos, tint);
+            chunk
+                .entry(accent_slot)
+                .or_default()
+                .append_tinted(&shape.accent, rot, p.pos, tint);
             if !shape.glow.is_empty() {
-                chunk.entry(glow_slot).or_default().append_tinted(&shape.glow, rot, p.pos, tint);
+                chunk
+                    .entry(glow_slot)
+                    .or_default()
+                    .append_tinted(&shape.glow, rot, p.pos, tint);
             }
         }
     }
@@ -363,7 +470,12 @@ pub fn spawn_arena(
                 continue;
             }
             let mesh = meshes.add(data.to_mesh());
-            let mut e = commands.spawn((ArenaPart, Mesh3d(mesh), Transform::IDENTITY, Name::new(format!("arena {slot}"))));
+            let mut e = commands.spawn((
+                ArenaPart,
+                Mesh3d(mesh),
+                Transform::IDENTITY,
+                Name::new(format!("arena {slot}")),
+            ));
             match slot {
                 "body" => e.insert(MeshMaterial3d(palette.body.clone())),
                 "glow" => e.insert(MeshMaterial3d(palette.arena_glow.clone())),

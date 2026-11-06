@@ -130,7 +130,10 @@ impl Args {
                     Some(d) => a.difficulty = d,
                     None => eprintln!("--difficulty: easy, normal or hard"),
                 },
-                "--arena" => match next(&mut i).as_deref().and_then(lt_sim::level::SizeChoice::parse) {
+                "--arena" => match next(&mut i)
+                    .as_deref()
+                    .and_then(lt_sim::level::SizeChoice::parse)
+                {
                     Some(s) => a.arena = s,
                     None => eprintln!("--arena: small, medium, large or random"),
                 },
@@ -138,7 +141,9 @@ impl Args {
                 "--match-time" => a.match_time = next(&mut i).and_then(|v| v.parse().ok()),
                 "--screenshot" => shot = next(&mut i),
                 "--after" => {
-                    after = next(&mut i).map(|v| v.split(',').filter_map(|t| t.parse().ok()).collect()).unwrap_or(after)
+                    after = next(&mut i)
+                        .map(|v| v.split(',').filter_map(|t| t.parse().ok()).collect())
+                        .unwrap_or(after)
                 }
                 "--quit-after" => a.quit_after = next(&mut i).and_then(|v| v.parse().ok()),
                 other => eprintln!("unknown argument {other}"),
@@ -146,7 +151,15 @@ impl Args {
             i += 1;
         }
         a.screenshot = shot.map(|s| (s, after));
-        let chosen = ["--seed", "--bots", "--host", "--connect", "--autopilot", "--vr", "--gl-vr"];
+        let chosen = [
+            "--seed",
+            "--bots",
+            "--host",
+            "--connect",
+            "--autopilot",
+            "--vr",
+            "--gl-vr",
+        ];
         a.menu = !argv.iter().any(|v| chosen.contains(&v.as_str()));
         a
     }
@@ -187,13 +200,21 @@ pub fn run() {
             app.add_plugins(
                 DefaultPlugins
                     .set(WindowPlugin {
-                        primary_window: Some(Window { title: "Neon Lasertag".into(), ..default() }),
+                        primary_window: Some(Window {
+                            title: "Neon Lasertag".into(),
+                            ..default()
+                        }),
                         ..default()
                     })
-                    .set(AssetPlugin { file_path: asset_root, ..default() }),
+                    .set(AssetPlugin {
+                        file_path: asset_root,
+                        ..default()
+                    }),
             );
             app.add_plugins((
-                desktop::DesktopPlugin { autopilot: args.autopilot },
+                desktop::DesktopPlugin {
+                    autopilot: args.autopilot,
+                },
                 hud::HudPlugin,
                 menu::MenuPlugin,
                 pause::PausePlugin,
@@ -215,37 +236,69 @@ pub fn run() {
         targets::TargetsPlugin,
     ))
     .insert_resource(ClearColor(Color::linear_rgb(0.002, 0.002, 0.006)))
-    .insert_resource(GlobalAmbientLight { color: Color::linear_rgb(0.6, 0.65, 1.0), brightness: 60.0, ..default() })
+    .insert_resource(GlobalAmbientLight {
+        color: Color::linear_rgb(0.6, 0.65, 1.0),
+        brightness: 60.0,
+        ..default()
+    })
     .init_resource::<BuiltArena>()
     .insert_resource(args.clone())
     .insert_resource(settings::Settings::load())
     .add_systems(Startup, setup)
-    .add_systems(Update, (start_game.run_if(resource_added::<menu::Start>), connect, build_arena));
+    .add_systems(
+        Update,
+        (
+            start_game.run_if(resource_added::<menu::Start>),
+            connect,
+            build_arena,
+        ),
+    );
     if let Some((path, times)) = args.screenshot.clone() {
-        app.add_systems(Update, move |mut commands: Commands, time: Res<Time>, mut done: Local<usize>| {
-            if *done < times.len() && time.elapsed_secs() > times[*done] {
-                let file = if times.len() > 1 { path.replace(".png", &format!("_{}.png", *done)) } else { path.clone() };
-                *done += 1;
-                commands.spawn(Screenshot::primary_window()).observe(save_to_disk(file));
-            }
-        });
+        app.add_systems(
+            Update,
+            move |mut commands: Commands, time: Res<Time>, mut done: Local<usize>| {
+                if *done < times.len() && time.elapsed_secs() > times[*done] {
+                    let file = if times.len() > 1 {
+                        path.replace(".png", &format!("_{}.png", *done))
+                    } else {
+                        path.clone()
+                    };
+                    *done += 1;
+                    commands
+                        .spawn(Screenshot::primary_window())
+                        .observe(save_to_disk(file));
+                }
+            },
+        );
     }
     if let Some(secs) = args.quit_after {
-        app.add_systems(Update, move |time: Res<Time>, mut exit: MessageWriter<AppExit>| {
-            if time.elapsed() > Duration::from_secs_f32(secs) {
-                exit.write(AppExit::Success);
-            }
-        });
+        app.add_systems(
+            Update,
+            move |time: Res<Time>, mut exit: MessageWriter<AppExit>| {
+                if time.elapsed() > Duration::from_secs_f32(secs) {
+                    exit.write(AppExit::Success);
+                }
+            },
+        );
     }
     app.run();
 }
 
-fn setup(mut commands: Commands, args: Res<Args>, mut meshes: ResMut<Assets<Mesh>>, mut local: ResMut<game::LocalCmd>) {
+fn setup(
+    mut commands: Commands,
+    args: Res<Args>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut local: ResMut<game::LocalCmd>,
+) {
     local.autopilot = args.autopilot;
     commands.insert_resource(assets::load_models(&mut meshes));
     commands.insert_resource(Kit::load());
     commands.spawn((
-        DirectionalLight { illuminance: 500.0, color: Color::linear_rgb(0.7, 0.75, 1.0), ..default() },
+        DirectionalLight {
+            illuminance: 500.0,
+            color: Color::linear_rgb(0.7, 0.75, 1.0),
+            ..default()
+        },
         Transform::from_xyz(4.0, 10.0, 6.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
     // Without the menu, the command line says what to play.
@@ -270,7 +323,11 @@ fn start_game(
     mut games: Local<u32>,
 ) {
     // The command line's arena first, then new ones.
-    let seed = if *games == 0 { args.seed } else { rand::random::<u32>() as u64 };
+    let seed = if *games == 0 {
+        args.seed
+    } else {
+        rand::random::<u32>() as u64
+    };
     *games += 1;
     match start.clone() {
         menu::Start::Join(addr) => match Client::connect(&addr, &args.name) {
@@ -292,11 +349,23 @@ fn start_game(
                 ));
             }
         },
-        menu::Start::Local { host, bots, difficulty, arena } => {
+        menu::Start::Local {
+            host,
+            bots,
+            difficulty,
+            arena,
+        } => {
             let port = host.then(|| args.host.unwrap_or(lt_net::protocol::DEFAULT_PORT));
             session.difficulty = difficulty;
             session.arena = arena;
-            let mut game = Game::local(seed, bots, difficulty.skill(), session.rules(&args), &args.name, port);
+            let mut game = Game::local(
+                seed,
+                bots,
+                difficulty.skill(),
+                session.rules(&args),
+                &args.name,
+                port,
+            );
             if args.autopilot {
                 session::autopilot(&mut game, seed);
             }
@@ -311,7 +380,11 @@ fn start_game(
     }
 }
 
-fn connect(mut commands: Commands, connecting: Option<ResMut<Connecting>>, game: Option<ResMut<Game>>) {
+fn connect(
+    mut commands: Commands,
+    connecting: Option<ResMut<Connecting>>,
+    game: Option<ResMut<Game>>,
+) {
     let Some(mut c) = connecting else { return };
     let Some(client) = c.0.as_mut() else { return };
     for ev in client.poll() {
@@ -364,11 +437,23 @@ fn build_arena(
     }
     arena::spawn_arena(&mut commands, &game.level, &kit, &palette, &mut meshes);
     for r in &game.level.reloads {
-        let e = commands.spawn((ArenaPart, Transform::from_translation(*r), Visibility::default())).id();
+        let e = commands
+            .spawn((
+                ArenaPart,
+                Transform::from_translation(*r),
+                Visibility::default(),
+            ))
+            .id();
         actors::spawn_model(&mut commands, e, &models.reload, &palette, None);
     }
     targets::spawn(&mut commands, &game.level, &palette, &mut meshes);
-    ambience::spawn(&mut commands, &game.level, &mut meshes, &mut glows, &mut accents);
+    ambience::spawn(
+        &mut commands,
+        &game.level,
+        &mut meshes,
+        &mut glows,
+        &mut accents,
+    );
     sevenseg::spawn_scoreboards(&mut commands, &game.level, &palette, &mut meshes);
     built.0 = Some(game.level.seed);
 }

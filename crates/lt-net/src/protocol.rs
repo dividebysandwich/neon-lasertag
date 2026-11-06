@@ -13,15 +13,24 @@ pub const RECENT: usize = 6;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ToServer {
-    Hello { protocol: u16, name: String },
+    Hello {
+        protocol: u16,
+        name: String,
+    },
     /// The client's latest commands, oldest first, by sequence number (one per tick).
-    Input { recent: Vec<(u32, PlayerCmd)> },
+    Input {
+        recent: Vec<(u32, PlayerCmd)>,
+    },
     Bye,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ToClient {
-    Welcome { id: PlayerId, seed: u64, rules: Rules },
+    Welcome {
+        id: PlayerId,
+        seed: u64,
+        rules: Rules,
+    },
     Reject(String),
     /// The world (unreliable, every other tick).
     Snapshot(Snapshot),
@@ -29,7 +38,11 @@ pub enum ToClient {
     Events(Vec<SimEvent>),
     Roster(Vec<(PlayerId, String, Team)>),
     /// The next match, in a new arena.
-    NewLevel { id: PlayerId, seed: u64, rules: Rules },
+    NewLevel {
+        id: PlayerId,
+        seed: u64,
+        rules: Rules,
+    },
     Shutdown(String),
 }
 

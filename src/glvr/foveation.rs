@@ -18,7 +18,9 @@ pub fn fdm_env(
     existing: impl Fn(&str) -> Option<String>,
     extra: &str,
 ) -> Vec<(String, String)> {
-    let Some(level) = level else { return Vec::new() };
+    let Some(level) = level else {
+        return Vec::new();
+    };
     if existing(FDM_DISABLE).is_some_and(|v| !v.is_empty() && v != "0") {
         return Vec::new();
     }
@@ -74,7 +76,9 @@ mod tests {
         let none = |_: &str| None;
         assert!(fdm_env(None, none, "").is_empty());
         let pairs = |list: &[(&str, &str)]| {
-            list.iter().map(|&(k, v)| (k.to_string(), v.to_string())).collect::<Vec<_>>()
+            list.iter()
+                .map(|&(k, v)| (k.to_string(), v.to_string()))
+                .collect::<Vec<_>>()
         };
         assert_eq!(
             fdm_env(Some("medium"), none, ""),
@@ -92,7 +96,10 @@ mod tests {
         assert_eq!(
             fdm_env(Some("high"), some, ""),
             pairs(&[
-                ("VK_INSTANCE_LAYERS", &format!("VK_LAYER_MESA_overlay:{FDM_LAYERS}")),
+                (
+                    "VK_INSTANCE_LAYERS",
+                    &format!("VK_LAYER_MESA_overlay:{FDM_LAYERS}")
+                ),
                 ("FDM_DEBUG", "enable,yflip")
             ])
         );
@@ -100,7 +107,11 @@ mod tests {
         assert!(fdm_env(Some("low"), off, "").is_empty());
         assert_eq!(
             fdm_env(Some("low"), none, "FDM_DEBUG=enable,debug; X = 1")[1..],
-            pairs(&[("FOVE_LEVEL", "low"), ("FDM_DEBUG", "enable,debug"), ("X", "1")])[..]
+            pairs(&[
+                ("FOVE_LEVEL", "low"),
+                ("FDM_DEBUG", "enable,debug"),
+                ("X", "1")
+            ])[..]
         );
     }
 }

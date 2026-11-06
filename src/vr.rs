@@ -32,8 +32,16 @@ const HOLSTER: Vec3 = Vec3::new(0.23, -0.58, -0.07);
 fn holster_offset() -> Vec3 {
     static AT: std::sync::OnceLock<Vec3> = std::sync::OnceLock::new();
     *AT.get_or_init(|| {
-        let v: Vec<f32> = std::env::var("LT_HOLSTER").unwrap_or_default().split(',').filter_map(|t| t.parse().ok()).collect();
-        if v.len() == 3 { Vec3::new(v[0], v[1], v[2]) } else { HOLSTER }
+        let v: Vec<f32> = std::env::var("LT_HOLSTER")
+            .unwrap_or_default()
+            .split(',')
+            .filter_map(|t| t.parse().ok())
+            .collect();
+        if v.len() == 3 {
+            Vec3::new(v[0], v[1], v[2])
+        } else {
+            HOLSTER
+        }
     })
 }
 /// How far the blaster is turned nose down from the controller's aim, so its handle sits more
@@ -160,17 +168,47 @@ impl Plugin for VrPlugin {
         app.init_resource::<XrInput>()
             .init_resource::<VrState>()
             .init_resource::<Rumble>()
-            .configure_sets(Update, PoseSet.after(PredictSet).before(crate::game::DrawSet))
+            .configure_sets(
+                Update,
+                PoseSet.after(PredictSet).before(crate::game::DrawSet),
+            )
             .add_systems(Startup, |mut commands: Commands, args: Res<crate::Args>| {
-                commands.insert_resource(Handedness { left: args.left_handed });
+                commands.insert_resource(Handedness {
+                    left: args.left_handed,
+                });
             })
-            .add_systems(Update, (fake_hands, read_controls).chain().in_set(InputSet).run_if(resource_exists::<Game>))
-            .add_systems(Update, (place_rig, wrist, holster).chain().in_set(PoseSet).run_if(resource_exists::<Game>))
-            .add_systems(Update, (haptics.run_if(resource_exists::<Game>), play_rumble).chain().after(PoseSet))
-            .add_systems(Update, spawn_wrist.run_if(resource_exists::<Palette>.and_then(not(resource_exists::<Wrist>))))
             .add_systems(
                 Update,
-                spawn_holster.run_if(resource_exists::<Palette>.and_then(resource_exists::<Models>).and_then(not(resource_exists::<Holster>))),
+                (fake_hands, read_controls)
+                    .chain()
+                    .in_set(InputSet)
+                    .run_if(resource_exists::<Game>),
+            )
+            .add_systems(
+                Update,
+                (place_rig, wrist, holster)
+                    .chain()
+                    .in_set(PoseSet)
+                    .run_if(resource_exists::<Game>),
+            )
+            .add_systems(
+                Update,
+                (haptics.run_if(resource_exists::<Game>), play_rumble)
+                    .chain()
+                    .after(PoseSet),
+            )
+            .add_systems(
+                Update,
+                spawn_wrist
+                    .run_if(resource_exists::<Palette>.and_then(not(resource_exists::<Wrist>))),
+            )
+            .add_systems(
+                Update,
+                spawn_holster.run_if(
+                    resource_exists::<Palette>
+                        .and_then(resource_exists::<Models>)
+                        .and_then(not(resource_exists::<Holster>)),
+                ),
             )
             .add_plugins(crate::vrui::VrUiPlugin);
     }
@@ -180,7 +218,9 @@ impl Plugin for VrPlugin {
 /// down (at a panel's second button), the left one is at the holster.
 fn fake_hands(mut input: ResMut<XrInput>, vr: Res<VrState>, mut on: Local<Option<bool>>) {
     let on = *on.get_or_insert_with(|| std::env::var("LT_VR_FAKE_HANDS").is_ok_and(|v| v == "1"));
-    let Some(head) = input.head.filter(|_| on) else { return };
+    let Some(head) = input.head.filter(|_| on) else {
+        return;
+    };
     let rot = Quat::from_rotation_y(flat_yaw(head.rotation));
     if input.hands[1].grip.is_none() {
         let at = head.translation + rot * Vec3::new(0.2, -0.25, -0.35);
@@ -192,7 +232,8 @@ fn fake_hands(mut input: ResMut<XrInput>, vr: Res<VrState>, mut on: Local<Option
     if input.hands[0].grip.is_none()
         && let Some(h) = vr.holster
     {
-        input.hands[0].grip = Some(Transform::from_translation(h + Vec3::Y * 0.05).with_rotation(rot));
+        input.hands[0].grip =
+            Some(Transform::from_translation(h + Vec3::Y * 0.05).with_rotation(rot));
     }
 }
 
@@ -215,9 +256,14 @@ fn read_controls(
 ) {
     let dt = time.delta_secs();
     // Face the centre of the arena on entering it and after respawning.
-    let respawned = events.read().any(|e| matches!(e.0, SimEvent::Respawned { player, .. } if Some(player) == game.me));
+    let respawned = events
+        .read()
+        .any(|e| matches!(e.0, SimEvent::Respawned { player, .. } if Some(player) == game.me));
     if (respawned || *faced != Some(game.level.seed))
-        && let Some(feet) = game.me.and_then(|me| game.snap.players.iter().find(|p| p.id == me)).map(|p| p.feet)
+        && let Some(feet) = game
+            .me
+            .and_then(|me| game.snap.players.iter().find(|p| p.id == me))
+            .map(|p| p.feet)
     {
         let want = crate::desktop::spawn_yaw(&game, feet);
         vr.yaw = want - input.head.map_or(0.0, |h| flat_yaw(h.rotation));
@@ -256,7 +302,9 @@ fn read_controls(
     let left_handed = handedness.is_some_and(|h| h.left);
     if let Some(h) = input.head {
         let head_yaw = flat_yaw(h.rotation);
-        let body = vr.body_yaw.map_or(head_yaw, |b| approach_angle(b, head_yaw, 1.0 - (-dt * 3.0).exp()));
+        let body = vr.body_yaw.map_or(head_yaw, |b| {
+            approach_angle(b, head_yaw, 1.0 - (-dt * 3.0).exp())
+        });
         vr.body_yaw = Some(body);
         let side = if left_handed { -1.0 } else { 1.0 };
         let at = holster_offset();
@@ -275,7 +323,11 @@ fn read_controls(
         vr.gun = None;
         rumble.play(h.index(), 0.0, 0.035, 0.85);
     }
-    let order = if left_handed { [Hand::Left, Hand::Right] } else { [Hand::Right, Hand::Left] };
+    let order = if left_handed {
+        [Hand::Left, Hand::Right]
+    } else {
+        [Hand::Right, Hand::Left]
+    };
     for h in order {
         let i = h.index();
         let hand = &input.hands[i];
@@ -337,17 +389,33 @@ fn read_controls(
             // Thrown with the hand's speed over the last 80 ms.
             let trail = &vr.trail[h.index()];
             if let (Some(&(t1, p1)), true) = (trail.back(), alive) {
-                let (t0, p0) = trail.iter().find(|(t, _)| t1 - *t <= 0.08).copied().unwrap_or((t1, p1));
-                let v = if t1 - t0 > 0.005 { (p1 - p0) / (t1 - t0) } else { Vec3::ZERO };
+                let (t0, p0) = trail
+                    .iter()
+                    .find(|(t, _)| t1 - *t <= 0.08)
+                    .copied()
+                    .unwrap_or((t1, p1));
+                let v = if t1 - t0 > 0.005 {
+                    (p1 - p0) / (t1 - t0)
+                } else {
+                    Vec3::ZERO
+                };
                 let feet = local.cmd.feet.unwrap_or_default();
                 local.cmd.throw = Some((p1 - feet, v * 1.3));
             }
         }
         None => {
-            let has = game.me.and_then(|id| game.snap.players.iter().find(|p| p.id == id)).is_some_and(|p| p.grenades > 0);
+            let has = game
+                .me
+                .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
+                .is_some_and(|p| p.grenades > 0);
             for h in [Hand::Right, Hand::Left] {
                 // (Not while B / Y is held for the menu, nor with a panel up.)
-                if has && input.hands[h.index()].secondary && vr.gun != Some(h) && vr.hold[h.index()].0 < 0.25 && !blocked {
+                if has
+                    && input.hands[h.index()].secondary
+                    && vr.gun != Some(h)
+                    && vr.hold[h.index()].0 < 0.25
+                    && !blocked
+                {
                     vr.grenade = Some(h);
                     break;
                 }
@@ -371,16 +439,24 @@ fn place_rig(
     time: Res<Time>,
 ) {
     // Feet: the prediction, or where the simulation has us (waiting to respawn).
-    let me = game.me.and_then(|me| game.snap.players.iter().find(|p| p.id == me));
+    let me = game
+        .me
+        .and_then(|me| game.snap.players.iter().find(|p| p.id == me));
     let feet = if mover.valid && me.is_some_and(|p| p.respawn.is_none()) {
         mover.feet
     } else {
         me.map_or(Vec3::ZERO, |p| p.feet)
     };
     let rot = Quat::from_rotation_y(vr.yaw);
-    let head = input.head.unwrap_or(Transform::from_xyz(0.0, lt_sim::sim::EYE, 0.0));
+    let head = input
+        .head
+        .unwrap_or(Transform::from_xyz(0.0, lt_sim::sim::EYE, 0.0));
     let h = head.translation;
-    vr.rig = Transform { translation: feet - rot * Vec3::new(h.x, 0.0, h.z), rotation: rot, ..default() };
+    vr.rig = Transform {
+        translation: feet - rot * Vec3::new(h.x, 0.0, h.z),
+        rotation: rot,
+        ..default()
+    };
     if let Some(r) = rig
         && let Ok(mut t) = transforms.get_mut(r.0)
     {
@@ -390,14 +466,20 @@ fn place_rig(
     let rig_t = vr.rig;
     let world = |t: &Transform| rig_t * *t;
     let head_w = world(&head);
-    local.cmd.head = Pose { pos: head_w.translation - feet, rot: head_w.rotation };
+    local.cmd.head = Pose {
+        pos: head_w.translation - feet,
+        rot: head_w.rotation,
+    };
     let now = time.elapsed_secs();
     for (i, hand) in input.hands.iter().enumerate() {
         let Some(grip) = hand.grip else { continue };
         let g = world(&grip);
         // The blaster sits in the palm, pointing where the controller points.
         let rot = hand.aim.map_or(g.rotation, |a| world(&a).rotation);
-        local.cmd.hands[i] = Pose { pos: g.translation - feet, rot };
+        local.cmd.hands[i] = Pose {
+            pos: g.translation - feet,
+            rot,
+        };
         let trail = &mut vr.trail[i];
         trail.push_back((now, g.translation));
         while trail.front().is_some_and(|(t, _)| now - t > 0.2) {
@@ -408,17 +490,25 @@ fn place_rig(
         // The blaster held with its handle more upright in the hand: turned nose down about the
         // grip from the controller's aim (it fires along its barrel).
         let tilt = *GUN_TILT.get_or_init(|| {
-            std::env::var("LT_GUN_TILT").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(30.0).to_radians()
+            std::env::var("LT_GUN_TILT")
+                .ok()
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(30.0)
+                .to_radians()
         });
         let hand = &mut local.cmd.hands[gh.index()];
         hand.rot *= Quat::from_rotation_x(-tilt);
         let p = *hand;
         let muzzle = p.pos + p.rot * models.muzzle;
-        local.cmd.muzzle = Pose { pos: muzzle, rot: look_rot(p.rot * Vec3::NEG_Z) };
+        local.cmd.muzzle = Pose {
+            pos: muzzle,
+            rot: look_rot(p.rot * Vec3::NEG_Z),
+        };
     }
     // The holster in the world: muzzle down, tilted a little forward.
     vr.holster_world = vr.holster.zip(vr.body_yaw).map(|(at, body)| {
-        let rot = Quat::from_rotation_y(body) * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2 + 0.3);
+        let rot =
+            Quat::from_rotation_y(body) * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2 + 0.3);
         rig_t * Transform::from_translation(at).with_rotation(rot)
     });
 }
@@ -434,11 +524,27 @@ struct Holster {
     bright: Handle<AccentMaterial>,
 }
 
-fn spawn_holster(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut accents: ResMut<Assets<AccentMaterial>>) {
-    let root = commands.spawn((Name::new("holster"), Transform::IDENTITY, Visibility::Hidden)).id();
-    let gun = commands.spawn((Transform::IDENTITY, Visibility::default(), ChildOf(root))).id();
-    let dim = accents.add(AccentMaterial { neon: NeonUniform::fixed(team_color(None), 0.5) });
-    let bright = accents.add(AccentMaterial { neon: NeonUniform::fixed(team_color(None), 2.5) });
+fn spawn_holster(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut accents: ResMut<Assets<AccentMaterial>>,
+) {
+    let root = commands
+        .spawn((
+            Name::new("holster"),
+            Transform::IDENTITY,
+            Visibility::Hidden,
+        ))
+        .id();
+    let gun = commands
+        .spawn((Transform::IDENTITY, Visibility::default(), ChildOf(root)))
+        .id();
+    let dim = accents.add(AccentMaterial {
+        neon: NeonUniform::fixed(team_color(None), 0.5),
+    });
+    let bright = accents.add(AccentMaterial {
+        neon: NeonUniform::fixed(team_color(None), 2.5),
+    });
     // A thin ring around the blaster's grip, level with the floor.
     let ring = commands
         .spawn((
@@ -448,7 +554,14 @@ fn spawn_holster(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut a
             Visibility::default(),
         ))
         .id();
-    commands.insert_resource(Holster { root, gun, ring, team: None, dim, bright });
+    commands.insert_resource(Holster {
+        root,
+        gun,
+        ring,
+        team: None,
+        dim,
+        bright,
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -466,7 +579,9 @@ fn holster(
     mut mats: Query<&mut MeshMaterial3d<AccentMaterial>>,
 ) {
     let Some(mut h) = holster else { return };
-    let me = game.me.and_then(|me| game.snap.players.iter().find(|p| p.id == me));
+    let me = game
+        .me
+        .and_then(|me| game.snap.players.iter().find(|p| p.id == me));
     let team = me.map(|p| p.team);
     // The blaster in the team's colours.
     if team != h.team {
@@ -480,10 +595,15 @@ fn holster(
         }
     }
     let alive = me.is_some_and(|p| p.respawn.is_none());
-    let show = alive && local.cmd.gun_hand.is_none() && vr.holster_world.is_some() && !local.autopilot;
+    let show =
+        alive && local.cmd.gun_hand.is_none() && vr.holster_world.is_some() && !local.autopilot;
     for e in [h.root, h.ring] {
         if let Ok(mut v) = vis.get_mut(e) {
-            let want = if show { Visibility::Inherited } else { Visibility::Hidden };
+            let want = if show {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            };
             if *v != want {
                 *v = want;
             }
@@ -500,7 +620,11 @@ fn holster(
     }
     let near = vr.near.iter().any(|n| *n);
     if let Ok(mut m) = mats.get_mut(h.ring) {
-        let want = if near { h.bright.clone() } else { h.dim.clone() };
+        let want = if near {
+            h.bright.clone()
+        } else {
+            h.dim.clone()
+        };
         if m.0 != want {
             m.0 = want;
         }
@@ -521,21 +645,58 @@ struct Wrist {
 }
 
 fn spawn_wrist(mut commands: Commands, palette: Res<Palette>, mut meshes: ResMut<Assets<Mesh>>) {
-    let root = commands.spawn((Transform::IDENTITY, Visibility::default())).id();
+    let root = commands
+        .spawn((Transform::IDENTITY, Visibility::default()))
+        .id();
     let white = palette.accent[2].clone();
-    let digits = spawn_digits(&mut commands, &mut meshes, root, Vec3::new(-0.04, 0.03, 0.0), 2, 0.025, &white);
+    let digits = spawn_digits(
+        &mut commands,
+        &mut meshes,
+        root,
+        Vec3::new(-0.04, 0.03, 0.0),
+        2,
+        0.025,
+        &white,
+    );
     let bar = meshes.add(Cuboid::new(0.018, 0.006, 0.004));
     let bars = [0, 1, 2].map(|k| {
         commands
-            .spawn((Mesh3d(bar.clone()), MeshMaterial3d(white.clone()), Transform::from_xyz(-0.03 + k as f32 * 0.024, 0.0, 0.0), ChildOf(root)))
+            .spawn((
+                Mesh3d(bar.clone()),
+                MeshMaterial3d(white.clone()),
+                Transform::from_xyz(-0.03 + k as f32 * 0.024, 0.0, 0.0),
+                ChildOf(root),
+            ))
             .id()
     });
     let grenade = commands
-        .spawn((Mesh3d(meshes.add(Sphere::new(0.006))), MeshMaterial3d(white.clone()), Transform::from_xyz(0.05, 0.0, 0.0), ChildOf(root)))
+        .spawn((
+            Mesh3d(meshes.add(Sphere::new(0.006))),
+            MeshMaterial3d(white.clone()),
+            Transform::from_xyz(0.05, 0.0, 0.0),
+            ChildOf(root),
+        ))
         .id();
-    let panel = commands.spawn((Transform::IDENTITY, Visibility::Hidden)).id();
-    let panel_digits = spawn_digits(&mut commands, &mut meshes, panel, Vec3::new(-0.12, 0.0, 0.0), 2, 0.3, &white);
-    commands.insert_resource(Wrist { root, digits, bars, grenade, panel, panel_digits });
+    let panel = commands
+        .spawn((Transform::IDENTITY, Visibility::Hidden))
+        .id();
+    let panel_digits = spawn_digits(
+        &mut commands,
+        &mut meshes,
+        panel,
+        Vec3::new(-0.12, 0.0, 0.0),
+        2,
+        0.3,
+        &white,
+    );
+    commands.insert_resource(Wrist {
+        root,
+        digits,
+        bars,
+        grenade,
+        panel,
+        panel_digits,
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -550,11 +711,17 @@ fn wrist(
     mut vis: Query<&mut Visibility>,
 ) {
     let Some(w) = wrist else { return };
-    let me = game.me.and_then(|me| game.snap.players.iter().find(|p| p.id == me));
+    let me = game
+        .me
+        .and_then(|me| game.snap.players.iter().find(|p| p.id == me));
     let Some(p) = me else { return };
     let feet = if mover.valid { mover.feet } else { p.feet };
     // On the hand without the blaster (the left one by default).
-    let hand = if vr.gun == Some(Hand::Left) { Hand::Right } else { Hand::Left };
+    let hand = if vr.gun == Some(Hand::Left) {
+        Hand::Right
+    } else {
+        Hand::Left
+    };
     let pose = local.cmd.hands[hand.index()];
     if let Ok(mut t) = transforms.get_mut(w.root) {
         // On the back of the wrist, tilted towards the eyes.
@@ -565,19 +732,43 @@ fn wrist(
     let left = 3u8.saturating_sub(p.hits);
     for (k, e) in w.bars.iter().enumerate() {
         if let Ok(mut v) = vis.get_mut(*e) {
-            *v = if (k as u8) < left && blink { Visibility::Inherited } else { Visibility::Hidden };
+            *v = if (k as u8) < left && blink {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            };
         }
     }
     if let Ok(mut v) = vis.get_mut(w.grenade) {
-        *v = if p.grenades > 0 { Visibility::Inherited } else { Visibility::Hidden };
+        *v = if p.grenades > 0 {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
     }
     let secs = p.respawn.map(|r| r.ceil() as u32);
     // Shots left (blinking when empty), or the respawn countdown.
-    let ammo = if p.ammo > 0 || blink_slow(&time) { format!("{:>2}", p.ammo.min(99)) } else { String::new() };
-    show(&secs.map_or(ammo, |s| format!("{s:>2}")), &w.digits, &mut vis);
-    show(&secs.map_or(String::new(), |s| format!("{s:>2}")), &w.panel_digits, &mut vis);
+    let ammo = if p.ammo > 0 || blink_slow(&time) {
+        format!("{:>2}", p.ammo.min(99))
+    } else {
+        String::new()
+    };
+    show(
+        &secs.map_or(ammo, |s| format!("{s:>2}")),
+        &w.digits,
+        &mut vis,
+    );
+    show(
+        &secs.map_or(String::new(), |s| format!("{s:>2}")),
+        &w.panel_digits,
+        &mut vis,
+    );
     if let Ok(mut v) = vis.get_mut(w.panel) {
-        *v = if secs.is_some() { Visibility::Inherited } else { Visibility::Hidden };
+        *v = if secs.is_some() {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
     }
     if let Ok(mut t) = transforms.get_mut(w.panel) {
         let head = feet + local.cmd.head.pos;
@@ -630,7 +821,9 @@ fn haptics(
                 let side = crate::hud::shooter_pos(&game, by).map_or(0.0, |from| {
                     let d = from - eye;
                     let right = local.cmd.head.rot * Vec3::X;
-                    Vec3::new(d.x, 0.0, d.z).normalize_or_zero().dot(Vec3::new(right.x, 0.0, right.z).normalize_or_zero())
+                    Vec3::new(d.x, 0.0, d.z)
+                        .normalize_or_zero()
+                        .dot(Vec3::new(right.x, 0.0, right.z).normalize_or_zero())
                 });
                 for (i, s) in [(0, -side), (1, side)] {
                     let amp = (0.7 + 0.3 * s).clamp(0.4, 1.0);
@@ -666,7 +859,11 @@ fn play_rumble(mut rumble: ResMut<Rumble>, mut input: ResMut<XrInput>, time: Res
             *wait -= dt;
             continue;
         }
-        let k = if *fade { (1.0 - *played / *secs).max(0.0) } else { 1.0 };
+        let k = if *fade {
+            (1.0 - *played / *secs).max(0.0)
+        } else {
+            1.0
+        };
         amp[*hand & 1] = amp[*hand & 1].max(*a * k);
         *played += dt;
     }

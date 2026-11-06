@@ -77,7 +77,10 @@ impl Reporter {
 
     /// What happened since the last call ("listed on ...", failures).
     pub fn take_log(&self) -> Vec<String> {
-        self.log.lock().map(|mut l| std::mem::take(&mut *l)).unwrap_or_default()
+        self.log
+            .lock()
+            .map(|mut l| std::mem::take(&mut *l))
+            .unwrap_or_default()
     }
 
     /// Off the list (waits for the master server a moment).

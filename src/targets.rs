@@ -3,8 +3,8 @@
 //! that keep running in towards it. Built from the neon materials, so every renderer draws it.
 
 use bevy::prelude::*;
-use lt_sim::level::{Level, TargetDef};
 use lt_sim::kit::{FLOOR_T, STOREY, TARGET_HALF};
+use lt_sim::level::{Level, TargetDef};
 use lt_sim::{SimEvent, Team};
 
 use crate::arena::ArenaPart;
@@ -27,14 +27,22 @@ pub struct TargetsPlugin;
 
 impl Plugin for TargetsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (on_hits, animate).chain().run_if(resource_exists::<Game>));
+        app.add_systems(
+            Update,
+            (on_hits, animate).chain().run_if(resource_exists::<Game>),
+        );
     }
 }
 
 /// A chevron (">" pointing along +Y), from two bars.
 fn chevron() -> Mesh {
     let bar = Cuboid::new(0.05, 0.24, 0.05).mesh().build();
-    let place = |sx: f32| bar.clone().transformed_by(Transform::from_xyz(sx * 0.075, -0.075, 0.0).with_rotation(Quat::from_rotation_z(sx * 0.8)));
+    let place = |sx: f32| {
+        bar.clone().transformed_by(
+            Transform::from_xyz(sx * 0.075, -0.075, 0.0)
+                .with_rotation(Quat::from_rotation_z(sx * 0.8)),
+        )
+    };
     let mut out = place(-1.0);
     let _ = out.merge(&place(1.0));
     out
@@ -53,13 +61,21 @@ pub fn spawn(commands: &mut Commands, level: &Level, palette: &Palette, meshes: 
         let c = t.centre();
         // The roof over the upper level.
         let ceiling = 2.0 * STOREY - FLOOR_T;
-        let root = commands.spawn((ArenaPart, Transform::from_translation(c), Visibility::default(), Name::new("target"))).id();
+        let root = commands
+            .spawn((
+                ArenaPart,
+                Transform::from_translation(c),
+                Visibility::default(),
+                Name::new("target"),
+            ))
+            .id();
         // The stem up to the ceiling, and its mount.
         let stem_len = ceiling - (c.y + TARGET_HALF.y * 0.6);
         commands.spawn((
             Mesh3d(stem_mesh.clone()),
             MeshMaterial3d(palette.suit.clone()),
-            Transform::from_xyz(0.0, ceiling - c.y - stem_len / 2.0, 0.0).with_scale(Vec3::new(1.0, stem_len, 1.0)),
+            Transform::from_xyz(0.0, ceiling - c.y - stem_len / 2.0, 0.0)
+                .with_scale(Vec3::new(1.0, stem_len, 1.0)),
             ChildOf(root),
         ));
         commands.spawn((
@@ -72,14 +88,25 @@ pub fn spawn(commands: &mut Commands, level: &Level, palette: &Palette, meshes: 
         commands.spawn((
             Mesh3d(shell_mesh.clone()),
             MeshMaterial3d(palette.body.clone()),
-            Transform::from_rotation(Quat::from_rotation_y(0.785) * Quat::from_rotation_x(0.615)).with_scale(Vec3::splat(0.55)),
+            Transform::from_rotation(Quat::from_rotation_y(0.785) * Quat::from_rotation_x(0.615))
+                .with_scale(Vec3::splat(0.55)),
             ChildOf(root),
         ));
         let core = commands
-            .spawn((Mesh3d(core_mesh.clone()), MeshMaterial3d(palette.bolt_for(team)), Transform::IDENTITY, ChildOf(root)))
+            .spawn((
+                Mesh3d(core_mesh.clone()),
+                MeshMaterial3d(palette.bolt_for(team)),
+                Transform::IDENTITY,
+                ChildOf(root),
+            ))
             .id();
         let ring = commands
-            .spawn((Mesh3d(ring_mesh.clone()), MeshMaterial3d(palette.accent_for(team)), Transform::IDENTITY, ChildOf(root)))
+            .spawn((
+                Mesh3d(ring_mesh.clone()),
+                MeshMaterial3d(palette.accent_for(team)),
+                Transform::IDENTITY,
+                ChildOf(root),
+            ))
             .id();
         // Chevrons: two at its sides in the plane facing its open side (the walls hem it in),
         // and a column of three under it pointing up.
@@ -98,13 +125,30 @@ pub fn spawn(commands: &mut Commands, level: &Level, palette: &Palette, meshes: 
             let e = spawn_arrow(commands, root, &arrow_mesh, palette, team);
             arrows.push((e, from, to, k as f32 / 3.0));
         }
-        commands.entity(root).insert(TargetView { id: t.id, core, ring, arrows, since_hit: 99.0 });
+        commands.entity(root).insert(TargetView {
+            id: t.id,
+            core,
+            ring,
+            arrows,
+            since_hit: 99.0,
+        });
     }
 }
 
-fn spawn_arrow(commands: &mut Commands, root: Entity, mesh: &Handle<Mesh>, palette: &Palette, team: Option<Team>) -> Entity {
+fn spawn_arrow(
+    commands: &mut Commands,
+    root: Entity,
+    mesh: &Handle<Mesh>,
+    palette: &Palette,
+    team: Option<Team>,
+) -> Entity {
     commands
-        .spawn((Mesh3d(mesh.clone()), MeshMaterial3d(palette.bolt_for(team)), Transform::IDENTITY, ChildOf(root)))
+        .spawn((
+            Mesh3d(mesh.clone()),
+            MeshMaterial3d(palette.bolt_for(team)),
+            Transform::IDENTITY,
+            ChildOf(root),
+        ))
         .id()
 }
 
@@ -130,7 +174,9 @@ fn animate(
     let dt = time.delta_secs();
     for (mut v, root) in &mut views {
         v.since_hit += dt;
-        let Some(def) = game.level.targets.iter().find(|d| d.id == v.id) else { continue };
+        let Some(def) = game.level.targets.iter().find(|d| d.id == v.id) else {
+            continue;
+        };
         let flash = (1.0 - v.since_hit / 0.5).max(0.0);
         if let Ok(mut c) = transforms.get_mut(v.core) {
             let beat = 1.0 + 0.08 * (t * 5.0).sin();
@@ -138,12 +184,15 @@ fn animate(
             c.rotation = Quat::from_rotation_y(t * 1.3);
         }
         if let Ok(mut r) = transforms.get_mut(v.ring) {
-            r.rotation = Quat::from_rotation_y(t * 0.9) * Quat::from_rotation_x(1.2 + 0.3 * (t * 0.7).sin());
+            r.rotation =
+                Quat::from_rotation_y(t * 0.9) * Quat::from_rotation_x(1.2 + 0.3 * (t * 0.7).sin());
             r.scale = Vec3::splat(1.0 + flash * 0.5);
         }
         let _ = root;
         for &(e, from, to, phase) in &v.arrows {
-            let Ok(mut a) = transforms.get_mut(e) else { continue };
+            let Ok(mut a) = transforms.get_mut(e) else {
+                continue;
+            };
             arrow_pose(&mut a, def, from, to, (t * 0.8 + phase).fract());
         }
     }

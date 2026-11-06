@@ -32,7 +32,10 @@ fn client_joins_and_receives_the_world() {
                 _ => {}
             }
         }
-        client.send_input(PlayerCmd { stick: glam::Vec2::new(0.0, -1.0), ..Default::default() });
+        client.send_input(PlayerCmd {
+            stick: glam::Vec2::new(0.0, -1.0),
+            ..Default::default()
+        });
         bots.think(&mut sim);
         server.before_step(&mut sim, &mut bots);
         sim.step();

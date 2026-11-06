@@ -97,22 +97,49 @@ fn stroke(out: &mut SegText, a: Vec2, b: Vec2, half: f32) {
     let n = Vec2::new(-d.y, d.x);
     let len = (b - a).length();
     let base = out.strokes.pos.len() as u32;
-    for (p, u) in [(a - n * half, 0.0), (b - n * half, len), (b + n * half, len), (a + n * half, 0.0)] {
+    for (p, u) in [
+        (a - n * half, 0.0),
+        (b - n * half, len),
+        (b + n * half, len),
+        (a + n * half, 0.0),
+    ] {
         out.strokes.pos.push([p.x, p.y, 0.0]);
         out.strokes.nrm.push([0.0, 0.0, 1.0]);
         out.strokes.uv.push([u, 0.5]);
     }
-    out.strokes.idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+    out.strokes
+        .idx
+        .extend([base, base + 1, base + 2, base, base + 2, base + 3]);
     // The halo: a band with a bright middle line, a little longer than the stroke.
     let w = half * 3.5;
     let (a, b) = (a - d * half, b + d * half);
     let base = out.halo.pos.len() as u32;
-    for (p, v) in [(a - n * w, 1.0), (b - n * w, 1.0), (a, 0.0), (b, 0.0), (a + n * w, 1.0), (b + n * w, 1.0)] {
+    for (p, v) in [
+        (a - n * w, 1.0),
+        (b - n * w, 1.0),
+        (a, 0.0),
+        (b, 0.0),
+        (a + n * w, 1.0),
+        (b + n * w, 1.0),
+    ] {
         out.halo.pos.push([p.x, p.y, -0.002]);
         out.halo.nrm.push([0.0, 0.0, 1.0]);
         out.halo.uv.push([0.0, v]);
     }
-    out.halo.idx.extend([base, base + 1, base + 3, base, base + 3, base + 2, base + 2, base + 3, base + 5, base + 2, base + 5, base + 4]);
+    out.halo.idx.extend([
+        base,
+        base + 1,
+        base + 3,
+        base,
+        base + 3,
+        base + 2,
+        base + 2,
+        base + 3,
+        base + 5,
+        base + 2,
+        base + 5,
+        base + 4,
+    ]);
 }
 
 /// A square dot at `c`.
@@ -121,14 +148,24 @@ fn dot(out: &mut SegText, c: Vec2, half: f32) {
 }
 
 pub fn layout(text: &str, h: f32) -> SegText {
-    let mut out = SegText { width: width(text, h), ..default() };
+    let mut out = SegText {
+        width: width(text, h),
+        ..default()
+    };
     let w = WIDTH * h;
     let t = STROKE * h;
     let half = t / 2.0;
     for (i, c) in text.chars().enumerate() {
         let x0 = i as f32 * (WIDTH + GAP) * h;
         let p = |x: f32, y: f32| Vec2::new(x0 + x, y - h / 2.0);
-        let (tl, tr, ml, mr, bl, br) = (p(0.0, h), p(w, h), p(0.0, h / 2.0), p(w, h / 2.0), p(0.0, 0.0), p(w, 0.0));
+        let (tl, tr, ml, mr, bl, br) = (
+            p(0.0, h),
+            p(w, h),
+            p(0.0, h / 2.0),
+            p(w, h / 2.0),
+            p(0.0, 0.0),
+            p(w, 0.0),
+        );
         let (tc, mc, bc) = (p(w / 2.0, h), p(w / 2.0, h / 2.0), p(w / 2.0, 0.0));
         for s in strokes(c).chars() {
             let (a, b) = match s {
@@ -199,11 +236,27 @@ pub fn spawn(
         Align::Center => -t.width / 2.0,
         Align::Right => -t.width,
     };
-    let root = commands.spawn((Transform::from_translation(at + Vec3::X * x), Visibility::default(), ChildOf(parent))).id();
+    let root = commands
+        .spawn((
+            Transform::from_translation(at + Vec3::X * x),
+            Visibility::default(),
+            ChildOf(parent),
+        ))
+        .id();
     if !t.strokes.is_empty() {
-        commands.spawn((Mesh3d(meshes.add(t.strokes.to_mesh())), MeshMaterial3d(accent.clone()), Transform::IDENTITY, ChildOf(root)));
+        commands.spawn((
+            Mesh3d(meshes.add(t.strokes.to_mesh())),
+            MeshMaterial3d(accent.clone()),
+            Transform::IDENTITY,
+            ChildOf(root),
+        ));
         if let Some(g) = glow {
-            commands.spawn((Mesh3d(meshes.add(t.halo.to_mesh())), MeshMaterial3d(g.clone()), Transform::IDENTITY, ChildOf(root)));
+            commands.spawn((
+                Mesh3d(meshes.add(t.halo.to_mesh())),
+                MeshMaterial3d(g.clone()),
+                Transform::IDENTITY,
+                ChildOf(root),
+            ));
         }
     }
     root

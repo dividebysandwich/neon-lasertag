@@ -67,7 +67,8 @@ pub fn runtime_available() -> bool {
         }
     }
     // SAFETY: libEGL's functions with EGL's signatures.
-    let egl = match unsafe { khronos_egl::DynamicInstance::<khronos_egl::EGL1_5>::load_required() } {
+    let egl = match unsafe { khronos_egl::DynamicInstance::<khronos_egl::EGL1_5>::load_required() }
+    {
         Ok(egl) => egl,
         Err(e) => {
             eprintln!("glvr: no EGL ({e})");
@@ -117,21 +118,34 @@ pub fn add_plugins(app: &mut App, asset_root: &str) -> bool {
     let fovea = before_start();
     // (What the GPU would decode: no textures are drawn here. Said before the image plugins
     // look for it, as RenderPlugin would with a GPU.)
-    app.insert_resource(bevy::image::CompressedImageFormatSupport(bevy::image::CompressedImageFormats::NONE))
-        .add_plugins(
-            DefaultPlugins
-                .set(bevy::render::RenderPlugin {
-                    render_creation: bevy::render::settings::WgpuSettings { backends: None, ..default() }.into(),
+    app.insert_resource(bevy::image::CompressedImageFormatSupport(
+        bevy::image::CompressedImageFormats::NONE,
+    ))
+    .add_plugins(
+        DefaultPlugins
+            .set(bevy::render::RenderPlugin {
+                render_creation: bevy::render::settings::WgpuSettings {
+                    backends: None,
                     ..default()
-                })
-                .set(WindowPlugin { primary_window: None, exit_condition: ExitCondition::DontExit, ..default() })
-                .set(AssetPlugin { file_path: asset_root.to_string(), ..default() })
-                .disable::<bevy::winit::WinitPlugin>(),
-        )
-        // Despawning an entity synced to the render world (lights) records it for the render
-        // world, which isn't there: without the record keeping that panics.
-        .add_plugins(bevy::render::sync_world::SyncWorldPlugin)
-        .add_plugins((VrPlugin, GlVrPlugin(fovea)));
+                }
+                .into(),
+                ..default()
+            })
+            .set(WindowPlugin {
+                primary_window: None,
+                exit_condition: ExitCondition::DontExit,
+                ..default()
+            })
+            .set(AssetPlugin {
+                file_path: asset_root.to_string(),
+                ..default()
+            })
+            .disable::<bevy::winit::WinitPlugin>(),
+    )
+    // Despawning an entity synced to the render world (lights) records it for the render
+    // world, which isn't there: without the record keeping that panics.
+    .add_plugins(bevy::render::sync_world::SyncWorldPlugin)
+    .add_plugins((VrPlugin, GlVrPlugin(fovea)));
     true
 }
 
@@ -158,9 +172,20 @@ impl Plugin for GlVrPlugin {
 
 /// The rig (the tracking space in the arena, placed by vr.rs) and the listener.
 fn spawn_rig(mut commands: Commands) {
-    let rig = commands.spawn((Name::new("XR rig"), Transform::IDENTITY, Visibility::default())).id();
+    let rig = commands
+        .spawn((
+            Name::new("XR rig"),
+            Transform::IDENTITY,
+            Visibility::default(),
+        ))
+        .id();
     commands.insert_resource(XrRig(rig));
-    commands.spawn((Name::new("XR listener"), Listener, SpatialListener::new(0.2), Transform::IDENTITY));
+    commands.spawn((
+        Name::new("XR listener"),
+        Listener,
+        SpatialListener::new(0.2),
+        Transform::IDENTITY,
+    ));
 }
 
 /// The listener at the head in the world: the rig's transform times the head's tracking pose.
@@ -170,7 +195,9 @@ fn follow_head(
     rigs: Query<&Transform, Without<Listener>>,
     mut ears: Query<&mut Transform, With<Listener>>,
 ) {
-    let (Some(head), Some(rig)) = (input.head, rig) else { return };
+    let (Some(head), Some(rig)) = (input.head, rig) else {
+        return;
+    };
     let Ok(r) = rigs.get(rig.0) else { return };
     for mut t in &mut ears {
         *t = *r * head;
@@ -180,7 +207,9 @@ fn follow_head(
 fn collect_dirty(mut events: MessageReader<AssetEvent<Mesh>>, mut dirty: ResMut<DirtyMeshes>) {
     for e in events.read() {
         match e {
-            AssetEvent::Modified { id } | AssetEvent::Removed { id } | AssetEvent::Unused { id } => dirty.0.push(*id),
+            AssetEvent::Modified { id }
+            | AssetEvent::Removed { id }
+            | AssetEvent::Unused { id } => dirty.0.push(*id),
             _ => {}
         }
     }
@@ -188,7 +217,10 @@ fn collect_dirty(mut events: MessageReader<AssetEvent<Mesh>>, mut dirty: ResMut<
 
 /// `LT_GL_MSAA`: samples a pixel (0, 2 or 4; default 2).
 fn samples() -> i32 {
-    std::env::var("LT_GL_MSAA").ok().and_then(|v| v.parse().ok()).unwrap_or(2)
+    std::env::var("LT_GL_MSAA")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2)
 }
 
 fn runner(mut app: App) -> AppExit {
@@ -234,7 +266,9 @@ fn run(app: &mut App) -> Result<AppExit, String> {
     let (mut updates, mut update_time, mut extract_time) = (0u32, Duration::ZERO, Duration::ZERO);
     let stop = |exit: AppExit| {
         quit.store(true, Ordering::Relaxed);
-        thread.join().map_err(|_| "the render thread panicked".to_string())??;
+        thread
+            .join()
+            .map_err(|_| "the render thread panicked".to_string())??;
         Ok(exit)
     };
     loop {
@@ -315,7 +349,12 @@ fn render_thread(
     let context = egl::Context::new()?;
     let mut renderer = render::Renderer::new(
         context.gl(),
-        |name| context.egl.get_proc_address(name).map_or(std::ptr::null(), |f| f as *const std::ffi::c_void),
+        |name| {
+            context
+                .egl
+                .get_proc_address(name)
+                .map_or(std::ptr::null(), |f| f as *const std::ffi::c_void)
+        },
         samples(),
     )?;
     // Each frame's image is drawn with its own eyes and shown at once (waited for), into one
@@ -324,10 +363,15 @@ fn render_thread(
     // older images between new ones: a judder whenever the head turns).
     let direct = !std::env::var("LT_GL_DELAYED").is_ok_and(|v| v == "1");
     let mut headset = headset::Headset::new(&context, if direct { 1 } else { 2 })?;
-    info!("glvr: eyes {}x{}, sRGB {}", headset.size.0, headset.size.1, headset.srgb);
+    info!(
+        "glvr: eyes {}x{}, sRGB {}",
+        headset.size.0, headset.size.1, headset.srgb
+    );
     // LT_XR_SHOT=<secs>: both eyes' images saved that long into the run.
     let started = Instant::now();
-    let mut shot = std::env::var("LT_XR_SHOT").ok().and_then(|v| v.parse::<f32>().ok());
+    let mut shot = std::env::var("LT_XR_SHOT")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok());
     if !direct {
         info!("glvr: images shown a frame after they are drawn");
     }
@@ -344,9 +388,14 @@ fn render_thread(
             std::thread::sleep(Duration::from_millis(10));
             continue;
         }
-        let Some(frame) = headset.begin(!direct)? else { continue };
+        let Some(frame) = headset.begin(!direct)? else {
+            continue;
+        };
         // The main thread updates the game for the next frame meanwhile.
-        let _ = tick.try_send(Eyes { views: frame.views.clone(), controllers: frame.controllers });
+        let _ = tick.try_send(Eyes {
+            views: frame.views.clone(),
+            controllers: frame.controllers,
+        });
         let t0 = Instant::now();
         if let Some(new) = slot.lock().map_err(|_| "the draw list's lock")?.take() {
             for (i, &amount) in new.haptics.iter().enumerate() {

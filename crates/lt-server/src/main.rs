@@ -68,7 +68,13 @@ fn args() -> Args {
 }
 
 fn new_match(seed: u64, bots: usize, difficulty: Difficulty, arena: SizeChoice) -> (Sim, Bots) {
-    let mut sim = Sim::new(seed, Rules { arena: arena.pick(rand::random()), ..Rules::default() });
+    let mut sim = Sim::new(
+        seed,
+        Rules {
+            arena: arena.pick(rand::random()),
+            ..Rules::default()
+        },
+    );
     let mut b = Bots::default();
     b.fill(&mut sim, bots, difficulty.skill());
     (sim, b)
@@ -88,7 +94,11 @@ fn report(server: &Server, sim: &Sim, port: u16) -> ServerReport {
             .filter(|p| !p.bot)
             .map(|p| ReportPlayer {
                 name: p.name.clone(),
-                team: if p.team == Team::Red { TEAM_RED.into() } else { TEAM_BLUE.into() },
+                team: if p.team == Team::Red {
+                    TEAM_RED.into()
+                } else {
+                    TEAM_BLUE.into()
+                },
             })
             .collect(),
         max_players: lt_sim::sim::MAX_PLAYERS as u16,
@@ -141,7 +151,8 @@ fn main() {
             if since.elapsed() > Duration::from_secs(10) {
                 println!("match over {:?}; next arena", sim.scores);
                 seed = rand::random();
-                let (mut next_sim, mut next_bots) = new_match(seed, args.bots, args.difficulty, args.arena);
+                let (mut next_sim, mut next_bots) =
+                    new_match(seed, args.bots, args.difficulty, args.arena);
                 server.move_to(&mut next_sim, &mut next_bots, &sim);
                 sim = next_sim;
                 bots = next_bots;

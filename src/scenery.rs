@@ -27,14 +27,29 @@ use crate::music::{BANDS, MusicSpectrum};
 
 const PINK: Vec3 = Vec3::new(1.0, 0.12, 0.6);
 /// Scenery neon: the zone colours, then red and blue.
-const NEON: [Vec3; 7] = [ZONE_COLORS[0], ZONE_COLORS[1], ZONE_COLORS[2], ZONE_COLORS[3], ZONE_COLORS[4], RED, BLUE];
+const NEON: [Vec3; 7] = [
+    ZONE_COLORS[0],
+    ZONE_COLORS[1],
+    ZONE_COLORS[2],
+    ZONE_COLORS[3],
+    ZONE_COLORS[4],
+    RED,
+    BLUE,
+];
 const PURPLE: usize = 0;
 const CYAN: usize = 3;
 const ORANGE: usize = 4;
 const C_RED: usize = 5;
 const C_BLUE: usize = 6;
 /// The display's stacks, low to high.
-const STACK_COLORS: [Vec3; BANDS] = [ZONE_COLORS[0], PINK, ZONE_COLORS[4], ZONE_COLORS[1], ZONE_COLORS[2], ZONE_COLORS[3]];
+const STACK_COLORS: [Vec3; BANDS] = [
+    ZONE_COLORS[0],
+    PINK,
+    ZONE_COLORS[4],
+    ZONE_COLORS[1],
+    ZONE_COLORS[2],
+    ZONE_COLORS[3],
+];
 const WARM: Vec3 = Vec3::new(1.0, 0.48, 0.16);
 const COOL: Vec3 = Vec3::new(0.3, 0.55, 1.0);
 
@@ -122,15 +137,27 @@ fn make_materials(
         reflectance: 0.3,
         ..default()
     });
-    let mut accent = |c: Vec3, i: f32| accents.add(AccentMaterial { neon: NeonUniform::fixed(c, i) });
+    let mut accent = |c: Vec3, i: f32| {
+        accents.add(AccentMaterial {
+            neon: NeonUniform::fixed(c, i),
+        })
+    };
     let warm = accent(WARM, 0.5);
     let cool = accent(COOL, 0.5);
     let neon_accent = NEON.map(|c| accent(c, 3.0));
     let stack = STACK_COLORS.map(|c| accent(c, 4.0));
-    let mut glow = |c: Vec3, i: f32| glows.add(GlowMaterial { neon: NeonUniform::fixed(c, i) });
+    let mut glow = |c: Vec3, i: f32| {
+        glows.add(GlowMaterial {
+            neon: NeonUniform::fixed(c, i),
+        })
+    };
     let neon_glow = NEON.map(|c| glow(c, 1.3));
     let stack_glow = STACK_COLORS.map(|c| glow(c, 2.2));
-    let mut volume = |c: Vec3, i: f32| glows.add(GlowMaterial { neon: NeonUniform::fixed(c, i).volume() });
+    let mut volume = |c: Vec3, i: f32| {
+        glows.add(GlowMaterial {
+            neon: NeonUniform::fixed(c, i).volume(),
+        })
+    };
     let corner_cones = [volume(RED, CORNER_CONE[0]), volume(BLUE, CORNER_CONE[1])];
     let side_cones = volume(ZONE_COLORS[CYAN], SIDE_CONE);
     let sky_cones = volume(ZONE_COLORS[PURPLE], 0.7);
@@ -173,9 +200,11 @@ fn quad(m: &mut MeshData, p: [Vec3; 4], v: [f32; 4], n: Vec3) {
         m.uv.push([(i == 1 || i == 2) as u8 as f32, v[i]]);
     }
     if flip {
-        m.idx.extend([base, base + 2, base + 1, base, base + 3, base + 2]);
+        m.idx
+            .extend([base, base + 2, base + 1, base, base + 3, base + 2]);
     } else {
-        m.idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+        m.idx
+            .extend([base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 }
 
@@ -198,12 +227,20 @@ fn cuboid(m: &mut MeshData, c: Vec3, a: [Vec3; 3]) {
 
 fn aabox(m: &mut MeshData, min: Vec3, max: Vec3) {
     let h = (max - min) / 2.0;
-    cuboid(m, (min + max) / 2.0, [Vec3::X * h.x, Vec3::Y * h.y, Vec3::Z * h.z]);
+    cuboid(
+        m,
+        (min + max) / 2.0,
+        [Vec3::X * h.x, Vec3::Y * h.y, Vec3::Z * h.z],
+    );
 }
 
 /// Two unit vectors perpendicular to `d` and each other.
 fn basis(d: Vec3) -> (Vec3, Vec3) {
-    let s = if d.y.abs() < 0.99 { d.cross(Vec3::Y).normalize() } else { Vec3::X };
+    let s = if d.y.abs() < 0.99 {
+        d.cross(Vec3::Y).normalize()
+    } else {
+        Vec3::X
+    };
     (s, s.cross(d).normalize())
 }
 
@@ -248,8 +285,18 @@ fn lamp_halo(m: &mut MeshData, c: Vec3, r0: f32, r1: f32) {
 /// A rectangle's halo in the plane z: bright along the rectangle's edges, fading `w` outward.
 fn halo_rect(m: &mut MeshData, min: Vec2, max: Vec2, z: f32, w: f32, n: Vec3) {
     let p = |x: f32, y: f32| Vec3::new(x, y, z);
-    let inner = [p(min.x, min.y), p(max.x, min.y), p(max.x, max.y), p(min.x, max.y)];
-    let outer = [p(min.x - w, min.y - w), p(max.x + w, min.y - w), p(max.x + w, max.y + w), p(min.x - w, max.y + w)];
+    let inner = [
+        p(min.x, min.y),
+        p(max.x, min.y),
+        p(max.x, max.y),
+        p(min.x, max.y),
+    ];
+    let outer = [
+        p(min.x - w, min.y - w),
+        p(max.x + w, min.y - w),
+        p(max.x + w, max.y + w),
+        p(min.x - w, max.y + w),
+    ];
     for i in 0..4 {
         let j = (i + 1) % 4;
         halo_quad(m, [inner[i], inner[j], outer[j], outer[i]], n);
@@ -258,7 +305,15 @@ fn halo_rect(m: &mut MeshData, min: Vec2, max: Vec2, z: f32, w: f32, n: Vec3) {
 
 /// An open light cone from `apex` along `dir`: radius r0 there to r1 at `len`; uv v 0 at the
 /// emitter, 1 at the far end; normals outward.
-pub(crate) fn cone(m: &mut MeshData, apex: Vec3, dir: Vec3, len: f32, r0: f32, r1: f32, seg: usize) {
+pub(crate) fn cone(
+    m: &mut MeshData,
+    apex: Vec3,
+    dir: Vec3,
+    len: f32,
+    r0: f32,
+    r1: f32,
+    seg: usize,
+) {
     let (s, u) = basis(dir);
     let slope = (r1 - r0) / len;
     let base = m.pos.len() as u32;
@@ -273,7 +328,12 @@ pub(crate) fn cone(m: &mut MeshData, apex: Vec3, dir: Vec3, len: f32, r0: f32, r
         }
     }
     for i in 0..seg as u32 {
-        let (a, b, c, d) = (base + i * 2, base + i * 2 + 1, base + i * 2 + 3, base + i * 2 + 2);
+        let (a, b, c, d) = (
+            base + i * 2,
+            base + i * 2 + 1,
+            base + i * 2 + 3,
+            base + i * 2 + 2,
+        );
         m.idx.extend([a, b, c, a, c, d]);
     }
 }
@@ -294,12 +354,26 @@ impl Tier {
         let poly = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
             .map(|(x, z)| c + r.rotate(Vec2::new(x * w / 2.0, z * d / 2.0)))
             .to_vec();
-        Tier { c, poly, y0, y1, top }
+        Tier {
+            c,
+            poly,
+            y0,
+            y1,
+            top,
+        }
     }
 
     fn ngon(c: Vec2, n: usize, r: f32, yaw: f32, y0: f32, y1: f32, top: f32) -> Tier {
-        let poly = (0..n).map(|i| c + Vec2::from_angle(yaw + i as f32 / n as f32 * TAU) * r).collect();
-        Tier { c, poly, y0, y1, top }
+        let poly = (0..n)
+            .map(|i| c + Vec2::from_angle(yaw + i as f32 / n as f32 * TAU) * r)
+            .collect();
+        Tier {
+            c,
+            poly,
+            y0,
+            y1,
+            top,
+        }
     }
 
     fn n(&self) -> usize {
@@ -317,10 +391,18 @@ impl Tier {
     }
 
     fn normal(&self, i: usize) -> Vec3 {
-        let (a, b, t) = (self.corner(i, 0.0), self.corner(i + 1, 0.0), self.corner(i, 1.0));
+        let (a, b, t) = (
+            self.corner(i, 0.0),
+            self.corner(i + 1, 0.0),
+            self.corner(i, 1.0),
+        );
         let n = (b - a).cross(t - a).normalize();
         let mid = (a + b) / 2.0;
-        if n.dot(mid - Vec3::new(self.c.x, mid.y, self.c.y)) < 0.0 { -n } else { n }
+        if n.dot(mid - Vec3::new(self.c.x, mid.y, self.c.y)) < 0.0 {
+            -n
+        } else {
+            n
+        }
     }
 
     /// Up along face i.
@@ -342,7 +424,11 @@ impl Tier {
 
     /// Distance from the centre to the faces at the top (roughly).
     fn top_radius(&self) -> f32 {
-        let r = self.poly.iter().map(|p| p.distance(self.c)).fold(f32::MAX, f32::min);
+        let r = self
+            .poly
+            .iter()
+            .map(|p| p.distance(self.c))
+            .fold(f32::MAX, f32::min);
         r * self.top
     }
 }
@@ -382,11 +468,26 @@ struct Style {
 fn tier_body(p: &mut Parts, t: &Tier) {
     for i in 0..t.n() {
         let n = t.normal(i);
-        quad(&mut p.body, [t.corner(i, 0.0), t.corner(i + 1, 0.0), t.corner(i + 1, 1.0), t.corner(i, 1.0)], [0.0; 4], n);
+        quad(
+            &mut p.body,
+            [
+                t.corner(i, 0.0),
+                t.corner(i + 1, 0.0),
+                t.corner(i + 1, 1.0),
+                t.corner(i, 1.0),
+            ],
+            [0.0; 4],
+            n,
+        );
     }
     let c = t.top_centre();
     for i in 0..t.n() {
-        quad(&mut p.body, [c, t.corner(i, 1.0), t.corner(i + 1, 1.0), c], [0.0; 4], Vec3::Y);
+        quad(
+            &mut p.body,
+            [c, t.corner(i, 1.0), t.corner(i + 1, 1.0), c],
+            [0.0; 4],
+            Vec3::Y,
+        );
     }
 }
 
@@ -407,7 +508,14 @@ fn windows(p: &mut Parts, rng: &mut StdRng, t: &Tier, st: &Style, skip: &[(f32, 
                 continue;
             }
             let busy = rng.random::<f32>();
-            let chance = st.lit * if busy < 0.2 { 2.4 } else if busy < 0.5 { 0.15 } else { 0.8 };
+            let chance = st.lit
+                * if busy < 0.2 {
+                    2.4
+                } else if busy < 0.5 {
+                    0.15
+                } else {
+                    0.8
+                };
             let (va, vb) = (t.v_of(ya), t.v_of(yb));
             for c in 0..cols {
                 if rng.random::<f32>() > chance {
@@ -417,7 +525,12 @@ fn windows(p: &mut Parts, rng: &mut StdRng, t: &Tier, st: &Style, skip: &[(f32, 
                 let uc = (c as f32 + 0.5) / cols as f32;
                 let du = st.win_w / 2.0 / wv;
                 let o = n * st.off;
-                let q = [t.at(i, uc - du, va) + o, t.at(i, uc + du, va) + o, t.at(i, uc + du, vb) + o, t.at(i, uc - du, vb) + o];
+                let q = [
+                    t.at(i, uc - du, va) + o,
+                    t.at(i, uc + du, va) + o,
+                    t.at(i, uc + du, vb) + o,
+                    t.at(i, uc - du, vb) + o,
+                ];
                 let warm = st.warm != (rng.random::<f32>() < st.mixed);
                 quad(if warm { &mut p.warm } else { &mut p.cool }, q, [0.0; 4], n);
             }
@@ -437,12 +550,30 @@ fn band(p: &mut Parts, t: &Tier, y: f32, bh: f32, color: usize, st: &Style) {
         quad(&mut p.accent[color], [a[0], a[1], b[1], b[0]], [0.0; 4], n);
         // Lips, so it reads from above and below.
         let d = n * st.off;
-        quad(&mut p.accent[color], [b[0], b[1], b[1] + d, b[0] + d], [0.0; 4], up);
-        quad(&mut p.accent[color], [a[0], a[1], a[1] + d, a[0] + d], [0.0; 4], -up);
+        quad(
+            &mut p.accent[color],
+            [b[0], b[1], b[1] + d, b[0] + d],
+            [0.0; 4],
+            up,
+        );
+        quad(
+            &mut p.accent[color],
+            [a[0], a[1], a[1] + d, a[0] + d],
+            [0.0; 4],
+            -up,
+        );
         let h = st.halo;
         let g = n * st.off;
-        halo_quad(&mut p.glow[color], [b[0] + g, b[1] + g, b[1] + g + up * h, b[0] + g + up * h], n);
-        halo_quad(&mut p.glow[color], [a[0] + g, a[1] + g, a[1] + g - up * h, a[0] + g - up * h], n);
+        halo_quad(
+            &mut p.glow[color],
+            [b[0] + g, b[1] + g, b[1] + g + up * h, b[0] + g + up * h],
+            n,
+        );
+        halo_quad(
+            &mut p.glow[color],
+            [a[0] + g, a[1] + g, a[1] + g - up * h, a[0] + g - up * h],
+            n,
+        );
     }
 }
 
@@ -456,7 +587,11 @@ fn crown(p: &mut Parts, t: &Tier, color: usize, st: &Style) {
         let o = n * st.off * 3.0;
         let a = [t.corner(i, 1.0) + o, t.corner(i + 1, 1.0) + o];
         let rise = Vec3::Y * h + n * h * 0.3;
-        halo_quad(&mut p.glow[color], [a[0], a[1], a[1] + rise, a[0] + rise], n);
+        halo_quad(
+            &mut p.glow[color],
+            [a[0], a[1], a[1] + rise, a[0] + rise],
+            n,
+        );
     }
 }
 
@@ -474,7 +609,11 @@ fn edge_lines(p: &mut Parts, t: &Tier, step: usize, color: usize, st: &Style) {
         for (n, towards) in [(n1, t.corner(i + 1, 0.0)), (n0, t.corner(prev, 0.0))] {
             let along = (towards - t.corner(i, 0.0)).normalize() * w;
             let g = n * st.off * 2.0;
-            halo_quad(&mut p.glow[color], [a + g, b + g, b + g + along, a + g + along], n);
+            halo_quad(
+                &mut p.glow[color],
+                [a + g, b + g, b + g + along, a + g + along],
+                n,
+            );
         }
     }
 }
@@ -498,21 +637,40 @@ fn spire(p: &mut Parts, rng: &mut StdRng, t: &Tier, st: &Style) {
 }
 
 /// A tower at `at`, `d` metres from the arena. `team`: the colour index of the side it is on.
-fn tower(p: &mut Parts, rng: &mut StdRng, at: Vec2, d: f32, team: usize, roofs: &mut Vec<(Vec3, f32)>) {
+fn tower(
+    p: &mut Parts,
+    rng: &mut StdRng,
+    at: Vec2,
+    d: f32,
+    team: usize,
+    roofs: &mut Vec<(Vec3, f32)>,
+) {
     let t = (d / 180.0).clamp(0.0, 1.0);
     let mut h = lerp(10.0, 55.0, t) * rng.random_range(0.6..1.5);
     if d > 80.0 && rng.random_bool(0.1) {
         h *= 1.8;
     }
     let fp = lerp(7.0, 18.0, t) * rng.random_range(0.7..1.25);
-    let yaw = if rng.random_bool(0.5) { rng.random_range(0.0..TAU) } else { at.to_angle() + FRAC_PI_2 };
+    let yaw = if rng.random_bool(0.5) {
+        rng.random_range(0.0..TAU)
+    } else {
+        at.to_angle() + FRAC_PI_2
+    };
     let pick = |rng: &mut StdRng| {
-        if rng.random_bool(0.2) { team } else { rng.random_range(0..5) }
+        if rng.random_bool(0.2) {
+            team
+        } else {
+            rng.random_range(0..5)
+        }
     };
     let color = pick(rng);
     let st = Style {
         color,
-        crown_color: if rng.random_bool(0.3) { pick(rng) } else { color },
+        crown_color: if rng.random_bool(0.3) {
+            pick(rng)
+        } else {
+            color
+        },
         warm: rng.random_bool(0.55),
         mixed: rng.random_range(0.0..0.3),
         lit: rng.random_range(0.08..0.4),
@@ -537,7 +695,11 @@ fn tower(p: &mut Parts, rng: &mut StdRng, at: Vec2, d: f32, team: usize, roofs: 
             let mut y = 0.0;
             let mut s = 1.0;
             for k in 0..n {
-                let part = if k == n - 1 { h - y } else { h * rng.random_range(0.25..0.5) };
+                let part = if k == n - 1 {
+                    h - y
+                } else {
+                    h * rng.random_range(0.25..0.5)
+                };
                 let y1 = (y + part).min(h).max(y + 3.0);
                 tiers.push(if prism {
                     Tier::ngon(at, ngon_sides, fp / 2.0 * s, yaw, y, y1, 1.0)
@@ -635,7 +797,10 @@ fn city(p: &mut Parts, rng: &mut StdRng) -> Vec<(Vec3, f32)> {
         if towers.len() >= 170 {
             break;
         }
-        let at = Vec2::new(rng.random_range(-210.0..210.0), rng.random_range(-210.0..210.0));
+        let at = Vec2::new(
+            rng.random_range(-210.0..210.0),
+            rng.random_range(-210.0..210.0),
+        );
         let d = arena_distance(p.half, at);
         if !(12.0..200.0).contains(&d) || at.length() < 25.0 {
             continue;
@@ -648,7 +813,10 @@ fn city(p: &mut Parts, rng: &mut StdRng) -> Vec<(Vec3, f32)> {
         }
         let size = lerp(7.0, 18.0, (d / 180.0).clamp(0.0, 1.0)) * 1.25;
         let gap = 4.0 + d * 0.04;
-        if towers.iter().any(|(q, s)| q.distance(at) < (size + s) / 2.0 + gap) {
+        if towers
+            .iter()
+            .any(|(q, s)| q.distance(at) < (size + s) / 2.0 + gap)
+        {
             continue;
         }
         towers.push((at, size));
@@ -662,20 +830,33 @@ fn city(p: &mut Parts, rng: &mut StdRng) -> Vec<(Vec3, f32)> {
 /// A light fixture at `at` shining along `dir`: a dark housing, a lens and its glow.
 fn emitter(p: &mut Parts, at: Vec3, dir: Vec3, r: f32, color: usize) {
     let (s, u) = basis(dir);
-    cuboid(&mut p.body, at - dir * r * 0.9, [dir * r * 0.8, s * r * 1.3, u * r * 1.3]);
+    cuboid(
+        &mut p.body,
+        at - dir * r * 0.9,
+        [dir * r * 0.8, s * r * 1.3, u * r * 1.3],
+    );
     disc(&mut p.accent[color], at + dir * 0.02, dir, r, 12);
     halo_ring(&mut p.glow[color], at + dir * 0.03, dir, r, r * 2.5, 12);
 }
 
 /// Cones from the arena's corners and long walls, and searchlights on the roofs.
-fn cones(p: &mut Parts, rng: &mut StdRng, roofs: &[(Vec3, f32)]) -> Vec<(Vec3, Quat, f32, f32, usize)> {
+fn cones(
+    p: &mut Parts,
+    rng: &mut StdRng,
+    roofs: &[(Vec3, f32)],
+) -> Vec<(Vec3, Quat, f32, f32, usize)> {
     let (hx, hz) = (p.half.x + BORDER_T / 2.0, p.half.y + BORDER_T / 2.0);
     for sx in [1.0, -1.0] {
         for sz in [1.0f32, -1.0] {
             // Beams crossing over the arena, rising, so nobody stands in them: the lower edge
             // stays above the border wall's top.
             let at = Vec3::new(sx * hx, BORDER_H + 1.5, sz * hz);
-            beam(&mut p.body, Vec3::new(at.x, BORDER_H - 0.2, at.z), at - Vec3::Y * 0.3, 0.25);
+            beam(
+                &mut p.body,
+                Vec3::new(at.x, BORDER_H - 0.2, at.z),
+                at - Vec3::Y * 0.3,
+                0.25,
+            );
             let aim = Vec3::new(-sx * 10.0, 13.5, sz * 4.0);
             let dir = (aim - at).normalize();
             let team = if sz > 0.0 { 0 } else { 1 };
@@ -691,12 +872,18 @@ fn cones(p: &mut Parts, rng: &mut StdRng, roofs: &[(Vec3, f32)]) -> Vec<(Vec3, Q
         }
     }
     // Searchlights: on the nearer roofs, some fixed, four sweeping.
-    let mut near: Vec<&(Vec3, f32)> = roofs.iter().filter(|(r, d)| *d < 110.0 && r.y > 18.0).collect();
+    let mut near: Vec<&(Vec3, f32)> = roofs
+        .iter()
+        .filter(|(r, d)| *d < 110.0 && r.y > 18.0)
+        .collect();
     near.sort_by(|a, b| a.1.total_cmp(&b.1));
     // Spread them around rather than taking the nearest few.
     let mut picked: Vec<Vec3> = Vec::new();
     for (r, _) in near {
-        if picked.iter().all(|q| Vec2::new(q.x - r.x, q.z - r.z).length() > 45.0) {
+        if picked
+            .iter()
+            .all(|q| Vec2::new(q.x - r.x, q.z - r.z).length() > 45.0)
+        {
             picked.push(*r);
         }
         if picked.len() >= 8 {
@@ -706,13 +893,18 @@ fn cones(p: &mut Parts, rng: &mut StdRng, roofs: &[(Vec3, f32)]) -> Vec<(Vec3, Q
     let mut sweeping = Vec::new();
     for (i, at) in picked.iter().enumerate() {
         let lens = *at + Vec3::Y * 0.8;
-        aabox(&mut p.body, *at - Vec3::new(0.6, 0.0, 0.6), *at + Vec3::new(0.6, 0.6, 0.6));
+        aabox(
+            &mut p.body,
+            *at - Vec3::new(0.6, 0.0, 0.6),
+            *at + Vec3::new(0.6, 0.6, 0.6),
+        );
         if i % 2 == 0 && sweeping.len() < 4 {
             let k = sweeping.len();
             disc(&mut p.accent[k + 1], lens, Vec3::Y, 0.45, 12);
             lamp_halo(&mut p.glow[k + 1], lens, 0.45, 2.5);
             let tilt = Quat::from_rotation_x(rng.random_range(0.25..0.55));
-            let speed = rng.random_range(0.12..0.25) * if rng.random_bool(0.5) { 1.0 } else { -1.0 };
+            let speed =
+                rng.random_range(0.12..0.25) * if rng.random_bool(0.5) { 1.0 } else { -1.0 };
             sweeping.push((lens, tilt, speed, rng.random_range(0.0..TAU), k));
         } else {
             let away = Vec3::new(at.x, 0.0, at.z).normalize_or_zero();
@@ -750,7 +942,11 @@ fn segment(m: &mut MeshData, half_len: f32, s: f32, b: usize, j: usize) {
 
 /// The displays' frames (static) and their stacks' meshes.
 /// Per stack: lit meshes (1..=SEGMENTS lit), halo meshes (0..=SEGMENTS lit), the peak segment (row 0).
-type StackMeshes = (Vec<Vec<Handle<Mesh>>>, Vec<Vec<Handle<Mesh>>>, Vec<Handle<Mesh>>);
+type StackMeshes = (
+    Vec<Vec<Handle<Mesh>>>,
+    Vec<Vec<Handle<Mesh>>>,
+    Vec<Handle<Mesh>>,
+);
 
 fn displays(p: &mut Parts, meshes: &mut Assets<Mesh>) -> StackMeshes {
     for s in [1.0f32, -1.0] {
@@ -762,11 +958,20 @@ fn displays(p: &mut Parts, meshes: &mut Assets<Mesh>) -> StackMeshes {
             Vec3::new(DISP_W / 2.0 + m, DISP_Y0 + DISP_H + m, z + DISP_DEPTH / 2.0),
         );
         for x in [-6.0, 6.0] {
-            aabox(&mut p.body, Vec3::new(x - 0.4, 0.0, z - 0.3), Vec3::new(x + 0.4, DISP_Y0, z + 0.3));
+            aabox(
+                &mut p.body,
+                Vec3::new(x - 0.4, 0.0, z - 0.3),
+                Vec3::new(x + 0.4, DISP_Y0, z + 0.3),
+            );
         }
         let color = if s > 0.0 { C_RED } else { C_BLUE };
         let fz = front_z(p.half.y, s) - s * 0.03;
-        let (x0, x1, y0, y1) = (-DISP_W / 2.0 - m, DISP_W / 2.0 + m, DISP_Y0 - m, DISP_Y0 + DISP_H + m);
+        let (x0, x1, y0, y1) = (
+            -DISP_W / 2.0 - m,
+            DISP_W / 2.0 + m,
+            DISP_Y0 - m,
+            DISP_Y0 + DISP_H + m,
+        );
         let t = 0.14;
         let n = Vec3::Z * -s;
         for (a, b) in [
@@ -777,9 +982,21 @@ fn displays(p: &mut Parts, meshes: &mut Assets<Mesh>) -> StackMeshes {
         ] {
             beam(&mut p.accent[color], a, b, t);
         }
-        halo_rect(&mut p.glow[color], Vec2::new(x0 - t, y0 - t), Vec2::new(x1 + t, y1 + t), fz, 1.8, n);
+        halo_rect(
+            &mut p.glow[color],
+            Vec2::new(x0 - t, y0 - t),
+            Vec2::new(x1 + t, y1 + t),
+            fz,
+            1.8,
+            n,
+        );
         // A line under the stacks.
-        beam(&mut p.accent[color], Vec3::new(x0 + 0.6, DISP_Y0 + 0.2, fz), Vec3::new(x1 - 0.6, DISP_Y0 + 0.2, fz), 0.06);
+        beam(
+            &mut p.accent[color],
+            Vec3::new(x0 + 0.6, DISP_Y0 + 0.2, fz),
+            Vec3::new(x1 - 0.6, DISP_Y0 + 0.2, fz),
+            0.06,
+        );
     }
     let mut lit = Vec::new();
     let mut halo = Vec::new();
@@ -863,7 +1080,12 @@ fn build(
     // The ground around the arena.
     quad(
         &mut p.body,
-        [Vec3::new(-400.0, -0.05, -400.0), Vec3::new(400.0, -0.05, -400.0), Vec3::new(400.0, -0.05, 400.0), Vec3::new(-400.0, -0.05, 400.0)],
+        [
+            Vec3::new(-400.0, -0.05, -400.0),
+            Vec3::new(400.0, -0.05, -400.0),
+            Vec3::new(400.0, -0.05, 400.0),
+            Vec3::new(-400.0, -0.05, 400.0),
+        ],
         [0.0; 4],
         Vec3::Y,
     );
@@ -873,13 +1095,21 @@ fn build(
 
     let mut tris = 0;
     let mut draws = 0;
-    let mut spawn = |commands: &mut Commands, data: &MeshData, name: &str, mat: &dyn Fn(&mut EntityCommands)| {
+    let mut spawn = |commands: &mut Commands,
+                     data: &MeshData,
+                     name: &str,
+                     mat: &dyn Fn(&mut EntityCommands)| {
         if data.is_empty() {
             return;
         }
         tris += triangles(data);
         draws += 1;
-        let mut e = commands.spawn((Scenery, Mesh3d(meshes.add(data.to_mesh())), Transform::IDENTITY, Name::new(format!("scenery {name}"))));
+        let mut e = commands.spawn((
+            Scenery,
+            Mesh3d(meshes.add(data.to_mesh())),
+            Transform::IDENTITY,
+            Name::new(format!("scenery {name}")),
+        ));
         mat(&mut e);
     };
     spawn(&mut commands, &p.body, "body", &|e| {
@@ -933,14 +1163,32 @@ fn build(
     d.hold = [0.0; BANDS];
     for b in 0..BANDS {
         let lit_e = commands
-            .spawn((Scenery, Mesh3d(lit[b][0].clone()), MeshMaterial3d(mats.stack[b].clone()), Transform::IDENTITY, Visibility::Hidden))
+            .spawn((
+                Scenery,
+                Mesh3d(lit[b][0].clone()),
+                MeshMaterial3d(mats.stack[b].clone()),
+                Transform::IDENTITY,
+                Visibility::Hidden,
+            ))
             .id();
         let halo_e = commands
-            .spawn((Scenery, Mesh3d(halo[b][0].clone()), MeshMaterial3d(mats.stack_glow[b].clone()), Transform::IDENTITY, Visibility::Inherited))
+            .spawn((
+                Scenery,
+                Mesh3d(halo[b][0].clone()),
+                MeshMaterial3d(mats.stack_glow[b].clone()),
+                Transform::IDENTITY,
+                Visibility::Inherited,
+            ))
             .id();
         // The peak: the stack's bottom segment, moved up to its row.
         let peak_e = commands
-            .spawn((Scenery, Mesh3d(peak[b].clone()), MeshMaterial3d(mats.stack[b].clone()), Transform::IDENTITY, Visibility::Hidden))
+            .spawn((
+                Scenery,
+                Mesh3d(peak[b].clone()),
+                MeshMaterial3d(mats.stack[b].clone()),
+                Transform::IDENTITY,
+                Visibility::Hidden,
+            ))
             .id();
         d.stacks.push((lit_e, halo_e, peak_e));
         draws += 3;
@@ -982,7 +1230,11 @@ fn update_displays(
         d.shown[b] = (k, peak);
         let (lit_e, halo_e, peak_e) = d.stacks[b];
         if let Ok((mut mesh, mut vis, _)) = q.get_mut(lit_e) {
-            vis.set_if_neq(if k > 0 { Visibility::Inherited } else { Visibility::Hidden });
+            vis.set_if_neq(if k > 0 {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            });
             if k > 0 {
                 mesh.set_if_neq(Mesh3d(d.lit[b][k - 1].clone()));
             }
@@ -991,7 +1243,11 @@ fn update_displays(
             mesh.set_if_neq(Mesh3d(d.halo[b][k].clone()));
         }
         if let Ok((_, mut vis, mut tf)) = q.get_mut(peak_e) {
-            vis.set_if_neq(if peak.is_some() { Visibility::Inherited } else { Visibility::Hidden });
+            vis.set_if_neq(if peak.is_some() {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            });
             if let Some(j) = peak {
                 tf.translation.y = j as f32 * SEG_PITCH;
             }
@@ -1006,7 +1262,11 @@ fn sweep(time: Res<Time>, mut q: Query<(&Sweep, &mut Transform)>) {
     }
 }
 
-fn pulse(spectrum: Res<MusicSpectrum>, mats: Res<SceneryMats>, mut glows: ResMut<Assets<GlowMaterial>>) {
+fn pulse(
+    spectrum: Res<MusicSpectrum>,
+    mats: Res<SceneryMats>,
+    mut glows: ResMut<Assets<GlowMaterial>>,
+) {
     let k = 0.55 + 0.9 * spectrum.bass;
     for (h, base) in &mats.pulsing {
         if let Some(mut m) = glows.get_mut(h) {
@@ -1024,7 +1284,11 @@ fn debug_view(
     mut view: Local<Option<Option<(Vec3, Vec3)>>>,
 ) {
     let view = view.get_or_insert_with(|| {
-        let n: Vec<f32> = std::env::var("LT_VIEW").ok()?.split(',').filter_map(|t| t.parse().ok()).collect();
+        let n: Vec<f32> = std::env::var("LT_VIEW")
+            .ok()?
+            .split(',')
+            .filter_map(|t| t.parse().ok())
+            .collect();
         (n.len() >= 6).then(|| (Vec3::new(n[0], n[1], n[2]), Vec3::new(n[3], n[4], n[5])))
     });
     let Some((at, target)) = *view else { return };
