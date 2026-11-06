@@ -64,6 +64,18 @@ struct Walked {
 /// Spatial sounds play at full volume within 1 / SPATIAL_SCALE metres (see above).
 const SPATIAL_SCALE: f32 = 0.12;
 
+/// The listener for the camera or head (ears 20 cm apart). rodio's `Spatial` (through 0.22) pans
+/// backwards: of the two ears it gives the one farther from the sound the louder channel (a
+/// sound at the left ear plays at 0.5 left, 1.0 right). So the ears given to it are swapped: the
+/// "left" one on the listener's right, which comes out of the left channel the right way round.
+pub fn listener() -> SpatialListener {
+    let ears = SpatialListener::new(0.2);
+    SpatialListener {
+        left_ear_offset: ears.right_ear_offset,
+        right_ear_offset: ears.left_ear_offset,
+    }
+}
+
 pub struct SoundPlugin;
 
 impl Plugin for SoundPlugin {

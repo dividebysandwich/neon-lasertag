@@ -145,7 +145,7 @@ fn spawn_camera(mut commands: Commands) {
         MainCamera,
         camera_bundle(),
         Transform::from_xyz(0.0, 8.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y),
-        SpatialListener::new(0.2),
+        crate::audio::listener(),
     ));
 }
 

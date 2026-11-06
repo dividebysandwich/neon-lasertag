@@ -183,7 +183,7 @@ fn spawn_rig(mut commands: Commands) {
     commands.spawn((
         Name::new("XR listener"),
         Listener,
-        SpatialListener::new(0.2),
+        crate::audio::listener(),
         Transform::IDENTITY,
     ));
 }

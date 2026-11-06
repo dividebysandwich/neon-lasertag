@@ -361,7 +361,7 @@ fn setup_cameras(
         }
         if !*first {
             *first = true;
-            c.insert(SpatialListener::new(0.2));
+            c.insert(crate::audio::listener());
         }
     }
 }
