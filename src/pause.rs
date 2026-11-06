@@ -7,6 +7,7 @@ use bevy::window::{CursorOptions, PrimaryWindow};
 
 use crate::desktop::{Overlays, set_grab};
 use crate::game::Game;
+use crate::neonui::{self, NeonButton};
 use crate::session::SessionCmd;
 
 #[derive(Component)]
@@ -32,9 +33,6 @@ impl Plugin for PausePlugin {
         );
     }
 }
-
-const BUTTON: Color = Color::srgb(0.08, 0.08, 0.14);
-const BUTTON_HOVER: Color = Color::srgb(0.16, 0.12, 0.3);
 
 fn toggle(
     keys: Res<ButtonInput<KeyCode>>,
@@ -65,24 +63,12 @@ fn resume(overlays: &mut Overlays, cursor: &mut Query<&mut CursorOptions, With<P
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn buttons(
     q: Query<(&Interaction, &PauseButton), Changed<Interaction>>,
-    mut colors: Query<
-        (&Interaction, &mut BackgroundColor),
-        (Changed<Interaction>, With<PauseButton>),
-    >,
     mut overlays: ResMut<Overlays>,
     mut cursor: Query<&mut CursorOptions, With<PrimaryWindow>>,
     mut cmds: MessageWriter<SessionCmd>,
 ) {
-    for (i, mut bg) in &mut colors {
-        bg.0 = if *i == Interaction::None {
-            BUTTON
-        } else {
-            BUTTON_HOVER
-        };
-    }
     for (i, b) in &q {
         if *i != Interaction::Pressed {
             continue;
@@ -101,17 +87,6 @@ fn buttons(
     }
 }
 
-fn label(s: &str, size: f32, color: Color) -> impl Bundle {
-    (
-        Text::new(s),
-        TextFont {
-            font_size: FontSize::Px(size),
-            ..default()
-        },
-        TextColor(color),
-    )
-}
-
 fn show(
     mut commands: Commands,
     overlays: Res<Overlays>,
@@ -122,55 +97,31 @@ fn show(
     match (open, root.single()) {
         (true, Err(_)) => {
             commands
-                .spawn((
-                    PauseRoot,
-                    Node {
-                        position_type: PositionType::Absolute,
-                        width: Val::Percent(100.0),
-                        height: Val::Percent(100.0),
-                        flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::Center,
-                        row_gap: Val::Px(16.0),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgba(0.01, 0.01, 0.03, 0.75)),
-                    GlobalZIndex(20),
-                ))
+                .spawn((PauseRoot, neonui::backdrop(neonui::BACKDROP_DEEP, 20)))
                 .with_children(|p| {
-                    p.spawn(label("MENU", 56.0, Color::srgb(1.0, 0.3, 0.4)));
-                    p.spawn(Node {
-                        height: Val::Px(12.0),
-                        ..default()
-                    });
-                    for (text, b) in [
-                        ("Resume", PauseButton::Resume),
-                        ("Options", PauseButton::Options),
-                        ("Leave to main menu", PauseButton::Leave),
-                        ("Quit game", PauseButton::Quit),
-                    ] {
-                        p.spawn((
-                            Button,
-                            b,
-                            Node {
-                                width: Val::Px(340.0),
-                                padding: UiRect::axes(Val::Px(22.0), Val::Px(12.0)),
-                                border: UiRect::all(Val::Px(2.0)),
-                                justify_content: JustifyContent::Center,
-                                ..default()
-                            },
-                            BorderColor::all(Color::srgb(0.5, 0.2, 0.9)),
-                            BackgroundColor(BUTTON),
-                        ))
-                        .with_children(|b| {
-                            b.spawn(label(text, 26.0, Color::WHITE));
+                    neonui::title(p, "MENU", 52.0, neonui::PINK);
+                    p.spawn(neonui::panel(neonui::MAGENTA, None))
+                        .with_children(|p| {
+                            for (text, b, color) in [
+                                ("RESUME", PauseButton::Resume, neonui::CYAN),
+                                ("OPTIONS", PauseButton::Options, neonui::VIOLET),
+                                ("LEAVE TO MAIN MENU", PauseButton::Leave, neonui::MAGENTA),
+                                ("QUIT GAME", PauseButton::Quit, neonui::PINK),
+                            ] {
+                                neonui::button(
+                                    p,
+                                    text,
+                                    b,
+                                    NeonButton::new(color),
+                                    Some(360.0),
+                                    22.0,
+                                );
+                            }
                         });
+                    if let Some(status) = game.as_ref().and_then(|g| hosting(g)) {
+                        p.spawn(neonui::text(status, 15.0, neonui::CYAN));
                     }
-                    p.spawn(label(
-                        "Esc: back to the game",
-                        16.0,
-                        Color::srgb(0.6, 0.6, 0.7),
-                    ));
+                    p.spawn(neonui::text("Esc: back to the game", 15.0, neonui::DIM));
                 });
         }
         (false, Ok(e)) => {
@@ -180,12 +131,15 @@ fn show(
     }
 }
 
-fn hosting(game: &Game) -> bool {
-    matches!(
-        &game.source,
+/// What a hosting game says about its server (its address, the port's state).
+fn hosting(game: &Game) -> Option<String> {
+    match &game.source {
         crate::game::Source::Local {
-            server: Some(_),
-            ..
-        }
-    )
+            server: Some(s), ..
+        } => Some(format!(
+            "Hosting on UDP port {}",
+            s.port().unwrap_or_default()
+        )),
+        _ => None,
+    }
 }

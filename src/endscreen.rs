@@ -11,6 +11,7 @@ use bevy::window::{CursorOptions, PrimaryWindow};
 
 use crate::desktop::{Overlays, set_grab};
 use crate::game::Game;
+use crate::neonui::{self, NeonButton};
 use crate::session::{Session, SessionCmd};
 
 /// One player's line in the results.
@@ -187,20 +188,11 @@ impl Plugin for EndScreenPlugin {
     }
 }
 
-const BUTTON: Color = Color::srgb(0.08, 0.08, 0.14);
-const BUTTON_HOVER: Color = Color::srgb(0.16, 0.12, 0.3);
 /// Column widths: name, score, tags, tagged, accuracy, targets.
 const COLUMNS: [f32; 7] = [160.0, 72.0, 56.0, 72.0, 76.0, 92.0, 76.0];
 
 fn label(s: impl Into<String>, size: f32, color: Color) -> impl Bundle {
-    (
-        Text::new(s.into()),
-        TextFont {
-            font_size: FontSize::Px(size),
-            ..default()
-        },
-        TextColor(color),
-    )
+    neonui::text(s, size, color)
 }
 
 fn row(
@@ -274,8 +266,8 @@ fn table(p: &mut ChildSpawnerCommands, team: Team, score: u32, rows: &[Row]) {
             BorderColor::all(color),
         ))
         .with_children(|h| {
-            h.spawn(label(name, 34.0, color));
-            h.spawn(label(score.to_string(), 34.0, color));
+            h.spawn(neonui::text_w(name, 30.0, color, 800));
+            h.spawn(neonui::text_w(score.to_string(), 30.0, color, 800));
         });
         t.spawn((
             Node {
@@ -292,7 +284,7 @@ fn table(p: &mut ChildSpawnerCommands, team: Team, score: u32, rows: &[Row]) {
             ]
             .map(String::from),
             grey,
-            16.0,
+            13.0,
             None,
         );
         for r in rows {
@@ -314,29 +306,15 @@ fn table(p: &mut ChildSpawnerCommands, team: Team, score: u32, rows: &[Row]) {
                 } else {
                     Color::srgb(0.85, 0.85, 0.9)
                 },
-                20.0,
+                17.0,
                 hl,
             );
         }
     });
 }
 
-fn button(p: &mut ChildSpawnerCommands, text: &str, b: EndButton) {
-    p.spawn((
-        Button,
-        b,
-        Node {
-            padding: UiRect::axes(Val::Px(26.0), Val::Px(10.0)),
-            border: UiRect::all(Val::Px(2.0)),
-            justify_content: JustifyContent::Center,
-            ..default()
-        },
-        BorderColor::all(Color::srgb(0.5, 0.2, 0.9)),
-        BackgroundColor(BUTTON),
-    ))
-    .with_children(|b| {
-        b.spawn(label(text, 24.0, Color::WHITE));
-    });
+fn button(p: &mut ChildSpawnerCommands, text: &str, b: EndButton, color: Color) {
+    neonui::button(p, text, b, NeonButton::new(color), Some(240.0), 20.0);
 }
 
 fn show(
@@ -359,22 +337,11 @@ fn show(
             commands
                 .spawn((
                     EndRoot,
-                    Node {
-                        position_type: PositionType::Absolute,
-                        width: Val::Percent(100.0),
-                        height: Val::Percent(100.0),
-                        flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::Center,
-                        row_gap: Val::Px(14.0),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgba(0.01, 0.01, 0.03, 0.93)),
-                    GlobalZIndex(15),
+                    neonui::backdrop(Color::srgba(0.01, 0.0, 0.03, 0.93), 15),
                 ))
                 .with_children(|p| {
                     p.spawn(label("MATCH OVER", 22.0, Color::srgb(0.6, 0.6, 0.7)));
-                    p.spawn(label(text, 72.0, team_ui_color(team)));
+                    p.spawn(neonui::text_w(text, 64.0, team_ui_color(team), 900));
                     let [r, b] = game.snap.scores;
                     p.spawn(Node {
                         column_gap: Val::Px(24.0),
@@ -430,9 +397,9 @@ fn show(
                     })
                     .with_children(|b| {
                         if local {
-                            button(b, "Next match", EndButton::Next);
+                            button(b, "NEXT MATCH", EndButton::Next, neonui::CYAN);
                         }
-                        button(b, "Main menu", EndButton::Menu);
+                        button(b, "MAIN MENU", EndButton::Menu, neonui::MAGENTA);
                     });
                 });
         }
@@ -468,22 +435,10 @@ fn countdown(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn buttons(
     q: Query<(&Interaction, &EndButton), Changed<Interaction>>,
-    mut colors: Query<
-        (&Interaction, &mut BackgroundColor),
-        (Changed<Interaction>, With<EndButton>),
-    >,
     mut cmds: MessageWriter<SessionCmd>,
 ) {
-    for (i, mut bg) in &mut colors {
-        bg.0 = if *i == Interaction::None {
-            BUTTON
-        } else {
-            BUTTON_HOVER
-        };
-    }
     for (i, b) in &q {
         if *i == Interaction::Pressed {
             cmds.write(match b {

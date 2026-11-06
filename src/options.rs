@@ -7,6 +7,7 @@
 use bevy::prelude::*;
 
 use crate::desktop::Overlays;
+use crate::neonui::{self, NeonButton};
 use crate::settings::{Action, Binding, Settings};
 
 #[derive(Component)]
@@ -55,39 +56,20 @@ impl Plugin for OptionsPlugin {
     }
 }
 
-const BUTTON: Color = Color::srgb(0.08, 0.08, 0.14);
-const BUTTON_HOVER: Color = Color::srgb(0.16, 0.12, 0.3);
-const BUTTON_WAIT: Color = Color::srgb(0.35, 0.25, 0.05);
-const BORDER: Color = Color::srgb(0.5, 0.2, 0.9);
-const GREY: Color = Color::srgb(0.6, 0.6, 0.7);
+const GREY: Color = neonui::DIM;
 
 fn label(s: impl Into<String>, size: f32, color: Color) -> impl Bundle {
-    (
-        Text::new(s.into()),
-        TextFont {
-            font_size: FontSize::Px(size),
-            ..default()
-        },
-        TextColor(color),
-    )
+    neonui::text(s, size, color)
 }
 
 fn button(p: &mut ChildSpawnerCommands, opt: Opt, width: f32, text: &str, shows: Option<OptText>) {
-    p.spawn((
-        Button,
+    p.spawn(neonui::button_node(
         opt,
-        Node {
-            width: Val::Px(width),
-            padding: UiRect::axes(Val::Px(12.0), Val::Px(4.0)),
-            border: UiRect::all(Val::Px(2.0)),
-            justify_content: JustifyContent::Center,
-            ..default()
-        },
-        BorderColor::all(BORDER),
-        BackgroundColor(BUTTON),
+        NeonButton::new(neonui::VIOLET),
+        Some(width),
     ))
     .with_children(|b| {
-        let mut t = b.spawn(label(text, 20.0, Color::WHITE));
+        let mut t = b.spawn(neonui::text_w(text, 17.0, neonui::TEXT, 600));
         if let Some(s) = shows {
             t.insert(s);
         }
@@ -105,28 +87,18 @@ fn show(
             commands
                 .spawn((
                     OptionsRoot,
-                    Node {
-                        position_type: PositionType::Absolute,
-                        width: Val::Percent(100.0),
-                        height: Val::Percent(100.0),
-                        flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::Center,
-                        row_gap: Val::Px(6.0),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.01, 0.01, 0.03)),
+                    neonui::backdrop(neonui::BACKDROP_DEEP, 30),
                     // Clicks stop here, not at the menu underneath.
                     bevy::ui::FocusPolicy::Block,
-                    GlobalZIndex(30),
                 ))
                 .with_children(|p| {
-                    p.spawn(label("OPTIONS", 48.0, Color::srgb(1.0, 0.3, 0.4)));
+                    neonui::title(p, "OPTIONS", 44.0, neonui::PINK);
+                    p.spawn(neonui::panel(neonui::VIOLET, None)).with_children(|p| {
                     p.spawn(Node { height: Val::Px(8.0), ..default() });
                     let row = || Node { column_gap: Val::Px(10.0), align_items: AlignItems::Center, ..default() };
                     let name = |r: &mut ChildSpawnerCommands, s: &str| {
                         r.spawn((Node { width: Val::Px(330.0), ..default() },)).with_children(|n| {
-                            n.spawn(label(s, 20.0, Color::WHITE));
+                            n.spawn(label(s, 17.0, neonui::TEXT));
                         });
                     };
                     let stepper = |p: &mut ChildSpawnerCommands, title: &str, down: Opt, up: Opt, shows: OptText| {
@@ -135,7 +107,7 @@ fn show(
                             button(r, down, 48.0, "-", None);
                             r.spawn((Node { width: Val::Px(84.0), justify_content: JustifyContent::Center, ..default() },))
                                 .with_children(|n| {
-                                    n.spawn((shows, label("", 20.0, Color::WHITE)));
+                                    n.spawn((shows, label("", 17.0, neonui::TEXT)));
                                 });
                             button(r, up, 48.0, "+", None);
                             r.spawn(Node { width: Val::Px(8.0), ..default() });
@@ -170,6 +142,7 @@ fn show(
                         button(r, Opt::Reset, 260.0, "Reset to defaults", None);
                         button(r, Opt::Back, 260.0, "Back", None);
                     });
+                    });
                 });
         }
         (false, Ok(e)) => {
@@ -183,7 +156,7 @@ fn show(
 #[allow(clippy::type_complexity)]
 fn buttons(
     q: Query<(&Interaction, &Opt), Changed<Interaction>>,
-    mut colors: Query<(&Interaction, &Opt, &mut BackgroundColor)>,
+    mut colors: Query<(&Opt, &mut NeonButton)>,
     mut overlays: ResMut<Overlays>,
     mut settings: ResMut<Settings>,
     mut capture: ResMut<Capture>,
@@ -193,18 +166,19 @@ fn buttons(
     if !overlays.options {
         return;
     }
-    for (i, opt, mut bg) in &mut colors {
+    for (opt, mut neon) in &mut colors {
         let waiting =
             matches!((capture.0, opt), (Some((a, s, _)), Opt::Slot(b, t)) if a == *b && s == *t);
-        let want = if waiting {
-            BUTTON_WAIT
-        } else if *i == Interaction::None {
-            BUTTON
-        } else {
-            BUTTON_HOVER
+        let want = NeonButton {
+            color: if waiting {
+                neonui::AMBER
+            } else {
+                neonui::VIOLET
+            },
+            selected: waiting,
         };
-        if bg.0 != want {
-            bg.0 = want;
+        if *neon != want {
+            *neon = want;
         }
     }
     if capture.0.is_none() && keys.just_pressed(KeyCode::Escape) {

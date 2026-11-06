@@ -34,6 +34,7 @@ pub mod materials;
 pub mod mega;
 pub mod menu;
 pub mod music;
+pub mod neonui;
 pub mod options;
 pub mod pause;
 pub mod scenery;
@@ -297,6 +298,7 @@ pub fn run() {
                 },
                 hud::HudPlugin,
                 menu::MenuPlugin,
+                neonui::NeonUiPlugin,
                 lobby::LobbyPlugin,
                 pause::PausePlugin,
                 options::OptionsPlugin,
