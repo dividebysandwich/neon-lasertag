@@ -5,7 +5,8 @@
 //!   twin towers, spires), with rows of little lit windows, neon bands, edge lines and crowns
 //!   with their halos;
 //! - a big spectrum display above each rear border wall (6 stacks of segments, low to high
-//!   frequencies from the viewer's left, with falling peaks), driven by `MusicSpectrum`;
+//!   frequencies from the viewer's left, with falling peaks), driven by `MusicSpectrum`, with the
+//!   score board on top;
 //! - soft light cones: from the arena's corners and long walls (pulsing with the bass) and
 //!   searchlights on towers sweeping the sky.
 //!
@@ -57,10 +58,17 @@ const COOL: Vec3 = Vec3::new(0.3, 0.55, 1.0);
 const SEGMENTS: usize = 16;
 const DISP_W: f32 = 19.0;
 const DISP_H: f32 = 9.5;
-const DISP_Y0: f32 = 9.0;
+/// Just high enough for the frame's bottom to clear the border wall.
+const DISP_Y0: f32 = 7.0;
+/// The displays' frames are this wide around them.
+const DISP_FRAME: f32 = 0.4;
+/// The top of the displays' frames (the score boards sit on it, src/sevenseg.rs).
+pub const DISP_TOP: f32 = DISP_Y0 + DISP_H + DISP_FRAME;
 /// The displays stand this far behind the rear walls' inner faces.
 const DISP_BACK: f32 = BORDER_T + 1.8;
 const DISP_DEPTH: f32 = 0.6;
+/// How far the displays' front faces stand beyond the arena's ends.
+pub const DISP_FRONT: f32 = DISP_BACK - DISP_DEPTH / 2.0;
 const STACK_W: f32 = 2.3;
 const STACK_PITCH: f32 = 2.95;
 const SEG_MARGIN: f32 = 0.45;
@@ -923,7 +931,7 @@ fn stack_x(s: f32, b: usize) -> f32 {
 }
 
 fn front_z(half_len: f32, s: f32) -> f32 {
-    s * (half_len + DISP_BACK - DISP_DEPTH / 2.0)
+    s * (half_len + DISP_FRONT)
 }
 
 fn seg_y(j: usize) -> f32 {
@@ -951,7 +959,7 @@ type StackMeshes = (
 fn displays(p: &mut Parts, meshes: &mut Assets<Mesh>) -> StackMeshes {
     for s in [1.0f32, -1.0] {
         let z = s * (p.half.y + DISP_BACK);
-        let m = 0.4;
+        let m = DISP_FRAME;
         aabox(
             &mut p.body,
             Vec3::new(-DISP_W / 2.0 - m, DISP_Y0 - m, z - DISP_DEPTH / 2.0),

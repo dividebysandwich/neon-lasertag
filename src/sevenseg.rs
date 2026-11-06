@@ -1,13 +1,14 @@
 //! Seven-segment displays made of accent strips: they glow like the arena and draw in every
-//! renderer (the GL headset renderer has no UI). At each end of the arena, on the rear wall
-//! above the base, a board shows the scores (Red's left, Blue's right) and a smaller board
-//! above it the time left; VR players also get one on the wrist (src/xr.rs).
+//! renderer (the GL headset renderer has no UI). At each end of the arena, on top of the spectrum
+//! display behind the rear wall, a board shows the scores (Red's left, Blue's right) and a smaller
+//! board above it the time left; VR players also get one on the wrist (src/xr.rs).
 
 use bevy::prelude::*;
 use lt_sim::level::Level;
 
 use crate::game::Game;
 use crate::materials::{AccentMaterial, Palette};
+use crate::scenery::{DISP_FRONT, DISP_TOP};
 
 /// Segments a..g lit for each digit.
 const SEGMENTS: [u8; 10] = [0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F];
@@ -92,15 +93,13 @@ pub fn show(text: &str, digits: &[Digit], vis: &mut Query<&mut Visibility>) {
     }
 }
 
-/// The score board: the scores, 1 m digits, centred this high at the top of the rear walls (the
-/// border is 6 m high); the clock
-/// on a board of its own above it.
-const SCORE_Y: f32 = 5.9;
+/// The score board: the scores, 1 m digits, centred this high, just above the spectrum display's
+/// frame; the clock on a board of its own above it.
+const SCORE_Y: f32 = DISP_TOP + 0.15 + SCORE_H / 2.0 + MARGIN;
 const SCORE_H: f32 = 1.0;
-const CLOCK_Y: f32 = 7.45;
+const CLOCK_Y: f32 = SCORE_Y + 1.55;
 const CLOCK_H: f32 = 0.65;
-/// The boards stand this far out from the wall, their panels this thick behind the digits.
-const OUT: f32 = 0.16;
+/// The boards' panels are this thick behind the digits, flush with the display's front face.
 const PANEL_T: f32 = 0.1;
 /// Margin of a panel around its digits, and the width of its neon frame.
 const MARGIN: f32 = 0.25;
@@ -199,7 +198,7 @@ pub fn spawn_scoreboards(
                 Transform::from_translation(Vec3::new(
                     0.0,
                     0.0,
-                    side * (level.dims().half_length() - OUT),
+                    side * (level.dims().half_length() + DISP_FRONT - PANEL_T - 0.02),
                 ))
                 .with_rotation(rot),
                 Visibility::default(),
