@@ -305,7 +305,7 @@ fn spawn_pads(
                     Mesh3d(bar.clone()),
                     MeshMaterial3d(chevron_mat.clone()),
                     Transform::from_xyz(s * 0.17, 0.0, -0.17)
-                        .with_rotation(Quat::from_rotation_y(s * 0.8)),
+                        .with_rotation(Quat::from_rotation_y(-s * 0.8)),
                     ChildOf(e),
                 ));
             }
