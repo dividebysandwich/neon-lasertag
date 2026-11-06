@@ -13,6 +13,7 @@ use bevy::prelude::*;
 use lt_sim::{PlayerId, SimEvent};
 
 use crate::game::{Game, GameEvent};
+use crate::settings::Settings;
 
 #[derive(Resource)]
 struct Sounds {
@@ -85,10 +86,11 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
     });
 }
 
-fn play(commands: &mut Commands, sound: &Handle<AudioSource>, at: Option<Vec3>, volume: f32, speed: f32) {
+/// Plays `sound` (`gain`: the settings' sound volume).
+fn play(commands: &mut Commands, gain: f32, sound: &Handle<AudioSource>, at: Option<Vec3>, volume: f32, speed: f32) {
     let settings = PlaybackSettings {
         mode: PlaybackMode::Despawn,
-        volume: Volume::Linear(volume),
+        volume: Volume::Linear(volume * gain),
         speed,
         spatial: at.is_some(),
         ..default()
@@ -96,7 +98,14 @@ fn play(commands: &mut Commands, sound: &Handle<AudioSource>, at: Option<Vec3>, 
     commands.spawn((AudioPlayer(sound.clone()), settings, Transform::from_translation(at.unwrap_or_default())));
 }
 
-fn play_events(mut commands: Commands, mut events: MessageReader<GameEvent>, game: Res<Game>, sounds: Res<Sounds>) {
+fn play_events(
+    mut commands: Commands,
+    mut events: MessageReader<GameEvent>,
+    game: Res<Game>,
+    sounds: Res<Sounds>,
+    settings: Option<Res<Settings>>,
+) {
+    let gain = settings.map_or(1.0, |s| s.sound_volume);
     let me = game.me;
     let team = |id| game.snap.players.iter().find(|p| p.id == id).map(|p| p.team);
     let enemy = |id| me.is_some_and(|m| m != id && team(id).is_some() && team(id) != team(m));
@@ -104,12 +113,12 @@ fn play_events(mut commands: Commands, mut events: MessageReader<GameEvent>, gam
         // The reward for scoring (the tag-out's own, rather than the hit's, for the last hit).
         match *e {
             SimEvent::Hit { player, by, hits, .. } if Some(by) == me && enemy(player) && hits < game.rules.hits_to_tag => {
-                play(&mut commands, &sounds.bleep, None, 0.8, 1.0)
+                play(&mut commands, gain, &sounds.bleep, None, 0.8, 1.0)
             }
             SimEvent::TaggedOut { player, by, .. } if Some(by) == me && enemy(player) => {
-                play(&mut commands, &sounds.bleep_tag, None, 0.8, 1.0)
+                play(&mut commands, gain, &sounds.bleep_tag, None, 0.8, 1.0)
             }
-            SimEvent::TargetHit { by, .. } if Some(by) == me => play(&mut commands, &sounds.bleep, None, 0.8, 1.0),
+            SimEvent::TargetHit { by, .. } if Some(by) == me => play(&mut commands, gain, &sounds.bleep, None, 0.8, 1.0),
             _ => {}
         }
         match *e {
@@ -117,52 +126,59 @@ fn play_events(mut commands: Commands, mut events: MessageReader<GameEvent>, gam
                 let mine = Some(player) == me;
                 let red = game.snap.players.iter().any(|p| p.id == player && p.team == lt_sim::Team::Red);
                 let sound = if red { &sounds.fire_red } else { &sounds.fire };
-                play(&mut commands, sound, (!mine).then_some(pos), if mine { 0.55 } else { 1.0 }, 1.0);
+                play(&mut commands, gain, sound, (!mine).then_some(pos), if mine { 0.55 } else { 1.0 }, 1.0);
             }
-            SimEvent::Denied { player } if Some(player) == me => play(&mut commands, &sounds.deny, None, 0.6, 1.0),
-            SimEvent::Empty { player } if Some(player) == me => play(&mut commands, &sounds.empty, None, 0.8, 1.0),
-            SimEvent::Reloading { player } if Some(player) == me => play(&mut commands, &sounds.reload, None, 0.6, 1.0),
-            SimEvent::Reloaded { player } if Some(player) == me => play(&mut commands, &sounds.reload_done, None, 0.7, 1.0),
+            SimEvent::Denied { player } if Some(player) == me => play(&mut commands, gain, &sounds.deny, None, 0.6, 1.0),
+            SimEvent::Empty { player } if Some(player) == me => play(&mut commands, gain, &sounds.empty, None, 0.8, 1.0),
+            SimEvent::Reloading { player } if Some(player) == me => play(&mut commands, gain, &sounds.reload, None, 0.6, 1.0),
+            SimEvent::Reloaded { player } if Some(player) == me => play(&mut commands, gain, &sounds.reload_done, None, 0.7, 1.0),
             SimEvent::PickedUp { player, pos, .. } => {
                 let mine = Some(player) == me;
-                play(&mut commands, &sounds.pickup, (!mine).then_some(pos), if mine { 0.8 } else { 1.0 }, 1.0);
+                play(&mut commands, gain, &sounds.pickup, (!mine).then_some(pos), if mine { 0.8 } else { 1.0 }, 1.0);
             }
-            SimEvent::PickupSpawned { pos, .. } => play(&mut commands, &sounds.pickup, Some(pos), 0.5, 0.7),
+            SimEvent::PickupSpawned { pos, .. } => play(&mut commands, gain, &sounds.pickup, Some(pos), 0.5, 0.7),
             SimEvent::Hit { player, pos, .. } => {
                 if Some(player) == me {
-                    play(&mut commands, &sounds.hit, None, 0.9, 1.0);
+                    play(&mut commands, gain, &sounds.hit, None, 0.9, 1.0);
                 } else {
-                    play(&mut commands, &sounds.other_hit, Some(pos), 1.2, 1.0);
+                    play(&mut commands, gain, &sounds.other_hit, Some(pos), 1.2, 1.0);
                 }
             }
             SimEvent::TaggedOut { player, pos, .. } => {
                 let mine = Some(player) == me;
-                play(&mut commands, &sounds.tagged, (!mine).then_some(pos), 1.0, 1.0);
+                play(&mut commands, gain, &sounds.tagged, (!mine).then_some(pos), 1.0, 1.0);
             }
             SimEvent::TargetHit { pos, .. } => {
                 // Across the whole arena, and from where it is.
-                play(&mut commands, &sounds.target, None, 0.6, 1.0);
-                play(&mut commands, &sounds.target, Some(pos), 1.0, 1.0);
+                play(&mut commands, gain, &sounds.target, None, 0.6, 1.0);
+                play(&mut commands, gain, &sounds.target, Some(pos), 1.0, 1.0);
             }
             SimEvent::GrenadeThrown { player, pos } => {
                 let mine = Some(player) == me;
-                play(&mut commands, &sounds.throw, (!mine).then_some(pos), if mine { 0.7 } else { 1.0 }, 1.0);
+                play(&mut commands, gain, &sounds.throw, (!mine).then_some(pos), if mine { 0.7 } else { 1.0 }, 1.0);
             }
             SimEvent::GrenadeBounce { pos, speed } => {
-                play(&mut commands, &sounds.bounce, Some(pos), (speed / 5.0).clamp(0.35, 1.2), 1.0)
+                play(&mut commands, gain, &sounds.bounce, Some(pos), (speed / 5.0).clamp(0.35, 1.2), 1.0)
             }
-            SimEvent::GrenadeArmed { pos } => play(&mut commands, &sounds.arm, Some(pos), 1.0, 1.0),
-            SimEvent::GrenadeBurst { pos } => play(&mut commands, &sounds.burst, Some(pos), 0.9, 1.0),
+            SimEvent::GrenadeArmed { pos } => play(&mut commands, gain, &sounds.arm, Some(pos), 1.0, 1.0),
+            SimEvent::GrenadeBurst { pos } => play(&mut commands, gain, &sounds.burst, Some(pos), 0.9, 1.0),
             SimEvent::Respawned { player, pos } => {
                 let mine = Some(player) == me;
-                play(&mut commands, &sounds.respawn, (!mine).then_some(pos), 0.8, 1.0);
+                play(&mut commands, gain, &sounds.respawn, (!mine).then_some(pos), 0.8, 1.0);
             }
             _ => {}
         }
     }
 }
 
-fn footsteps(mut commands: Commands, game: Res<Game>, sounds: Res<Sounds>, mut walked: ResMut<Walked>) {
+fn footsteps(
+    mut commands: Commands,
+    game: Res<Game>,
+    sounds: Res<Sounds>,
+    mut walked: ResMut<Walked>,
+    settings: Option<Res<Settings>>,
+) {
+    let gain = settings.map_or(1.0, |s| s.sound_volume);
     let walked = &mut *walked;
     for p in &game.snap.players {
         let entry = walked.last.entry(p.id).or_insert((p.feet, 0.0));
@@ -176,7 +192,7 @@ fn footsteps(mut commands: Commands, game: Res<Game>, sounds: Res<Sounds>, mut w
             walked.n += 1;
             let mine = Some(p.id) == game.me;
             let pitch = 0.9 + (walked.n * 37 % 20) as f32 / 100.0;
-            play(&mut commands, &sounds.steps[walked.n % 3], (!mine).then_some(p.feet), if mine { 0.35 } else { 0.8 }, pitch);
+            play(&mut commands, gain, &sounds.steps[walked.n % 3], (!mine).then_some(p.feet), if mine { 0.35 } else { 0.8 }, pitch);
         }
     }
     walked.last.retain(|id, _| game.snap.players.iter().any(|p| p.id == *id));

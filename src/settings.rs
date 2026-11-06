@@ -1,4 +1,5 @@
-//! The flat screen's player settings: key bindings, mouse sensitivity and inverted mouse look.
+//! The player's settings: the flat screen's key bindings, mouse sensitivity and inverted mouse
+//! look, and the volumes of the sound effects and the music (in VR too).
 //! Changed in the options screen (src/options.rs) and kept in `settings.ron` in the user's
 //! config directory (`$XDG_CONFIG_HOME/lasertag`, `~/.config/lasertag`, `%APPDATA%\lasertag`).
 
@@ -138,6 +139,9 @@ pub struct Settings {
     /// Mouse look speed, 1 = the default.
     pub sensitivity: f32,
     pub invert_y: bool,
+    /// Volumes, 0..=1 (1 the default): the sound effects and the music.
+    pub sound_volume: f32,
+    pub music_volume: f32,
     /// Per action (in `Action::ALL` order): two bindings.
     pub bindings: Vec<(Action, [Option<Binding>; 2])>,
 }
@@ -147,6 +151,8 @@ impl Default for Settings {
         Settings {
             sensitivity: 1.0,
             invert_y: false,
+            sound_volume: 1.0,
+            music_volume: 1.0,
             bindings: Action::ALL.iter().map(|&a| (a, a.defaults())).collect(),
         }
     }
@@ -219,6 +225,11 @@ impl Settings {
         Some(base.join("lasertag").join("settings.ron"))
     }
 
+    /// A volume one step (10 %) up or down.
+    pub fn step_volume(v: f32, up: bool) -> f32 {
+        ((v * 10.0).round() + if up { 1.0 } else { -1.0 }).clamp(0.0, 10.0) / 10.0
+    }
+
     pub fn load() -> Settings {
         let mut s = Settings::default();
         let Some(text) = Self::path().and_then(|p| std::fs::read_to_string(p).ok()) else { return s };
@@ -226,6 +237,8 @@ impl Settings {
             Ok(saved) => {
                 s.sensitivity = saved.sensitivity.clamp(0.1, 5.0);
                 s.invert_y = saved.invert_y;
+                s.sound_volume = saved.sound_volume.clamp(0.0, 1.0);
+                s.music_volume = saved.music_volume.clamp(0.0, 1.0);
                 for (id, names) in saved.bindings {
                     if let Some(a) = Action::ALL.iter().find(|a| a.id() == id)
                         && let Some((_, bs)) = s.bindings.iter_mut().find(|(x, _)| x == a)
@@ -246,6 +259,8 @@ impl Settings {
         let saved = Saved {
             sensitivity: self.sensitivity,
             invert_y: self.invert_y,
+            sound_volume: self.sound_volume,
+            music_volume: self.music_volume,
             bindings: self
                 .bindings
                 .iter()
@@ -271,12 +286,14 @@ impl Settings {
 struct Saved {
     sensitivity: f32,
     invert_y: bool,
+    sound_volume: f32,
+    music_volume: f32,
     bindings: Vec<(String, Vec<Option<String>>)>,
 }
 
 impl Default for Saved {
     fn default() -> Self {
-        Saved { sensitivity: 1.0, invert_y: false, bindings: Vec::new() }
+        Saved { sensitivity: 1.0, invert_y: false, sound_volume: 1.0, music_volume: 1.0, bindings: Vec::new() }
     }
 }
 

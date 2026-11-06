@@ -19,6 +19,7 @@ use rand::Rng;
 
 use crate::endscreen::winner;
 use crate::game::Game;
+use crate::settings::Settings;
 
 /// The music's volume at the settings' full volume.
 const VOLUME: f32 = 0.22;
@@ -137,7 +138,7 @@ impl Plugin for MusicPlugin {
         app.init_resource::<MusicSpectrum>()
             .init_resource::<Playing>()
             .add_systems(Startup, load)
-            .add_systems(Update, (choose, follow).chain());
+            .add_systems(Update, (choose, volume, follow).chain());
     }
 }
 
@@ -195,6 +196,7 @@ fn choose(
     tracks: Res<Tracks>,
     music: Query<Entity, With<Music>>,
     assets: Res<AssetServer>,
+    settings: Option<Res<Settings>>,
     mut playing: ResMut<Playing>,
     mut spectrum: ResMut<MusicSpectrum>,
 ) {
@@ -230,12 +232,24 @@ fn choose(
     let i = pool[rand::rng().random_range(0..pool.len())];
     playing.last = Some(i);
     info!("music: {}", tracks.files[i].1);
+    let level = settings.map_or(1.0, |s| s.music_volume);
     commands.spawn((
         Music(i),
         AudioPlayer::new(assets.load(tracks.files[i].1.clone())),
-        PlaybackSettings::DESPAWN.with_volume(Volume::Linear(VOLUME)),
+        PlaybackSettings::DESPAWN.with_volume(Volume::Linear(VOLUME * level)),
         Name::new("music"),
     ));
+}
+
+/// Follows the settings' music volume.
+fn volume(settings: Option<Res<Settings>>, mut sinks: Query<&mut AudioSink, With<Music>>) {
+    let Some(settings) = settings else { return };
+    if !settings.is_changed() {
+        return;
+    }
+    for mut sink in &mut sinks {
+        sink.set_volume(Volume::Linear(VOLUME * settings.music_volume));
+    }
 }
 
 /// Follows the music's playback position through its spectrum.

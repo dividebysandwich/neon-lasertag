@@ -1,5 +1,5 @@
-//! The flat screen's options screen (from the start menu and the in-game menu): key bindings,
-//! mouse sensitivity and inverted mouse look, saved as soon as they change (src/settings.rs).
+//! The flat screen's options screen (from the start menu and the in-game menu): sound and music
+//! volume, key bindings, mouse sensitivity and inverted mouse look, saved as soon as they change (src/settings.rs).
 //!
 //! A binding is changed by clicking it and pressing a key or a mouse button; Esc cancels,
 //! Backspace or Delete clears it. Esc otherwise closes the screen.
@@ -18,6 +18,9 @@ enum Opt {
     SensDown,
     SensUp,
     Invert,
+    /// Sound effects' and music volume, down (false) or up (true).
+    Sound(bool),
+    Music(bool),
     Reset,
     Back,
 }
@@ -28,6 +31,8 @@ enum OptText {
     Slot(Action, usize),
     Sens,
     Invert,
+    Sound,
+    Music,
 }
 
 /// Waiting for a key or button for this binding (and the frame the wait started).
@@ -43,8 +48,7 @@ pub struct OptionsPlugin;
 
 impl Plugin for OptionsPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(Settings::load())
-            .init_resource::<Capture>()
+        app.init_resource::<Capture>()
             .add_systems(Update, (show, buttons, capture, refresh).chain().in_set(OptionsSet));
     }
 }
@@ -111,16 +115,22 @@ fn show(mut commands: Commands, overlays: Res<Overlays>, root: Query<Entity, Wit
                             n.spawn(label(s, 20.0, Color::WHITE));
                         });
                     };
-                    p.spawn(row()).with_children(|r| {
-                        name(r, "Mouse sensitivity");
-                        button(r, Opt::SensDown, 48.0, "-", None);
-                        r.spawn((Node { width: Val::Px(84.0), justify_content: JustifyContent::Center, ..default() },))
-                            .with_children(|n| {
-                                n.spawn((OptText::Sens, label("", 20.0, Color::WHITE)));
-                            });
-                        button(r, Opt::SensUp, 48.0, "+", None);
-                        r.spawn(Node { width: Val::Px(8.0), ..default() });
-                    });
+                    let stepper = |p: &mut ChildSpawnerCommands, title: &str, down: Opt, up: Opt, shows: OptText| {
+                        p.spawn(row()).with_children(|r| {
+                            name(r, title);
+                            button(r, down, 48.0, "-", None);
+                            r.spawn((Node { width: Val::Px(84.0), justify_content: JustifyContent::Center, ..default() },))
+                                .with_children(|n| {
+                                    n.spawn((shows, label("", 20.0, Color::WHITE)));
+                                });
+                            button(r, up, 48.0, "+", None);
+                            r.spawn(Node { width: Val::Px(8.0), ..default() });
+                        });
+                    };
+                    stepper(p, "Sound volume", Opt::Sound(false), Opt::Sound(true), OptText::Sound);
+                    stepper(p, "Music volume", Opt::Music(false), Opt::Music(true), OptText::Music);
+                    p.spawn(Node { height: Val::Px(8.0), ..default() });
+                    stepper(p, "Mouse sensitivity", Opt::SensDown, Opt::SensUp, OptText::Sens);
                     p.spawn(row()).with_children(|r| {
                         name(r, "Invert mouse (up/down)");
                         button(r, Opt::Invert, 204.0, "", Some(OptText::Invert));
@@ -196,6 +206,8 @@ fn buttons(
             Opt::SensDown => settings.sensitivity = ((settings.sensitivity - 0.1) * 10.0).round().max(1.0) / 10.0,
             Opt::SensUp => settings.sensitivity = ((settings.sensitivity + 0.1) * 10.0).round().min(50.0) / 10.0,
             Opt::Invert => settings.invert_y = !settings.invert_y,
+            Opt::Sound(up) => settings.sound_volume = Settings::step_volume(settings.sound_volume, up),
+            Opt::Music(up) => settings.music_volume = Settings::step_volume(settings.music_volume, up),
             Opt::Reset => *settings = Settings::default(),
             Opt::Back => overlays.options = false,
         }
@@ -243,6 +255,8 @@ fn refresh(settings: Res<Settings>, capture: Res<Capture>, mut texts: Query<(&Op
         let s = match *t {
             OptText::Sens => format!("{:.1}x", settings.sensitivity),
             OptText::Invert => (if settings.invert_y { "On" } else { "Off" }).to_string(),
+            OptText::Sound => format!("{:.0} %", settings.sound_volume * 100.0),
+            OptText::Music => format!("{:.0} %", settings.music_volume * 100.0),
             OptText::Slot(a, slot) => {
                 if matches!(capture.0, Some((b, s, _)) if b == a && s == slot) {
                     "press a key...".into()

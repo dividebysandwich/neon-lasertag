@@ -210,6 +210,7 @@ pub fn run() {
     .insert_resource(GlobalAmbientLight { color: Color::linear_rgb(0.6, 0.65, 1.0), brightness: 60.0, ..default() })
     .init_resource::<BuiltArena>()
     .insert_resource(args.clone())
+    .insert_resource(settings::Settings::load())
     .add_systems(Startup, setup)
     .add_systems(Update, (start_game.run_if(resource_added::<menu::Start>), connect, build_arena));
     if let Some((path, times)) = args.screenshot.clone() {

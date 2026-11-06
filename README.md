@@ -69,9 +69,11 @@ Hits glow red at the edge of the view on the side they came from (on the flat sc
 arc around the crosshair), and the controllers vibrate: shots, empty clicks, hits (stronger on
 that side), being tagged out, grenades, drawing and holstering. The menu (Esc) leaves the match
 running underneath: Resume, Options, Leave to main menu, Quit; VR's offers Resume, New match
-(local games) and Quit. Options (also in the start menu) rebinds the flat screen's keys and
-mouse buttons (two per action), sets the mouse sensitivity and inverts the mouse; they are kept
-in `settings.ron` in the config directory (`~/.config/lasertag`, `%APPDATA%\lasertag`).
+(local games) and Quit. Options (also in the start menu) sets the sound effects' and the music's volume, rebinds the
+flat screen's keys and mouse buttons (two per action), sets the mouse sensitivity and inverts
+the mouse; they are kept
+in `settings.ron` in the config directory (`~/.config/lasertag`, `%APPDATA%\lasertag`; VR uses
+the saved volumes too).
 
 ## Layout
 
