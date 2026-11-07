@@ -210,12 +210,7 @@ impl Player {
 
     /// How fast the stick moves this player (m/s).
     pub fn move_speed(&self, rules: &Rules) -> f32 {
-        rules.move_speed
-            * if self.speed > 0.0 {
-                rules.speed_factor
-            } else {
-                1.0
-            }
+        move_speed(rules, self.speed > 0.0, self.cmd.crouch)
     }
 
     /// Whether walking over a pickup of this kind would take it.
@@ -2316,6 +2311,14 @@ impl Sim {
     }
 }
 
+/// How fast the stick moves a player (m/s), with a speed boost running and crouching (the
+/// sim's and the client's prediction alike).
+pub fn move_speed(rules: &Rules, boosted: bool, crouch: bool) -> f32 {
+    rules.move_speed
+        * if boosted { rules.speed_factor } else { 1.0 }
+        * if crouch { rules.crouch_factor } else { 1.0 }
+}
+
 /// How much of the stick's movement counts while flying from a jump pad (all of it on the
 /// ground).
 pub fn air_control(air: Vec2) -> f32 {
@@ -2576,6 +2579,34 @@ mod tests {
         sim.players[0].shield = 5.0;
         sim.step();
         assert_eq!(sim.player(a).unwrap().hits, 1);
+    }
+
+    #[test]
+    fn crouching_halves_the_speed() {
+        let (mut sim, a, _) = duel();
+        let mut walk = |crouch: bool| {
+            sim.set_cmd(
+                a,
+                PlayerCmd {
+                    stick: Vec2::new(0.0, -1.0),
+                    crouch,
+                    ..Default::default()
+                },
+            );
+            let from = sim.player(a).unwrap().feet;
+            for _ in 0..10 {
+                sim.step();
+            }
+            let d = sim.player(a).unwrap().feet - from;
+            sim.players[0].feet = from;
+            d.length()
+        };
+        let plain = walk(false);
+        let low = walk(true);
+        assert!(
+            (low / plain - 0.5).abs() < 0.05,
+            "{low} m against {plain} m"
+        );
     }
 
     #[test]

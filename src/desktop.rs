@@ -34,7 +34,6 @@ pub struct Look {
 /// it slows walking.
 const CROUCH_DROP: f32 = 0.6;
 const CROUCH_TIME: f32 = 0.07;
-const CROUCH_SPEED: f32 = 0.5;
 
 impl Look {
     /// The eyes' height above the feet.
@@ -265,7 +264,8 @@ fn read_input(
         0.0
     };
     look.crouch += (crouching - look.crouch) * (1.0 - (-dt / CROUCH_TIME).exp());
-    let mut stick = stick.normalize_or_zero() * (1.0 - (1.0 - CROUCH_SPEED) * look.crouch);
+    // (Crouching slows the sim's movement: `PlayerCmd::crouch`.)
+    let mut stick = stick.normalize_or_zero();
     if on(Action::Walk) {
         stick *= 0.5;
     }
@@ -303,6 +303,7 @@ fn read_input(
     cmd.stick = if grabbed { stick } else { Vec2::ZERO };
     cmd.walk = Vec2::ZERO;
     cmd.yaw = look.yaw;
+    cmd.crouch = crouching > 0.0;
     cmd.head = Pose {
         pos: head,
         rot: view,

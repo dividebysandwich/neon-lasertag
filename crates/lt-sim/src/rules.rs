@@ -39,6 +39,8 @@ pub struct Rules {
     /// Times a bolt bounces off mirrors (the next one stops it).
     pub mirror_bounces: u8,
     pub move_speed: f32,
+    /// Crouching players' share of `move_speed`.
+    pub crouch_factor: f32,
     /// Most physical (room-scale) walking accepted per second.
     pub walk_speed_max: f32,
     pub grenade_max: u8,
@@ -143,6 +145,7 @@ impl Default for Rules {
             bolt_life: 2.0,
             mirror_bounces: 1,
             move_speed: 4.0,
+            crouch_factor: 0.5,
             walk_speed_max: 4.0,
             grenade_max: 1,
             pickup_pairs: 2,

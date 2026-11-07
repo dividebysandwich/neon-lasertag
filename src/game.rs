@@ -652,13 +652,8 @@ fn predict(
         return;
     }
     let dt = time.delta_secs().min(0.05);
-    // (As fast as the sim moves this player: `lt_sim::Player::move_speed`.)
-    let speed = game.rules.move_speed
-        * if p.speed > 0.0 {
-            game.rules.speed_factor
-        } else {
-            1.0
-        };
+    // (As fast as the sim moves this player.)
+    let speed = lt_sim::sim::move_speed(&game.rules, p.speed > 0.0, local.cmd.crouch);
     let want = local.cmd.stick.clamp_length_max(1.0) * speed;
     // Speeding up takes a little longer than stopping.
     let tau = if want.length_squared() >= mover.vel.length_squared() {

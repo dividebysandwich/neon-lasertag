@@ -215,6 +215,9 @@ pub struct PlayerCmd {
     pub throw: Option<(Vec3, Vec3)>,
     /// Switch on the carried shield (powerup).
     pub shield: bool,
+    /// Crouching (moves at `Rules::crouch_factor` of the speed).
+    #[serde(default)]
+    pub crouch: bool,
     /// Put up the carried barrier (powerup), in front of the player (on pressing).
     #[serde(default)]
     pub barrier: bool,

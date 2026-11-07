@@ -55,6 +55,9 @@ fn holster_offset() -> Vec3 {
 static GUN_TILT: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
 
 /// A hand this close to the holster draws the blaster when it grips.
+/// Eyes lower than this (m above the feet) count as crouching (`PlayerCmd::crouch`).
+const CROUCH_EYE: f32 = 0.75 * lt_sim::sim::EYE;
+
 const HOLSTER_REACH: f32 = 0.2;
 /// Holding B / Y this long (without taking a grenade) opens the menu.
 const MENU_HOLD: f32 = 0.9;
@@ -587,6 +590,8 @@ fn place_rig(
         pos: head_w.translation - feet,
         rot: head_w.rotation,
     };
+    // Crouching for real slows the stick too.
+    local.cmd.crouch = local.cmd.head.pos.y < CROUCH_EYE;
     let now = time.elapsed_secs();
     for (i, hand) in input.hands.iter().enumerate() {
         let Some(grip) = hand.grip else { continue };
