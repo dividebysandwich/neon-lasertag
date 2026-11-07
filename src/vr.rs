@@ -201,7 +201,7 @@ impl Plugin for VrPlugin {
             .add_systems(Update, menu_buttons.in_set(InputSet))
             .add_systems(
                 Update,
-                (place_rig, wrist, holster)
+                (place_rig, wrist, wrist_points, holster)
                     .chain()
                     .in_set(PoseSet)
                     .run_if(resource_exists::<Game>),
@@ -1182,6 +1182,68 @@ fn blink_slow(time: &Time) -> bool {
     (time.elapsed_secs() * 2.0).fract() < 0.5
 }
 
+/// Seconds the points just scored float over the wrist.
+const POINTS_LIFE: f32 = 1.6;
+
+/// The points the local player scores ("+100 TAG"), rising over the wrist display and gone.
+#[allow(clippy::too_many_arguments)]
+fn wrist_points(
+    mut commands: Commands,
+    mut events: MessageReader<GameEvent>,
+    game: Res<Game>,
+    wrist: Option<Res<Wrist>>,
+    palette: Res<Palette>,
+    time: Res<Time>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut transforms: Query<&mut Transform>,
+    mut shown: Local<Vec<(Entity, f32)>>,
+) {
+    let Some(w) = wrist else { return };
+    for GameEvent(e) in events.read() {
+        let Some((what, points)) = crate::hud::my_points(e, &game) else {
+            continue;
+        };
+        let gold = palette
+            .pickup
+            .get(&PickupKind::Rapid)
+            .map_or(palette.accent[2].clone(), |m| m.0.clone());
+        let root = commands
+            .spawn((Transform::IDENTITY, Visibility::default(), ChildOf(w.root)))
+            .id();
+        let x2 = if game.snap.double { " X2" } else { "" };
+        segtext::spawn(
+            &mut commands,
+            &mut meshes,
+            root,
+            &format!("+{points} {what}{x2}"),
+            0.01,
+            Vec3::ZERO,
+            Align::Center,
+            &gold,
+            None,
+        );
+        shown.push((root, 0.0));
+    }
+    let dt = time.delta_secs();
+    let n = shown.len();
+    for (i, (e, age)) in shown.iter_mut().enumerate() {
+        *age += dt;
+        if let Ok(mut t) = transforms.get_mut(*e) {
+            // (Above the powerups, the newest lowest, rising; shrinking away at the end.)
+            let y = 0.14 + 0.016 * (n - 1 - i) as f32 + 0.02 * *age;
+            t.translation = Vec3::new(0.0, y, 0.0);
+            t.scale = Vec3::splat(((POINTS_LIFE - *age) / 0.3).clamp(0.0, 1.0));
+        }
+    }
+    shown.retain(|(e, age)| {
+        let keep = *age < POINTS_LIFE;
+        if !keep && let Ok(mut c) = commands.get_entity(*e) {
+            c.despawn();
+        }
+        keep
+    });
+}
+
 /// The game's events as vibration patterns.
 fn haptics(
     mut events: MessageReader<GameEvent>,
@@ -1252,6 +1314,10 @@ fn haptics(
             SimEvent::TaggedOut { by, player, .. } if by == me && player != me => {
                 rumble.play(gun, 0.0, 0.06, 0.9);
                 rumble.play(gun, 0.12, 0.04, 0.6);
+            }
+            // A light tick for each hit on an enemy.
+            SimEvent::Hit { .. } if crate::hud::hit_confirm(e, &game) == Some(false) => {
+                rumble.play(gun, 0.0, 0.02, 0.5);
             }
             _ => {}
         }
