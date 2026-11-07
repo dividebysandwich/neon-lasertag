@@ -250,6 +250,16 @@ pub struct Settings {
 /// Pickups of a kind whose announcements explain it.
 pub const EXPLAINED: u32 = 3;
 
+/// How loud the sound effects are at the sound setting's 100 % (of how they were made): they
+/// drowned out the music.
+pub const SOUND_LEVEL: f32 = 0.2;
+
+/// What every sound effect's volume is multiplied by: the sound setting, at its full level
+/// `SOUND_LEVEL` (the default settings' without any).
+pub fn sound_gain(settings: Option<&Settings>) -> f32 {
+    SOUND_LEVEL * settings.map_or(1.0, |s| s.sound_volume)
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Settings {

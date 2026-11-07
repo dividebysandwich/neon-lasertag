@@ -566,7 +566,7 @@ fn animate(
     let t = time.elapsed_secs();
     let dt = time.delta_secs();
     let tick = game.snap.tick;
-    let gain = settings.map_or(1.0, |s| s.sound_volume);
+    let gain = crate::settings::sound_gain(settings.as_deref());
     for mut v in &mut gates {
         let Some(g) = game.level.gates.get(v.k) else {
             continue;

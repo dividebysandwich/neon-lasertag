@@ -797,7 +797,7 @@ fn animate(
             mat.neon.color = c.extend(5.0 + 1.5 * (t * 9.0 + s.k as f32).sin() + s.flash * 8.0);
         }
     }
-    let gain = settings.map_or(1.0, |s| s.sound_volume);
+    let gain = crate::settings::sound_gain(settings.as_deref());
     for mut sink in &mut hums {
         sink.set_volume(Volume::Linear(0.6 * gain));
     }

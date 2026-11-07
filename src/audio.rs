@@ -245,7 +245,7 @@ fn cap_mix(
     listener: Query<&GlobalTransform, With<SpatialListener>>,
     mut sounds: Query<CappedSound>,
 ) {
-    let gain = settings.map_or(1.0, |s| s.sound_volume);
+    let gain = crate::settings::sound_gain(settings.as_deref());
     let ear = listener.iter().next().map(|t| t.translation());
     let heard = |spatial: bool, at: Vec3| match (spatial, ear) {
         (true, Some(ear)) => {
@@ -302,7 +302,7 @@ fn charge_hum(
         ));
         return;
     }
-    let gain = settings.map_or(1.0, |s| s.sound_volume);
+    let gain = crate::settings::sound_gain(settings.as_deref());
     let charging = game
         .me
         .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
@@ -325,7 +325,7 @@ fn play_events(
     sounds: Res<Sounds>,
     settings: Option<Res<Settings>>,
 ) {
-    let gain = settings.map_or(1.0, |s| s.sound_volume);
+    let gain = crate::settings::sound_gain(settings.as_deref());
     let me = game.me;
     let team = |id| {
         game.snap
@@ -659,7 +659,7 @@ fn footsteps(
     mut walked: ResMut<Walked>,
     settings: Option<Res<Settings>>,
 ) {
-    let gain = settings.map_or(1.0, |s| s.sound_volume);
+    let gain = crate::settings::sound_gain(settings.as_deref());
     let walked = &mut *walked;
     for p in &game.snap.players {
         let entry = walked.last.entry(p.id).or_insert((p.feet, 0.0));
@@ -703,7 +703,7 @@ fn ticking(
     mut ticking: ResMut<Ticking>,
     settings: Option<Res<Settings>>,
 ) {
-    let gain = settings.map_or(1.0, |s| s.sound_volume);
+    let gain = crate::settings::sound_gain(settings.as_deref());
     let dt = time.delta_secs();
     let ticking = &mut ticking.0;
     for p in &game.snap.players {
