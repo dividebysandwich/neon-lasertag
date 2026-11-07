@@ -41,6 +41,15 @@ flies, where it's fired and where it strikes, and the bots only see 12 m), or an
 grenade and powerup missing from the arena at once. In the last minute every point counts
 double (the clock shows 2x).
 
+**What the screen tells you.** Banners say what an arena event does, what a pickup you take does
+and how to use it (the first three times of each kind), what your Megatarget progress means, and
+when a powerup runs out; a forcefield you may not pass yet warns you when you come close. Under
+the clock (VR: on the wrist) a blackout counts down and 2x shows. Your powerups sit as chips in
+their colours above your status panel (VR: icons on the wrist), the timed ones with a bar
+draining. Your hits on enemies mark the crosshair (VR: a tick in the gun hand), the points you
+score rise beside it (VR: over the wrist), and the blaster warns when it runs low. A turret
+switched off shows a bar draining under its target.
+
 Matches last 10 minutes. Then the results show (each player's
 score, tags, times tagged out, assists, accuracy and target hits, and up to four awards:
 Sharpshooter for the best accuracy, Team player for the most assists, Defender, Grenadier and
