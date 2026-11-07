@@ -220,8 +220,10 @@ CI (`.github/workflows/build.yml`) runs on every push and pull request:
     OpenXR loader `libopenxr_loader.so` beside the game, which its RUNPATH `$ORIGIN` finds) and
     `lasertag-VERSION-ARCH.AppImage`. The aarch64 one is built on GitHub's arm64 runner.
   - Windows x64: `lasertag-VERSION-x86_64-pc-windows-msvc.zip` and the installer
-    `lasertag-VERSION-x86_64-pc-windows-msvc.msi` (`tools/msi.sh`, WiX v5: Program Files and a
-    Start menu shortcut). `--vr` works; the loader is linked in.
+    `lasertag-VERSION-x86_64-pc-windows-msvc.msi` (`tools/msi.sh`, WiX v5: Program Files and
+    Start menu shortcuts, flat and `--vr`). `--vr` works; the loader is linked in. The exe has
+    its icon and version built in (`build.rs`); started from a shortcut it shows no console and
+    logs to `%APPDATA%\lasertag\lasertag.log` (`src/win_console.rs`).
   - macOS Apple silicon: `lasertag-VERSION-aarch64-apple-darwin.zip`, flat screen only. It is
     unsigned: `xattr -dr com.apple.quarantine` the unpacked folder before the first start.
 - **servers**: `lt-server-VERSION-...tar.gz` (dedicated server; announced on the LAN unless

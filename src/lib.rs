@@ -47,6 +47,8 @@ pub mod targets;
 pub mod vfont;
 pub mod vr;
 pub mod vrui;
+#[cfg(windows)]
+mod win_console;
 #[cfg(feature = "xr")]
 pub mod xr;
 
@@ -275,6 +277,8 @@ fn auto_mode() -> Mode {
 }
 
 pub fn run() {
+    #[cfg(windows)]
+    win_console::leave_explorer_console();
     let mut args = Args::parse();
     if args.mode == Mode::Auto {
         args.mode = auto_mode();
