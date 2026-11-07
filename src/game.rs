@@ -416,6 +416,8 @@ pub struct Mover {
     pub air: Vec2,
     /// Stick movement (world XZ, m/s): eases towards what the stick asks for (a little inertia).
     pub vel: Vec2,
+    /// Jumping (as `lt_sim::Player::moves`).
+    pub moves: lt_sim::sim::Moves,
     pub valid: bool,
     seed: u64,
 }
@@ -643,6 +645,10 @@ fn predict(
         mover.vy = 0.0;
         mover.air = Vec2::ZERO;
         mover.vel = Vec2::ZERO;
+        mover.moves = lt_sim::sim::Moves {
+            jumps: Some(local.cmd.jumps),
+            ..default()
+        };
         mover.valid = true;
         mover.seed = game.level.seed;
     }
@@ -665,9 +671,15 @@ fn predict(
     if mover.vel.length() < 0.01 && want == Vec2::ZERO {
         mover.vel = Vec2::ZERO;
     }
+    let (mut vy, air) = (mover.vy, mover.air);
+    if let Some(up) =
+        lt_sim::sim::jump_step(&game.rules, &mut mover.moves, local.cmd.jumps, vy, air, dt)
+    {
+        vy = up;
+    }
     // (Flying from a jump pad: mostly the pad's throw, a little steering.)
     let delta = mover.vel * dt * lt_sim::sim::air_control(mover.air) + mover.air * dt + walk;
-    let (feet, mut vy) = game.world.move_body(mover.feet, delta, mover.vy, dt);
+    let (feet, mut vy) = game.world.move_body(mover.feet, delta, vy, dt);
     let flying = mover.air != Vec2::ZERO;
     let mut air = mover.air;
     if let Some((up, throw)) = lt_sim::sim::pad_step(&game.level, feet, vy, &mut air) {

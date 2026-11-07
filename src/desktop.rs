@@ -318,6 +318,9 @@ fn read_input(
         rot: muzzle_rot,
     };
     cmd.fire = grabbed && !overlays.hold_fire && on(Action::Fire);
+    if grabbed && settings.just_pressed(Action::Jump, &input) {
+        cmd.jumps = cmd.jumps.wrapping_add(1);
+    }
     cmd.shield = grabbed && on(Action::Shield);
     cmd.barrier = grabbed && on(Action::Barrier);
     if grabbed && !overlays.hold_fire && settings.just_pressed(Action::Fire, &input) {

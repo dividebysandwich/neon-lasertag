@@ -17,6 +17,7 @@ pub enum Action {
     Right,
     Walk,
     Crouch,
+    Jump,
     Fire,
     Grenade,
     Shield,
@@ -25,13 +26,14 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 11] = [
+    pub const ALL: [Action; 12] = [
         Action::Forward,
         Action::Back,
         Action::Left,
         Action::Right,
         Action::Walk,
         Action::Crouch,
+        Action::Jump,
         Action::Fire,
         Action::Grenade,
         Action::Shield,
@@ -47,6 +49,7 @@ impl Action {
             Action::Right => "Strafe right",
             Action::Walk => "Walk slowly",
             Action::Crouch => "Crouch",
+            Action::Jump => "Jump",
             Action::Fire => "Fire",
             Action::Grenade => "Grenade (hold, let go)",
             Action::Shield => "Shield (switch on)",
@@ -63,6 +66,7 @@ impl Action {
             Action::Right => "right",
             Action::Walk => "walk",
             Action::Crouch => "crouch",
+            Action::Jump => "jump",
             Action::Fire => "fire",
             Action::Grenade => "grenade",
             Action::Shield => "shield",
@@ -80,6 +84,7 @@ impl Action {
             Action::Right => [Some(Key(KeyCode::KeyD)), Some(Key(KeyCode::ArrowRight))],
             Action::Walk => [Some(Key(KeyCode::ShiftLeft)), None],
             Action::Crouch => [Some(Key(KeyCode::ControlLeft)), Some(Key(KeyCode::KeyC))],
+            Action::Jump => [Some(Key(KeyCode::Space)), None],
             Action::Fire => [Some(Mouse(MouseButton::Left)), None],
             Action::Grenade => [Some(Key(KeyCode::KeyG)), Some(Mouse(MouseButton::Right))],
             Action::Shield => [Some(Key(KeyCode::KeyQ)), None],

@@ -124,6 +124,8 @@ pub struct VrState {
     gripping: [bool; 2],
     menu_held: [bool; 2],
     hold: [(f32, bool); 2],
+    /// A / X held (last frame): pressing jumps.
+    primary_held: [bool; 2],
     /// Times the menu was asked for (src/vrui.rs takes them).
     pub menu_requests: u32,
     /// Recentering was asked for this frame (the left menu button).
@@ -406,6 +408,14 @@ fn read_controls(
         vr.yaw -= t.signum() * (t.abs() - 0.2) / 0.8 * 2.4 * dt;
     }
     local.cmd.yaw = vr.yaw + input.head.map_or(0.0, |h| flat_yaw(h.rotation));
+    // A or X: jump.
+    for i in 0..2 {
+        let down = input.hands[i].primary;
+        if down && !vr.primary_held[i] && !vr.ui {
+            local.cmd.jumps = local.cmd.jumps.wrapping_add(1);
+        }
+        vr.primary_held[i] = down;
+    }
 
     // The holster: at the hip on the gun side, turned with the body (which follows the head's
     // facing slowly).

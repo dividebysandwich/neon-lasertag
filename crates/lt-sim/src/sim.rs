@@ -63,6 +63,8 @@ pub struct Player {
     pub vy: f32,
     /// Flying from a jump pad: the horizontal velocity it gave (zero on the ground).
     pub air: Vec2,
+    /// Jumping (`jump_step`).
+    pub moves: Moves,
     pub cmd: PlayerCmd,
     prev_fire: bool,
     /// Hits taken since the last respawn.
@@ -666,6 +668,7 @@ impl Sim {
             feet: Vec3::ZERO,
             vy: 0.0,
             air: Vec2::ZERO,
+            moves: Moves::default(),
             cmd: PlayerCmd::default(),
             prev_fire: false,
             hits: 0,
@@ -1016,6 +1019,11 @@ impl Sim {
                 p.feet = s.pos;
                 p.vy = 0.0;
                 p.air = Vec2::ZERO;
+                // (Presses while tagged out don't count.)
+                p.moves = Moves {
+                    jumps: Some(p.cmd.jumps),
+                    ..Moves::default()
+                };
                 p.cmd.yaw = s.yaw;
                 p.claim_block = 30;
                 self.events.push(SimEvent::Respawned {
@@ -1032,6 +1040,16 @@ impl Sim {
 
             // Movement.
             self.players[i].claim_block = self.players[i].claim_block.saturating_sub(1);
+            {
+                let p = &mut self.players[i];
+                if let Some(up) = jump_step(&rules, &mut p.moves, p.cmd.jumps, p.vy, p.air, TICK) {
+                    p.vy = up;
+                    self.events.push(SimEvent::Jumped {
+                        player: p.id,
+                        pos: p.feet,
+                    });
+                }
+            }
             let (feet, vy) = {
                 let p = &self.players[i];
                 let d = match p.cmd.feet {
@@ -2311,6 +2329,56 @@ impl Sim {
     }
 }
 
+/// A body's jumping, kept alike by the sim and the client's prediction.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Moves {
+    /// The command's `PlayerCmd::jumps` last seen (none yet: the first one only counts from).
+    pub jumps: Option<u32>,
+    /// Seconds a press still waits to jump (pressed just before landing).
+    pub wait: f32,
+    /// Seconds since the feet were last on the ground.
+    pub off_ground: f32,
+    /// Jumped and not landed yet.
+    pub jumped: bool,
+}
+
+/// A body's jumping before its move (`World::move_body`): with `jumps` the command's count of
+/// presses, `vy` its vertical speed (0: on the ground) and `air` a jump pad's throw, the
+/// upward speed to jump with now, if it jumps. A press counts for `Rules::jump_buffer` seconds
+/// (landing meanwhile jumps), and a body that walked off an edge may still jump for
+/// `Rules::coyote_time` seconds; never twice before landing, nor flying from a pad.
+pub fn jump_step(
+    rules: &Rules,
+    m: &mut Moves,
+    jumps: u32,
+    vy: f32,
+    air: Vec2,
+    dt: f32,
+) -> Option<f32> {
+    if let Some(seen) = m.jumps
+        && jumps != seen
+    {
+        m.wait = rules.jump_buffer;
+    }
+    m.jumps = Some(jumps);
+    if vy == 0.0 {
+        m.off_ground = 0.0;
+        m.jumped = false;
+    } else {
+        m.off_ground += dt;
+    }
+    if m.wait <= 0.0 {
+        return None;
+    }
+    if !m.jumped && air == Vec2::ZERO && m.off_ground <= rules.coyote_time {
+        m.wait = 0.0;
+        m.jumped = true;
+        return Some(rules.jump_speed);
+    }
+    m.wait = (m.wait - dt).max(0.0);
+    None
+}
+
 /// How fast the stick moves a player (m/s), with a speed boost running and crouching (the
 /// sim's and the client's prediction alike).
 pub fn move_speed(rules: &Rules, boosted: bool, crouch: bool) -> f32 {
@@ -2536,6 +2604,69 @@ mod tests {
         );
         assert_eq!(p.air, Vec2::ZERO);
         assert_eq!(p.vy, 0.0);
+    }
+
+    #[test]
+    fn a_jump_rises_about_three_quarters_of_a_metre_and_lands() {
+        let (mut sim, a, _) = duel();
+        sim.step();
+        let ground = sim.player(a).unwrap().feet.y;
+        let jump = |sim: &mut Sim, n: u32| {
+            sim.set_cmd(
+                a,
+                PlayerCmd {
+                    jumps: n,
+                    ..Default::default()
+                },
+            )
+        };
+        jump(&mut sim, 0);
+        sim.step();
+        jump(&mut sim, 1);
+        let mut top = ground;
+        for _ in 0..120 {
+            sim.step();
+            top = top.max(sim.player(a).unwrap().feet.y);
+        }
+        let h = top - ground;
+        assert!((h - 0.775).abs() < 0.05, "{h} m");
+        let p = sim.player(a).unwrap();
+        assert_eq!(p.feet.y, ground);
+        assert_eq!(p.vy, 0.0);
+    }
+
+    #[test]
+    fn jumps_wait_for_landing_allow_a_late_one_and_never_double() {
+        let rules = Rules::default();
+        let mut m = Moves::default();
+        let dt = TICK;
+        // The first count seen doesn't jump.
+        assert!(jump_step(&rules, &mut m, 5, 0.0, Vec2::ZERO, dt).is_none());
+        // Walked off an edge 0.08 s ago: still jumps.
+        let mut t = 0.0;
+        while t < 0.08 {
+            assert!(jump_step(&rules, &mut m, 5, -1.0, Vec2::ZERO, dt).is_none());
+            t += dt;
+        }
+        assert!(jump_step(&rules, &mut m, 6, -1.0, Vec2::ZERO, dt).is_some());
+        // In the air: a second press waits, and doesn't jump again before landing.
+        assert!(jump_step(&rules, &mut m, 7, 2.0, Vec2::ZERO, dt).is_none());
+        for _ in 0..3 {
+            assert!(jump_step(&rules, &mut m, 7, -2.0, Vec2::ZERO, dt).is_none());
+        }
+        // Landing within the buffer jumps.
+        assert!(jump_step(&rules, &mut m, 7, 0.0, Vec2::ZERO, dt).is_some());
+        // Too long off the ground: no jump.
+        let mut m = Moves::default();
+        jump_step(&rules, &mut m, 0, 0.0, Vec2::ZERO, dt);
+        for _ in 0..12 {
+            jump_step(&rules, &mut m, 0, -1.0, Vec2::ZERO, dt);
+        }
+        assert!(jump_step(&rules, &mut m, 1, -1.0, Vec2::ZERO, dt).is_none());
+        // Flying from a pad: no jump.
+        let mut m = Moves::default();
+        jump_step(&rules, &mut m, 0, 0.0, Vec2::ZERO, dt);
+        assert!(jump_step(&rules, &mut m, 1, 0.0, Vec2::ONE, dt).is_none());
     }
 
     #[test]

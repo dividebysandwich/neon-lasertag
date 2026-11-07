@@ -123,6 +123,7 @@ it. You lose them all when you're tagged out.
 | | VR | Flat screen |
 |---|---|---|
 | move | left stick (where you look), or walk in your room | WASD (Shift: slower) |
+| jump | A or X (a hop of about 0.8 m; it still works just after you walk off an edge, and a press just before landing jumps on landing) | Space |
 | crouch | crouch (slower: you move at half speed) | Left Ctrl or C (hold; lowers you behind half walls, half speed) |
 | turn / look | right stick (smooth turn), your head | mouse |
 | blaster | grip it at the holster on your right hip (one hand at a time); let go to holster it | always in hand |

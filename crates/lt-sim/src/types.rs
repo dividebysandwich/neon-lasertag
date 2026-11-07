@@ -215,6 +215,9 @@ pub struct PlayerCmd {
     pub throw: Option<(Vec3, Vec3)>,
     /// Switch on the carried shield (powerup).
     pub shield: bool,
+    /// Jump presses so far (a count, so a lost command loses none; `sim::jump_step`).
+    #[serde(default)]
+    pub jumps: u32,
     /// Crouching (moves at `Rules::crouch_factor` of the speed).
     #[serde(default)]
     pub crouch: bool,
@@ -329,6 +332,11 @@ pub enum SimEvent {
         respawn_in: f32,
     },
     Respawned {
+        player: PlayerId,
+        pos: Vec3,
+    },
+    /// A player jumped (`PlayerCmd::jumps`).
+    Jumped {
         player: PlayerId,
         pos: Vec3,
     },
