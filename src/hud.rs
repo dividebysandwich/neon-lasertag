@@ -4,7 +4,7 @@
 
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use lt_sim::{PickupKind, PlayerId, SimEvent, Team};
+use lt_sim::{PickupKind, PlayerId, SimEvent, Team, Weapon};
 
 use crate::desktop::{MainCamera, Overlays};
 use crate::game::{Game, GameEvent};
@@ -2058,8 +2058,8 @@ fn powerup_chip(
     };
     match kind {
         PickupKind::Rapid if p.rapid => chip("RAPID FIRE".into(), None, false),
-        PickupKind::Shotgun if p.shotgun => chip("SHOTGUN".into(), None, false),
-        PickupKind::Charge if p.charge => {
+        PickupKind::Shotgun if p.weapon == Weapon::Shotgun => chip("SHOTGUN".into(), None, false),
+        PickupKind::Charge if p.weapon == Weapon::Charge => {
             if p.charging >= rules.charge_time {
                 chip("CHARGED - LET GO".into(), Some(1.0), true)
             } else if p.charging > 0.0 {
@@ -2080,7 +2080,11 @@ fn powerup_chip(
         PickupKind::Speed if p.speed > 0.0 => timed("SPEED", p.speed, rules.speed_time),
         PickupKind::Shield if p.shield > 0.0 => timed("SHIELD", p.shield, rules.shield_time),
         PickupKind::Shield if p.shields > 0 => carried("SHIELD", p.shields, Action::Shield),
-        PickupKind::Barrier if p.barriers > 0 => carried("BARRIER", p.barriers, Action::Barrier),
+        _ if let Some((g, n)) = p.gadget
+            && kind.gadget() == Some(g) =>
+        {
+            carried(&g.name().to_uppercase(), n, Action::Gadget)
+        }
         _ => None,
     }
 }
@@ -2156,7 +2160,7 @@ pub fn pickup_banner(
         ),
         PickupKind::Barrier => format!(
             "{}: A WALL THAT STOPS ENEMY BOLTS FOR {:.0} S",
-            key(Action::Barrier, "GRIP OF THE FREE HAND"),
+            key(Action::Gadget, "GRIP OF THE FREE HAND"),
             rules.barrier_time
         ),
     };

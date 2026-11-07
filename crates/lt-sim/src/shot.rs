@@ -36,8 +36,7 @@ pub struct Gun {
     pub charging: Option<f32>,
     pub ammo: u16,
     pub rapid: bool,
-    pub shotgun: bool,
-    pub charge: bool,
+    pub weapon: Weapon,
     /// The lockout after a hit.
     pub cooldown: f32,
 }
@@ -93,12 +92,12 @@ impl Gun {
             } else if self.ammo == 0 {
                 self.fire_cd = self.interval(rules);
                 return Some(Trigger::Empty);
-            } else if self.charge {
-                self.charging = Some(0.0);
-            } else if self.shotgun {
-                return Some(Trigger::Fire(Shot::Spread));
             } else {
-                return Some(Trigger::Fire(Shot::Bolt));
+                match self.weapon {
+                    Weapon::Charge => self.charging = Some(0.0),
+                    Weapon::Shotgun => return Some(Trigger::Fire(Shot::Spread)),
+                    Weapon::Blaster => return Some(Trigger::Fire(Shot::Bolt)),
+                }
             }
         }
         if let Some(t) = self.charging {

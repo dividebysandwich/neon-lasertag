@@ -68,7 +68,7 @@ pub enum PickupKind {
     /// deals `Rules::beam_damage` hits (for `Rules::beam_cost` shots); taking one also fills it
     /// up.
     Charge,
-    /// Carried until put up (`PlayerCmd::barrier`): a wall of hard light in front of the
+    /// A gadget, carried until put up (`PlayerCmd::gadget`): a wall of hard light in front of the
     /// player for `Rules::barrier_time`, stopping every bolt but its team's.
     Barrier,
 }
@@ -124,6 +124,85 @@ impl PickupKind {
 
     pub fn parse(s: &str) -> Option<PickupKind> {
         Self::ALL.into_iter().find(|k| k.id() == s)
+    }
+
+    /// The pool a powerup slot rolls it from (none: the grenade has slots of its own).
+    pub fn pool(self) -> Option<Pool> {
+        match self {
+            PickupKind::Grenade => None,
+            PickupKind::Shotgun | PickupKind::Charge => Some(Pool::Weapon),
+            PickupKind::Barrier => Some(Pool::Gadget),
+            PickupKind::Rapid | PickupKind::Shield | PickupKind::Cloak | PickupKind::Speed => {
+                Some(Pool::Power)
+            }
+        }
+    }
+
+    /// The gun it gives.
+    pub fn weapon(self) -> Option<Weapon> {
+        match self {
+            PickupKind::Shotgun => Some(Weapon::Shotgun),
+            PickupKind::Charge => Some(Weapon::Charge),
+            _ => None,
+        }
+    }
+
+    /// The gadget it gives.
+    pub fn gadget(self) -> Option<Gadget> {
+        match self {
+            PickupKind::Barrier => Some(Gadget::Barrier),
+            _ => None,
+        }
+    }
+}
+
+/// Which gun a player holds: the blaster, or the special one a pickup gave until tagged out.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Weapon {
+    #[default]
+    Blaster,
+    Shotgun,
+    Charge,
+}
+
+/// A carried gadget (one at a time, used with `PlayerCmd::gadget`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Gadget {
+    Barrier,
+}
+
+impl Gadget {
+    pub fn name(self) -> &'static str {
+        match self {
+            Gadget::Barrier => "barrier",
+        }
+    }
+}
+
+/// The kinds of pickup a powerup slot rolls from each time it fills.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Pool {
+    Weapon,
+    Gadget,
+    Power,
+}
+
+impl Pool {
+    pub const ALL: [Pool; 3] = [Pool::Weapon, Pool::Gadget, Pool::Power];
+
+    /// Slots of this pool in each half per `Rules::powerup_pairs`.
+    pub fn slots(self) -> usize {
+        match self {
+            Pool::Weapon => 2,
+            Pool::Gadget => 2,
+            Pool::Power => 3,
+        }
+    }
+
+    pub fn kinds(self) -> impl Iterator<Item = PickupKind> {
+        PickupKind::POWERUPS
+            .into_iter()
+            .filter(move |k| k.pool() == Some(self))
     }
 }
 
@@ -252,9 +331,9 @@ pub struct PlayerCmd {
     /// Crouching (moves at `Rules::crouch_factor` of the speed).
     #[serde(default)]
     pub crouch: bool,
-    /// Put up the carried barrier (powerup), in front of the player (on pressing).
+    /// Use the carried gadget (on pressing; some work while held).
     #[serde(default)]
-    pub barrier: bool,
+    pub gadget: bool,
     /// The sim tick the client was showing (the snapshot tick it rendered, after its
     /// interpolation delay) when it made this command; 0 = unknown or local (no lag
     /// compensation). The server flies a bolt fired with it through the other players as they

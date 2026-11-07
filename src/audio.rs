@@ -13,7 +13,7 @@ use std::collections::HashMap;
 
 use bevy::audio::{DefaultSpatialScale, PlaybackMode, SpatialScale, Volume};
 use bevy::prelude::*;
-use lt_sim::{PlayerId, SimEvent};
+use lt_sim::{PlayerId, SimEvent, Weapon};
 
 use crate::game::{Game, GameEvent};
 use crate::settings::Settings;
@@ -371,7 +371,7 @@ fn play_events(
                     .snap
                     .players
                     .iter()
-                    .any(|p| p.id == player && p.shotgun);
+                    .any(|p| p.id == player && p.weapon == Weapon::Shotgun);
                 let sound = if shotgun {
                     &sounds.shotgun
                 } else if red {

@@ -10,7 +10,7 @@ use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use lt_sim::sim::{EYE, eye_on_neck, look_rot};
-use lt_sim::{Hand, Pose, SimEvent};
+use lt_sim::{Hand, Pose, SimEvent, Weapon};
 
 use crate::assets::Models;
 use crate::game::{Game, GameEvent, InputSet, LocalCmd, Mover, PredictSet, alpha};
@@ -310,7 +310,7 @@ fn read_input(
     let shotgun = game
         .me
         .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
-        .is_some_and(|p| p.shotgun);
+        .is_some_and(|p| p.weapon == Weapon::Shotgun);
     // (The shotgun further out, its stock clear of the eye.)
     let hold = if shotgun { SHOTGUN_GRIP } else { GRIP };
     let grip = cam + view * (hold + gun_offset);
@@ -359,7 +359,7 @@ fn read_input(
         cmd.dashes = cmd.dashes.wrapping_add(1);
     }
     cmd.shield = grabbed && on(Action::Shield);
-    cmd.barrier = grabbed && on(Action::Barrier);
+    cmd.gadget = grabbed && on(Action::Gadget);
     if grabbed && !overlays.hold_fire && settings.just_pressed(Action::Fire, &input) {
         local.fire_latch = true;
     }

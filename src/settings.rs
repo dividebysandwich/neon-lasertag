@@ -22,7 +22,7 @@ pub enum Action {
     Fire,
     Grenade,
     Shield,
-    Barrier,
+    Gadget,
     Scores,
 }
 
@@ -39,7 +39,7 @@ impl Action {
         Action::Fire,
         Action::Grenade,
         Action::Shield,
-        Action::Barrier,
+        Action::Gadget,
         Action::Scores,
     ];
 
@@ -56,7 +56,7 @@ impl Action {
             Action::Fire => "Fire",
             Action::Grenade => "Grenade (hold, let go)",
             Action::Shield => "Shield (switch on)",
-            Action::Barrier => "Barrier (put up)",
+            Action::Gadget => "Gadget (use)",
             Action::Scores => "Scores (hold)",
         }
     }
@@ -74,7 +74,7 @@ impl Action {
             Action::Fire => "fire",
             Action::Grenade => "grenade",
             Action::Shield => "shield",
-            Action::Barrier => "barrier",
+            Action::Gadget => "barrier",
             Action::Scores => "scores",
         }
     }
@@ -93,7 +93,7 @@ impl Action {
             Action::Fire => [Some(Mouse(MouseButton::Left)), None],
             Action::Grenade => [Some(Key(KeyCode::KeyG)), Some(Mouse(MouseButton::Right))],
             Action::Shield => [Some(Key(KeyCode::KeyQ)), None],
-            Action::Barrier => [Some(Key(KeyCode::KeyE)), None],
+            Action::Gadget => [Some(Key(KeyCode::KeyE)), None],
             Action::Scores => [Some(Key(KeyCode::Tab)), None],
         }
     }

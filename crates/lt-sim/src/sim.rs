@@ -113,20 +113,18 @@ pub struct Player {
     pub rapid: bool,
     pub shields: u8,
     pub shield: f32,
-    /// Holding a shotgun instead of the blaster (until tagged out).
-    pub shotgun: bool,
+    /// The gun in hand: the blaster, or a special one (until tagged out).
+    pub weapon: Weapon,
     /// Seconds left of the cloak (0: none), and of showing after firing or a hit.
     pub cloak: f32,
     pub decloak: f32,
     /// Seconds left of the speed boost (0: none).
     pub speed: f32,
-    /// Holding the charge gun instead of the blaster (until tagged out), and how long its
-    /// trigger has been held (while it charges).
-    pub charge: bool,
+    /// How long the charge gun's trigger has been held (while it charges).
     pub charging: Option<f32>,
-    /// Barriers carried.
-    pub barriers: u8,
-    prev_barrier: bool,
+    /// The gadget carried, and how many.
+    pub gadget: Option<(Gadget, u8)>,
+    prev_gadget: bool,
     /// A remote client judges this player's hits on others (`shot::HitClaim`), and the shots
     /// it fired lately to check them against.
     pub client_hits: bool,
@@ -185,8 +183,7 @@ impl Player {
             charging: self.charging,
             ammo: self.ammo,
             rapid: self.rapid,
-            shotgun: self.shotgun,
-            charge: self.charge,
+            weapon: self.weapon,
             cooldown: self.cooldown,
         }
     }
@@ -221,13 +218,13 @@ impl Player {
             PickupKind::Grenade => self.grenades < rules.grenade_max,
             PickupKind::Rapid => !self.rapid,
             PickupKind::Shield => self.shields == 0,
-            // (One special gun at a time: the other stays where it is until this one is lost
-            // with a tag-out; one's own refills it.)
-            PickupKind::Shotgun => !self.charge && (!self.shotgun || self.ammo < rules.ammo),
-            PickupKind::Charge => !self.shotgun && (!self.charge || self.ammo < rules.ammo),
             PickupKind::Cloak => self.cloak <= 0.0,
             PickupKind::Speed => self.speed <= 0.0,
-            PickupKind::Barrier => self.barriers == 0,
+            // (A special gun replaces the one in hand; one's own refills it.)
+            _ if let Some(w) = kind.weapon() => self.weapon != w || self.ammo < rules.ammo,
+            // (A gadget replaces the one carried.)
+            _ if let Some(g) = kind.gadget() => self.gadget.is_none_or(|(c, _)| c != g),
+            _ => false,
         }
     }
 
@@ -237,16 +234,28 @@ impl Player {
             PickupKind::Grenade => self.grenades += 1,
             PickupKind::Rapid => self.rapid = true,
             PickupKind::Shield => self.shields += 1,
-            PickupKind::Shotgun | PickupKind::Charge => {
-                self.shotgun = kind == PickupKind::Shotgun;
-                self.charge = kind == PickupKind::Charge;
+            PickupKind::Cloak => self.cloak = rules.cloak_time,
+            PickupKind::Speed => self.speed = rules.speed_time,
+            _ if let Some(w) = kind.weapon() => {
+                self.weapon = w;
                 self.charging = None;
                 self.ammo = rules.ammo;
                 self.reloading = None;
             }
-            PickupKind::Cloak => self.cloak = rules.cloak_time,
-            PickupKind::Speed => self.speed = rules.speed_time,
-            PickupKind::Barrier => self.barriers += 1,
+            _ if let Some(g) = kind.gadget() => self.gadget = Some((g, 1)),
+            _ => {}
+        }
+    }
+
+    /// The gadget carried, if any.
+    pub fn gadget_kind(&self) -> Option<Gadget> {
+        self.gadget.map(|(g, _)| g)
+    }
+
+    /// One of the carried gadgets used up.
+    fn use_gadget(&mut self) {
+        if let Some((g, n)) = self.gadget {
+            self.gadget = (n > 1).then(|| (g, n - 1));
         }
     }
 
@@ -255,13 +264,12 @@ impl Player {
         self.rapid = false;
         self.shields = 0;
         self.shield = 0.0;
-        self.shotgun = false;
+        self.weapon = Weapon::Blaster;
         self.cloak = 0.0;
         self.decloak = 0.0;
         self.speed = 0.0;
-        self.charge = false;
         self.charging = None;
-        self.barriers = 0;
+        self.gadget = None;
     }
 
     pub fn eye(&self) -> Vec3 {
@@ -310,11 +318,12 @@ pub struct Pickup {
 }
 
 /// A place for pickups of a kind: there's a pickup there, or one will appear somewhere in
-/// `half` after `wait` seconds.
+/// `half` after `wait` seconds (a powerup's kind rolled from `pool` each time).
 #[derive(Clone, Copy, Debug)]
 struct PickupSlot {
     half: Team,
     kind: PickupKind,
+    pool: Option<Pool>,
     pickup: Option<Pickup>,
     wait: f32,
 }
@@ -483,21 +492,20 @@ pub struct PlayerSnap {
     /// Megatarget mode (`Player::mega_hits`, `Player::power`).
     pub mega_hits: u8,
     pub power: Option<f32>,
-    /// Powerups (`Player::rapid`, `shields`, `shield`, `shotgun`).
+    /// Powerups (`Player::rapid`, `shields`, `shield`, `weapon`).
     pub rapid: bool,
     pub shields: u8,
     pub shield: f32,
-    pub shotgun: bool,
+    pub weapon: Weapon,
     /// `Player::cloak`, `decloak`.
     pub cloak: f32,
     pub decloak: f32,
     /// `Player::speed`.
     pub speed: f32,
-    /// `Player::charge`, and `Player::charging` (0: not charging).
-    pub charge: bool,
+    /// `Player::charging` (0: not charging).
     pub charging: f32,
-    /// `Player::barriers`.
-    pub barriers: u8,
+    /// `Player::gadget`.
+    pub gadget: Option<(Gadget, u8)>,
     /// The command's `PlayerCmd::shot` (the client's shots this state includes).
     #[serde(default)]
     pub shot: u32,
@@ -510,12 +518,17 @@ impl PlayerSnap {
             PickupKind::Grenade => self.grenades > 0,
             PickupKind::Rapid => self.rapid,
             PickupKind::Shield => self.shields > 0 || self.shield > 0.0,
-            PickupKind::Shotgun => self.shotgun,
             PickupKind::Cloak => self.cloak > 0.0,
             PickupKind::Speed => self.speed > 0.0,
-            PickupKind::Charge => self.charge,
-            PickupKind::Barrier => self.barriers > 0,
+            _ if let Some(w) = kind.weapon() => self.weapon == w,
+            _ if let Some(g) = kind.gadget() => self.gadget.is_some_and(|(c, _)| c == g),
+            _ => false,
         }
+    }
+
+    /// The gadget carried, if any.
+    pub fn gadget_kind(&self) -> Option<Gadget> {
+        self.gadget.map(|(g, _)| g)
     }
 
     /// Cloaked and not showing right now (`Player::cloaked`).
@@ -593,17 +606,20 @@ impl Sim {
         let grenades = (0..rules.pickup_pairs as usize * 2).map(|i| PickupSlot {
             half: if i % 2 == 0 { Team::Red } else { Team::Blue },
             kind: PickupKind::Grenade,
+            pool: None,
             pickup: None,
             wait: 1.0 + (i / 2) as f32 * 2.0,
         });
-        // Powerups come a little later, one kind after the other.
-        let powerups = PickupKind::POWERUPS
+        // Powerups come a little later, one slot after the other.
+        let powerups = Pool::ALL
             .iter()
+            .flat_map(|&pool| std::iter::repeat_n(pool, pool.slots()))
             .enumerate()
-            .flat_map(|(k, &kind)| {
+            .flat_map(|(k, pool)| {
                 (0..rules.powerup_pairs as usize * 2).map(move |i| PickupSlot {
                     half: if i % 2 == 0 { Team::Red } else { Team::Blue },
-                    kind,
+                    kind: pool.kinds().next().unwrap_or(PickupKind::Grenade),
+                    pool: Some(pool),
                     pickup: None,
                     wait: 6.0 + k as f32 * 3.0 + (i / 2) as f32 * 10.0,
                 })
@@ -704,14 +720,13 @@ impl Sim {
             rapid: false,
             shields: 0,
             shield: 0.0,
-            shotgun: false,
+            weapon: Weapon::Blaster,
             cloak: 0.0,
             decloak: 0.0,
             speed: 0.0,
-            charge: false,
             charging: None,
-            barriers: 0,
-            prev_barrier: false,
+            gadget: None,
+            prev_gadget: false,
             client_hits: false,
             shot_log: std::collections::VecDeque::new(),
         };
@@ -1028,6 +1043,21 @@ impl Sim {
         self.world.set_dynamic(all);
     }
 
+    /// A kind from `pool` for a slot in `half`: one not lying in that half yet if there is
+    /// one.
+    fn roll_kind(&mut self, pool: Pool, half: Team) -> PickupKind {
+        let lying: Vec<PickupKind> = self
+            .slots
+            .iter()
+            .filter(|s| s.half == half)
+            .filter_map(|s| s.pickup.map(|p| p.kind))
+            .collect();
+        let all: Vec<PickupKind> = pool.kinds().collect();
+        let fresh: Vec<PickupKind> = all.iter().copied().filter(|k| !lying.contains(k)).collect();
+        let from = if fresh.is_empty() { &all } else { &fresh };
+        from[self.rng.random_range(0..from.len())]
+    }
+
     fn step_pickups(&mut self) {
         for i in 0..self.slots.len() {
             match self.slots[i].pickup {
@@ -1061,6 +1091,9 @@ impl Sim {
                 None => {
                     self.slots[i].wait -= TICK;
                     if self.slots[i].wait <= 0.0 {
+                        if let Some(pool) = self.slots[i].pool {
+                            self.slots[i].kind = self.roll_kind(pool, self.slots[i].half);
+                        }
                         let (half, kind) = (self.slots[i].half, self.slots[i].kind);
                         match self.pickup_spot(half) {
                             Some(pos) => {
@@ -1085,7 +1118,7 @@ impl Sim {
                 c.fire = false;
                 c.throw = None;
                 c.shield = false;
-                c.barrier = false;
+                c.gadget = false;
             }
             // Timers.
             let respawn_now = {
@@ -1270,11 +1303,11 @@ impl Sim {
                 }
             }
 
-            // Putting up a carried barrier (on pressing).
-            let deploy = p.cmd.barrier && !p.prev_barrier && p.barriers > 0;
-            p.prev_barrier = p.cmd.barrier;
-            if deploy {
-                p.barriers -= 1;
+            // Using the carried gadget (on pressing).
+            let press = p.cmd.gadget && !p.prev_gadget;
+            p.prev_gadget = p.cmd.gadget;
+            if press && let Some((Gadget::Barrier, _)) = p.gadget {
+                p.use_gadget();
                 p.protect = 0.0;
                 let id = self.id();
                 let b = Barrier {
@@ -1759,7 +1792,10 @@ impl Sim {
                 TagHow::Grenade
             } else if b.extra.pierce {
                 TagHow::Beam
-            } else if self.player(b.owner).is_some_and(|s| s.shotgun) {
+            } else if self
+                .player(b.owner)
+                .is_some_and(|s| s.weapon == Weapon::Shotgun)
+            {
                 TagHow::Shotgun
             } else {
                 TagHow::Blaster
@@ -2251,6 +2287,7 @@ impl Sim {
         self.slots.push(PickupSlot {
             half: Team::of_z(pos.z),
             kind,
+            pool: None,
             pickup: Some(Pickup { id, pos, kind }),
             wait: f32::MAX,
         });
@@ -2455,13 +2492,12 @@ impl Sim {
                     rapid: p.rapid,
                     shields: p.shields,
                     shield: p.shield,
-                    shotgun: p.shotgun,
+                    weapon: p.weapon,
                     cloak: p.cloak,
                     decloak: p.decloak,
                     speed: p.speed,
-                    charge: p.charge,
                     charging: p.charging.unwrap_or(0.0),
-                    barriers: p.barriers,
+                    gadget: p.gadget,
                     shot: p.cmd.shot,
                 })
                 .collect(),
@@ -3204,7 +3240,7 @@ mod tests {
         let bf = sim.player(b).unwrap().feet;
         sim.players[2].feet = bf + Vec3::new(0.0, 0.0, -2.0);
         sim.give(a, PickupKind::Charge);
-        assert!(sim.player(a).unwrap().charge);
+        assert_eq!(sim.player(a).unwrap().weapon, Weapon::Charge);
         let me = sim.player(a).unwrap();
         let target = sim.player(b).unwrap().chest();
         let muzzle_pos = me.eye() - Vec3::Y * 0.2 - me.feet;
@@ -3284,36 +3320,35 @@ mod tests {
         sim.hit_player(0, &bolt, Vec3::ZERO);
         sim.step();
         assert!(sim.player(a).unwrap().charging.is_none());
-        // One special gun at a time.
+        // Another special gun replaces it.
         sim.players[0].hits = 0;
         assert!(
-            !sim.player(a)
+            sim.player(a)
                 .unwrap()
                 .wants(PickupKind::Shotgun, &sim.rules)
         );
         sim.give(a, PickupKind::Shotgun);
-        let p = sim.player(a).unwrap();
-        assert!(!p.shotgun && p.charge);
+        assert_eq!(sim.player(a).unwrap().weapon, Weapon::Shotgun);
     }
 
     #[test]
     fn barriers_stop_enemy_bolts_only() {
         let (mut sim, a, b) = duel();
         sim.give(a, PickupKind::Barrier);
-        assert_eq!(sim.player(a).unwrap().barriers, 1);
+        assert_eq!(sim.player(a).unwrap().gadget, Some((Gadget::Barrier, 1)));
         // Facing b (3 m away along -z): up between them.
         sim.set_cmd(
             a,
             PlayerCmd {
                 yaw: 0.0,
-                barrier: true,
+                gadget: true,
                 ..Default::default()
             },
         );
         sim.step();
         sim.step();
         assert_eq!(sim.barriers.len(), 1, "one barrier for one press");
-        assert_eq!(sim.player(a).unwrap().barriers, 0);
+        assert_eq!(sim.player(a).unwrap().gadget, None);
         let br = sim.barriers[0];
         let fa = sim.player(a).unwrap().feet;
         assert!(((br.centre - fa).with_y(0.0).length() - sim.rules.barrier_dist).abs() < 0.05);
@@ -4321,14 +4356,35 @@ mod tests {
         for _ in 0..(30.0 / TICK) as usize {
             sim.step();
         }
-        for kind in PickupKind::POWERUPS {
-            let of_kind: Vec<Pickup> = sim.pickups().filter(|p| p.kind == kind).copied().collect();
-            assert_eq!(of_kind.len(), 2, "{kind:?}: one in each half");
-            assert_eq!(of_kind.iter().filter(|p| p.pos.z > 0.0).count(), 1);
+        for pool in Pool::ALL {
+            for half in [Team::Red, Team::Blue] {
+                let n = sim
+                    .pickups()
+                    .filter(|p| p.kind.pool() == Some(pool) && Team::of_z(p.pos.z) == half)
+                    .count();
+                assert_eq!(n, pool.slots(), "{pool:?} in {half:?}");
+            }
         }
+        // Each pool's slots in a half roll different kinds (while there are enough).
+        for half in [Team::Red, Team::Blue] {
+            for pool in Pool::ALL {
+                let mut kinds: Vec<PickupKind> = sim
+                    .pickups()
+                    .filter(|p| p.kind.pool() == Some(pool) && Team::of_z(p.pos.z) == half)
+                    .map(|p| p.kind)
+                    .collect();
+                kinds.sort_by_key(|k| k.id());
+                kinds.dedup();
+                let want = pool.slots().min(pool.kinds().count());
+                assert_eq!(kinds.len(), want, "{half:?} {pool:?}: {kinds:?}");
+            }
+        }
+        let pos = |z: f32| Vec3::new(0.0, PICKUP_HEIGHT, z);
+        sim.drop_pickup(PickupKind::Rapid, pos(3.0));
+        sim.drop_pickup(PickupKind::Rapid, pos(-3.0));
         let rapid: Vec<Pickup> = sim
             .pickups()
-            .filter(|p| p.kind == PickupKind::Rapid)
+            .filter(|p| p.kind == PickupKind::Rapid && p.pos.x == 0.0)
             .copied()
             .collect();
         sim.players[0].feet = rapid[0].pos - Vec3::Y * PICKUP_HEIGHT;
@@ -4440,7 +4496,10 @@ mod tests {
         sim.players[0].ammo = 3;
         sim.give(a, PickupKind::Shotgun);
         let pa = sim.player(a).unwrap();
-        assert!(pa.shotgun && pa.ammo == 50, "taking it fills it up");
+        assert!(
+            pa.weapon == Weapon::Shotgun && pa.ammo == 50,
+            "taking it fills it up"
+        );
         sim.set_cmd(
             a,
             PlayerCmd {
@@ -4470,7 +4529,7 @@ mod tests {
         );
         // Gone with the next tag-out.
         sim.players[0].lose_powerups();
-        assert!(!sim.player(a).unwrap().shotgun);
+        assert_eq!(sim.player(a).unwrap().weapon, Weapon::Blaster);
     }
 
     #[test]

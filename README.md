@@ -64,7 +64,9 @@ off for 15 s.
 
 ### Pickups
 
-Walk over a pickup to take it. You lose powerups when you're tagged out.
+Walk over a pickup to take it. You lose powerups when you're tagged out. Each powerup spot rolls
+a weapon, a gadget or a power each time it comes back. You hold one special weapon and carry one
+gadget at a time; a new one replaces the old.
 
 | Pickup | Effect |
 |---|---|
@@ -93,7 +95,7 @@ summary of the rules.
 | Fire | Trigger | Left mouse button |
 | Grenade | Hold B / Y, throw, let go | Hold G or right mouse button, let go |
 | Shield | Trigger of the free hand | Q |
-| Barrier | Grip of the free hand | E |
+| Gadget (barrier ...) | Grip of the free hand | E |
 | Scores | In-game menu, or look at your wrist | Hold Tab |
 | Menu | Menu button, or hold B / Y | Esc |
 

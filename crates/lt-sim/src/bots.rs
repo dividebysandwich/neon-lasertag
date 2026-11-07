@@ -2370,7 +2370,7 @@ impl Controller for Bot {
                 self.roll_error();
             }
         } else if let Some((pt, true)) = shoot_at
-            && (!p.shotgun || pt.distance(muzzle) < sim.rules.shotgun_range * 0.9)
+            && (p.weapon != Weapon::Shotgun || pt.distance(muzzle) < sim.rules.shotgun_range * 0.9)
             && !self.fire_prev
             && p.fire_cd <= 0.0
             && p.cooldown <= 0.0
@@ -2396,15 +2396,18 @@ impl Controller for Bot {
         let throw = self.try_grenade(sim, p, now);
         // A carried shield goes on in a fight.
         let shield = p.shields > 0 && p.shield <= 0.0 && target.is_some();
-        // A carried barrier goes up when hit in a fight, towards the enemy (the bot faces its
-        // aim).
-        let barrier = p.barriers > 0 && p.cooldown > 0.0 && target.is_some();
+        // A carried gadget: a barrier goes up when hit in a fight, towards the enemy (the bot
+        // faces its aim).
+        let gadget = match p.gadget_kind() {
+            Some(Gadget::Barrier) => p.cooldown > 0.0 && target.is_some(),
+            None => false,
+        };
         self.pose(PlayerCmd {
             stick: move_dir.clamp_length_max(1.0),
             fire,
             throw,
             shield,
-            barrier,
+            gadget,
             ..Default::default()
         })
     }

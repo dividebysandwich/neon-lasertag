@@ -479,7 +479,7 @@ fn step_game(
         local.dev_fire -= lt_sim::TICK;
     }
     if std::mem::take(&mut local.dev_barrier) {
-        cmd.barrier = true;
+        cmd.gadget = true;
     }
     // (Nobody fires in the countdown: no bolt shown that the sim won't fire.)
     if matches!(game.snap.phase, lt_sim::MatchPhase::Countdown(_)) {

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use lt_sim::sim::{CLOAK_FAR, CLOAK_NEAR, EYE, PlayerSnap, TICK};
-use lt_sim::{PickupKind, PlayerId, Pose, SimEvent, Team};
+use lt_sim::{PickupKind, PlayerId, Pose, SimEvent, Team, Weapon};
 
 use crate::assets::{Model, Models};
 use crate::game::{DrawSet, Game, GameEvent, LocalCmd, Mover, alpha};
@@ -557,9 +557,9 @@ fn sync_players(
             }
         }
         set_vis(&mut vis, v.gun, alive && gun_hand.is_some());
-        set_vis(&mut vis, v.blaster, !p.shotgun);
-        set_vis(&mut vis, v.shotgun, p.shotgun);
-        set_vis(&mut vis, v.coil, p.charge);
+        set_vis(&mut vis, v.blaster, p.weapon != Weapon::Shotgun);
+        set_vis(&mut vis, v.shotgun, p.weapon == Weapon::Shotgun);
+        set_vis(&mut vis, v.coil, p.weapon == Weapon::Charge);
         // Charging: the glow swells, and throbs once full.
         let full = p.charging >= game.rules.charge_time;
         let k = (p.charging / game.rules.charge_time).min(1.0);

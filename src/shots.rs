@@ -82,8 +82,7 @@ impl Shots {
         let owed: u16 = self.costs.iter().map(|c| c.1).sum();
         self.gun.ammo = me.ammo.saturating_sub(owed);
         self.gun.rapid = me.rapid;
-        self.gun.shotgun = me.shotgun;
-        self.gun.charge = me.charge;
+        self.gun.weapon = me.weapon;
         self.gun.cooldown = me.cooldown;
         self.gun.tick();
         if me.respawn.is_some() {

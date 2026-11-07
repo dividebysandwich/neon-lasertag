@@ -592,7 +592,7 @@ const VR_CONTROLS: [&str; 12] = [
     "Fire: trigger",
     "Grenade: hold B or Y, throw, let go",
     "Shield: trigger of the free hand",
-    "Barrier: grip of the free hand",
+    "Gadget: grip of the free hand",
     "Menu: right menu button",
     "Recenter: left menu button",
 ];

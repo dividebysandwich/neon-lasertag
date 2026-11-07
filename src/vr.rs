@@ -23,7 +23,7 @@ use std::collections::VecDeque;
 
 use bevy::prelude::*;
 use lt_sim::sim::{look_rot, yaw_of};
-use lt_sim::{Hand, PickupKind, Pose, SimEvent, Team};
+use lt_sim::{Hand, PickupKind, Pose, SimEvent, Team, Weapon};
 
 use crate::assets::Models;
 use crate::game::{Game, GameEvent, InputSet, LocalCmd, Mover, PredictSet};
@@ -551,8 +551,8 @@ fn read_controls(
         Hand::Left
     };
     local.cmd.shield = alive && !blocked && input.hands[free.index()].trigger > 0.75;
-    // The barrier: gripping with that hand away from the holster.
-    local.cmd.barrier =
+    // The gadget: gripping with that hand away from the holster.
+    local.cmd.gadget =
         alive && !blocked && !vr.near[free.index()] && input.hands[free.index()].squeeze > 0.75;
 
     // The menu (its button: `menu_buttons`), or B / Y held without taking a grenade.
@@ -693,7 +693,7 @@ fn place_rig(
         let shotgun = game
             .me
             .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
-            .is_some_and(|p| p.shotgun);
+            .is_some_and(|p| p.weapon == Weapon::Shotgun);
         let muzzle = p.pos
             + p.rot
                 * if shotgun {
@@ -789,7 +789,7 @@ fn holster(
         .me
         .and_then(|me| game.snap.players.iter().find(|p| p.id == me));
     let team = me.map(|p| p.team);
-    let shotgun = me.is_some_and(|p| p.shotgun);
+    let shotgun = me.is_some_and(|p| p.weapon == Weapon::Shotgun);
     // The blaster (or the shotgun) in the team's colours.
     if team != h.team || shotgun != h.shotgun {
         h.team = team;
