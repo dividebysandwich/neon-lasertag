@@ -24,6 +24,7 @@ enum Opt {
     Fov(bool),
     ToggleCrouch,
     HeadBob,
+    ObjectiveMarkers,
     /// Sound effects' and music volume, down (false) or up (true).
     Sound(bool),
     Music(bool),
@@ -40,6 +41,7 @@ enum OptText {
     Fov,
     ToggleCrouch,
     HeadBob,
+    ObjectiveMarkers,
     Sound,
     Music,
 }
@@ -160,6 +162,11 @@ fn show(
                         button(r, Opt::HeadBob, 204.0, "", Some(OptText::HeadBob));
                         r.spawn(Node { width: Val::Px(8.0), ..default() });
                     });
+                    p.spawn(row()).with_children(|r| {
+                        name(r, "Objective markers");
+                        button(r, Opt::ObjectiveMarkers, 204.0, "", Some(OptText::ObjectiveMarkers));
+                        r.spawn(Node { width: Val::Px(8.0), ..default() });
+                    });
                     p.spawn(Node { height: Val::Px(8.0), ..default() });
                     for a in Action::ALL {
                         p.spawn(row()).with_children(|r| {
@@ -245,6 +252,7 @@ fn buttons(
             }
             Opt::ToggleCrouch => settings.toggle_crouch = !settings.toggle_crouch,
             Opt::HeadBob => settings.head_bob = !settings.head_bob,
+            Opt::ObjectiveMarkers => settings.objective_markers = !settings.objective_markers,
             Opt::Sound(up) => {
                 settings.sound_volume = Settings::step_volume(settings.sound_volume, up)
             }
@@ -312,6 +320,12 @@ fn refresh(
             })
             .to_string(),
             OptText::HeadBob => (if settings.head_bob { "On" } else { "Off" }).to_string(),
+            OptText::ObjectiveMarkers => (if settings.objective_markers {
+                "On"
+            } else {
+                "Off"
+            })
+            .to_string(),
             OptText::Sound => format!("{:.0} %", settings.sound_volume * 100.0),
             OptText::Music => format!("{:.0} %", settings.music_volume * 100.0),
             OptText::Slot(a, slot) => {

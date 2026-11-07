@@ -92,8 +92,8 @@ struct PowerChipFill(PickupKind);
 /// The track the fill runs in (hidden for powerups without a time).
 #[derive(Component)]
 struct PowerChipBar(PickupKind);
-/// A marked place (0: one's own target under attack, 1: where to refill, low on shots): its
-/// diamond, and the line under it.
+/// A marked place (0: one's own target under attack, 1: where to refill, low on shots, then
+/// the goals: `goals`): its diamond, and the line under it.
 #[derive(Component)]
 struct ObjMarker(usize);
 #[derive(Component)]
@@ -311,7 +311,7 @@ fn spawn(mut commands: Commands) {
         BackgroundGradient::default(),
     ));
     // The marked places.
-    for k in 0..2 {
+    for k in 0..2 + MAX_GOALS {
         commands.spawn((
             HudRoot,
             ObjMarker(k),
@@ -1620,12 +1620,13 @@ fn hit_arcs(
     }
 }
 
-/// Where one's own team's target is under attack, and (low on shots) the nearest place to
-/// refill: a diamond on the place, or at the edge of the screen towards it, with a word and
-/// the distance.
-#[allow(clippy::type_complexity)]
+/// Where one's own team's target is under attack, (low on shots) the nearest place to
+/// refill, and (unless turned off) the goals (`goals`): a diamond on the place, or at the edge
+/// of the screen towards it, with a word and the distance.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn objective_markers(
     game: Res<Game>,
+    settings: Res<Settings>,
     alert: Res<crate::game::TargetAlert>,
     time: Res<Time>,
     cam: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
@@ -1652,7 +1653,22 @@ fn objective_markers(
         let d = at.distance(eye);
         (at + Vec3::Y * 0.6, Color::WHITE, format!("REFILL {d:.0} M"))
     });
-    let shown = [alert_at, refill];
+    let mut shown = vec![alert_at, refill];
+    if let Some(p) = me.filter(|_| settings.objective_markers) {
+        for (pos, kind) in goals(&game, p) {
+            // (One's own target under attack: marked already.)
+            let alerted = kind == GoalKind::Defend
+                && alert.left > 0.0
+                && (pos - Vec3::Y * 0.8).distance(alert.pos) < 0.1;
+            if alerted {
+                continue;
+            }
+            let d = pos.distance(eye);
+            let c = goal_color(kind, p.team).with_alpha(GOAL_ALPHA);
+            shown.push(Some((pos, c, format!("{} {d:.0} M", kind.word()))));
+        }
+    }
+    shown.resize(2 + MAX_GOALS, None);
     let size = Vec2::new(window.width(), window.height());
     let inv = gt.affine().inverse();
     for (m, mut node, mut border) in &mut marks {
@@ -1680,9 +1696,13 @@ fn objective_markers(
                 ln.display = want;
             }
             if let (Some((v, c)), Some((_, _, s))) = (at, shown[m.0].as_ref()) {
-                // (On the screen, even at its edge.)
+                // (On the screen, even at its edge; the goals' over their diamonds.)
                 ln.left = Val::Px((v.x - 100.0).clamp(0.0, (size.x - 200.0).max(0.0)));
-                ln.top = Val::Px((v.y + 12.0).min(size.y - 24.0));
+                ln.top = Val::Px(if m.0 >= 2 {
+                    (v.y - 34.0).max(0.0)
+                } else {
+                    (v.y + 12.0).min(size.y - 24.0)
+                });
                 if t.0 != *s {
                     t.0 = s.clone();
                 }
@@ -1737,6 +1757,81 @@ pub fn refill_spot(game: &Game, p: &lt_sim::sim::PlayerSnap) -> Option<Vec3> {
         .chain(game.level.spawns[p.team.index()].iter().map(|s| s.pos))
         .min_by(|a, b| a.distance(p.feet).total_cmp(&b.distance(p.feet)))?;
     (at.distance(p.feet) > 3.0).then_some(at)
+}
+
+/// What a goal marker marks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GoalKind {
+    /// Classic mode: an enemy team target, and one of one's own team's.
+    Attack,
+    Defend,
+    /// Megatarget mode: a secondary target still to hit, and (both hit) the megatarget.
+    Secondary,
+    Core,
+}
+
+impl GoalKind {
+    pub fn word(self) -> &'static str {
+        match self {
+            GoalKind::Attack => "ATTACK",
+            GoalKind::Defend => "DEFEND",
+            GoalKind::Secondary => "SECONDARY",
+            GoalKind::Core => "MEGATARGET",
+        }
+    }
+}
+
+/// Goal markers at most (two targets a team, or two secondary targets).
+pub const MAX_GOALS: usize = 4;
+
+/// The places `p` (alive) has to go for: Classic mode, every team target (marked over it);
+/// Megatarget mode, the secondary targets it hasn't hit yet, or, both hit, the megatarget
+/// (marked under it).
+pub fn goals(game: &Game, p: &lt_sim::sim::PlayerSnap) -> Vec<(Vec3, GoalKind)> {
+    if p.respawn.is_some() {
+        return Vec::new();
+    }
+    let mut out: Vec<(Vec3, GoalKind)> = game
+        .level
+        .targets
+        .iter()
+        .map(|t| {
+            let kind = if t.team == p.team {
+                GoalKind::Defend
+            } else {
+                GoalKind::Attack
+            };
+            (t.centre() + Vec3::Y * 0.8, kind)
+        })
+        .collect();
+    if let Some(m) = &game.level.mega {
+        if p.power.is_some() {
+            let below = Vec3::Y * (lt_sim::level::CORE_HALF + 0.6);
+            out.push((m.core.centre() - below, GoalKind::Core));
+        } else {
+            out.extend((0..2).filter(|i| p.mega_hits & (1 << i) == 0).map(|i| {
+                (
+                    m.secondaries[i].centre() + Vec3::Y * 0.8,
+                    GoalKind::Secondary,
+                )
+            }));
+        }
+    }
+    out.truncate(MAX_GOALS);
+    out
+}
+
+/// A goal marker's opacity.
+pub const GOAL_ALPHA: f32 = 0.6;
+
+/// The flat screen's colour for a goal marker of `kind` (`mine`: the local player's team).
+fn goal_color(kind: GoalKind, mine: Team) -> Color {
+    match kind {
+        GoalKind::Attack => crate::endscreen::team_ui_color(Some(mine.other())),
+        GoalKind::Defend => crate::endscreen::team_ui_color(Some(mine)),
+        GoalKind::Secondary => neonui::AMBER,
+        GoalKind::Core => neonui::MAGENTA,
+    }
 }
 
 /// Announces the pickups the local player takes (saying what they do the first few times).

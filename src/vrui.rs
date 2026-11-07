@@ -111,6 +111,7 @@ enum VrOpt {
     /// Full, low, off.
     Haptics,
     SteerHand,
+    ObjectiveMarkers,
     /// The tracked height now taken as standing height; back to as tracked.
     Calibrate,
     ResetHeight,
@@ -1122,7 +1123,7 @@ fn build_end(b: &mut Builder, game: &Game) -> (Vec<Button>, Vec3) {
 /// The VR options panel (`Settings`): volumes, handedness, the blaster's tilt, the holster's
 /// height, vibration, which way the stick moves, and the height calibration.
 fn build_options(b: &mut Builder, s: &crate::settings::Settings) -> Vec<Button> {
-    let size = Vec2::new(1.1, 1.12);
+    let size = Vec2::new(1.1, 1.212);
     b.backing(size, Hue::Violet);
     let top = size.y / 2.0;
     b.title("OPTIONS", 0.058, top - 0.085);
@@ -1238,9 +1239,17 @@ fn build_options(b: &mut Builder, s: &crate::settings::Settings) -> Vec<Button> 
         },
         VrOpt::SteerHand,
     );
+    toggle(
+        b,
+        &mut buttons,
+        7,
+        "OBJECTIVE MARKERS",
+        if s.objective_markers { "ON" } else { "OFF" },
+        VrOpt::ObjectiveMarkers,
+    );
     // Height: calibrate (stand, or sit, upright and press) or as tracked.
-    label(b, 7, "HEIGHT");
-    let y = row_y(7);
+    label(b, 8, "HEIGHT");
+    let y = row_y(8);
     buttons.push(b.button(
         "CALIBRATE",
         Act::Opt(VrOpt::Calibrate),
@@ -1265,7 +1274,7 @@ fn build_options(b: &mut Builder, s: &crate::settings::Settings) -> Vec<Button> 
     b.text(
         &note,
         0.016,
-        Vec2::new(0.0, row_y(8) + 0.02),
+        Vec2::new(0.0, row_y(9) + 0.02),
         Align::Center,
         &dim,
         None,
@@ -1273,7 +1282,7 @@ fn build_options(b: &mut Builder, s: &crate::settings::Settings) -> Vec<Button> 
     buttons.push(b.button(
         "BACK",
         Act::Opt(VrOpt::Back),
-        Vec2::new(0.0, top - 1.03),
+        Vec2::new(0.0, top - 1.122),
         Vec2::new(0.46, 0.09),
         Hue::Violet,
         false,
@@ -1307,6 +1316,7 @@ fn apply_option(s: &mut crate::settings::Settings, o: VrOpt, head: Option<f32>) 
             }
         }
         VrOpt::SteerHand => s.steer_hand = !s.steer_hand,
+        VrOpt::ObjectiveMarkers => s.objective_markers = !s.objective_markers,
         VrOpt::Calibrate => {
             if let Some(y) = head {
                 s.eye_offset = (lt_sim::sim::EYE - y).clamp(EYE_OFFSET_RANGE.0, EYE_OFFSET_RANGE.1);
@@ -1829,9 +1839,12 @@ fn event_banner(
 }
 
 /// Marked places, seen through walls and as big at any distance: one's own team's target
-/// under attack (a pink diamond, pulsing, over it), and, low on shots, the nearest place to
-/// refill (a white chevron pointing down at it from above).
-#[allow(clippy::too_many_arguments)]
+/// under attack (a pink diamond, pulsing, over it), low on shots, the nearest place to refill
+/// (a white chevron pointing down at it from above), and the goals (`hud::goals`): a smaller
+/// diamond with a solid middle over each enemy target, secondary target to hit (orange) and
+/// the megatarget once open (magenta), an empty one over each of one's own team's targets
+/// (unless turned off: `Settings::objective_markers`).
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn place_marks(
     mut commands: Commands,
     game: Res<Game>,
@@ -1839,13 +1852,19 @@ fn place_marks(
     vr: Res<VrState>,
     input: Res<XrInput>,
     mats: Res<UiMats>,
+    settings: Res<crate::settings::Settings>,
     time: Res<Time>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut transforms: Query<&mut Transform>,
-    mut vis: Query<&mut Visibility>,
-    mut marks: Local<Option<[Entity; 2]>>,
+    mut glows: ResMut<Assets<GlowMaterial>>,
+    mut q: Query<(&mut Transform, &mut Visibility, &mut Mesh3d)>,
+    mut marks: Local<Option<PlaceMarks>>,
 ) {
-    let [diamond, chevron] = *marks.get_or_insert_with(|| {
+    let PlaceMarks {
+        ents,
+        frame,
+        solid,
+        fades,
+    } = &*marks.get_or_insert_with(|| {
         let shape = |pts: &[(f32, f32)], idx: &[u32]| {
             let mut m = MeshData::default();
             for &(x, y) in pts {
@@ -1856,25 +1875,29 @@ fn place_marks(
             m.idx.extend_from_slice(idx);
             m.to_mesh()
         };
-        // A diamond's frame, and a chevron (pointing down).
-        let o = 1.0;
-        let i = 0.62;
-        let frame = shape(
-            &[
-                (0.0, o),
-                (o, 0.0),
-                (0.0, -o),
-                (-o, 0.0),
-                (0.0, i),
-                (i, 0.0),
-                (0.0, -i),
-                (-i, 0.0),
-            ],
-            &[
-                0, 4, 5, 0, 5, 1, 1, 5, 6, 1, 6, 2, 2, 6, 7, 2, 7, 3, 3, 7, 4, 3, 4, 0,
-            ],
-        );
-        let chev = shape(
+        // A diamond's frame, the same with a solid diamond inside, and a chevron (pointing
+        // down).
+        let (o, i, c) = (1.0, 0.62, 0.36);
+        let ring = [
+            (0.0, o),
+            (o, 0.0),
+            (0.0, -o),
+            (-o, 0.0),
+            (0.0, i),
+            (i, 0.0),
+            (0.0, -i),
+            (-i, 0.0),
+        ];
+        let ring_idx = [
+            0, 4, 5, 0, 5, 1, 1, 5, 6, 1, 6, 2, 2, 6, 7, 2, 7, 3, 3, 7, 4, 3, 4, 0,
+        ];
+        let frame = meshes.add(shape(&ring, &ring_idx));
+        let mut pts = ring.to_vec();
+        pts.extend([(0.0, c), (c, 0.0), (0.0, -c), (-c, 0.0)]);
+        let mut idx = ring_idx.to_vec();
+        idx.extend([8, 11, 10, 8, 10, 9]);
+        let solid = meshes.add(shape(&pts, &idx));
+        let chev = meshes.add(shape(
             &[
                 (-1.0, 0.6),
                 (0.0, -0.4),
@@ -1884,21 +1907,40 @@ fn place_marks(
                 (-1.0, 0.2),
             ],
             &[0, 5, 4, 0, 4, 1, 1, 4, 3, 1, 3, 2],
-        );
-        let mut spawn = |commands: &mut Commands, mesh: Mesh, mat: &Handle<AccentMaterial>| {
+        ));
+        let place = (Transform::IDENTITY, Visibility::Hidden);
+        let mut ents = vec![
             commands
                 .spawn((
-                    Mesh3d(meshes.add(mesh)),
-                    MeshMaterial3d(mat.clone()),
-                    Transform::IDENTITY,
-                    Visibility::Hidden,
+                    Mesh3d(frame.clone()),
+                    MeshMaterial3d(mats.tints[Hue::Pink as usize].text.clone()),
+                    place,
                 ))
-                .id()
-        };
-        [
-            spawn(&mut commands, frame, &mats.tints[Hue::Pink as usize].text),
-            spawn(&mut commands, chev, &mats.white),
-        ]
+                .id(),
+            commands
+                .spawn((Mesh3d(chev), MeshMaterial3d(mats.white.clone()), place))
+                .id(),
+        ];
+        // (The goals' own glows, in their colours at `hud::GOAL_ALPHA`.)
+        let mut fades = Vec::new();
+        for _ in 0..crate::hud::MAX_GOALS {
+            let glow = glows.add(GlowMaterial {
+                overlay: true,
+                neon: NeonUniform::fixed(Vec3::ONE, 0.0),
+            });
+            ents.push(
+                commands
+                    .spawn((Mesh3d(frame.clone()), MeshMaterial3d(glow.clone()), place))
+                    .id(),
+            );
+            fades.push(glow);
+        }
+        PlaceMarks {
+            ents,
+            frame,
+            solid,
+            fades,
+        }
     });
     let me = game
         .me
@@ -1909,33 +1951,72 @@ fn place_marks(
             .unwrap_or(Transform::from_xyz(0.0, lt_sim::sim::EYE, 0.0)))
     .translation;
     let alive = me.is_some_and(|p| p.respawn.is_none());
-    let places = [
-        (alert.left > 0.0 && alive).then_some(alert.pos + Vec3::Y * 0.6),
-        me.and_then(|p| crate::hud::refill_spot(&game, p))
-            .map(|at| at + Vec3::Y * 2.5),
-    ];
     let pulse = 1.0 + 0.15 * (time.elapsed_secs() * 6.0).sin();
-    for (k, (e, at)) in [diamond, chevron].into_iter().zip(places).enumerate() {
-        if let Ok(mut v) = vis.get_mut(e) {
-            let want = if at.is_some() {
-                Visibility::Inherited
-            } else {
-                Visibility::Hidden
-            };
-            if *v != want {
-                *v = want;
+    // Each shown: where, its size, and (the goals) its mesh and colour.
+    let mut places: Vec<Option<(Vec3, f32, Option<(Handle<Mesh>, Vec3)>)>> = vec![
+        (alert.left > 0.0 && alive).then_some((alert.pos + Vec3::Y * 0.6, 0.022 * pulse, None)),
+        me.and_then(|p| crate::hud::refill_spot(&game, p))
+            .map(|at| (at + Vec3::Y * 2.5, 0.022, None)),
+    ];
+    if let Some(p) = me.filter(|_| settings.objective_markers) {
+        use crate::hud::GoalKind;
+        for (pos, kind) in crate::hud::goals(&game, p) {
+            // (One's own target under attack: marked already.)
+            if kind == GoalKind::Defend
+                && alert.left > 0.0
+                && (pos - Vec3::Y * 0.8).distance(alert.pos) < 0.1
+            {
+                continue;
             }
-        }
-        let Some(at) = at else { continue };
-        if let Ok(mut t) = transforms.get_mut(e) {
-            let d = (head - at).length().max(0.5);
-            t.translation = at;
-            // (Turned to the eyes about the vertical.)
-            let to = head - at;
-            t.rotation = Quat::from_rotation_y(to.x.atan2(to.z));
-            t.scale = Vec3::splat(0.022 * d * if k == 0 { pulse } else { 1.0 });
+            let (mesh, c) = match kind {
+                GoalKind::Attack => (solid, team_color(Some(p.team.other()))),
+                GoalKind::Defend => (frame, team_color(Some(p.team))),
+                GoalKind::Secondary => (solid, Hue::Amber.color()),
+                GoalKind::Core => (solid, Hue::Magenta.color()),
+            };
+            places.push(Some((pos, 0.02, Some((mesh.clone(), c)))));
         }
     }
+    places.resize(ents.len(), None);
+    for (k, (&e, place)) in ents.iter().zip(places).enumerate() {
+        let Ok((mut t, mut v, mut mesh)) = q.get_mut(e) else {
+            continue;
+        };
+        let want = if place.is_some() {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *v != want {
+            *v = want;
+        }
+        let Some((at, size, look)) = place else {
+            continue;
+        };
+        if let Some((m, c)) = look {
+            if mesh.0 != m {
+                mesh.0 = m;
+            }
+            if let Some(mut g) = fades.get(k.wrapping_sub(2)).and_then(|h| glows.get_mut(h)) {
+                g.neon.color = c.extend(3.2 * crate::hud::GOAL_ALPHA);
+            }
+        }
+        let d = (head - at).length().max(0.5);
+        t.translation = at;
+        // (Turned to the eyes about the vertical.)
+        let to = head - at;
+        t.rotation = Quat::from_rotation_y(to.x.atan2(to.z));
+        t.scale = Vec3::splat(size * d);
+    }
+}
+
+/// `place_marks`' pieces: the marks (the alert's, the refill's, then the goals'), the goals'
+/// two shapes, and their glows.
+struct PlaceMarks {
+    ents: Vec<Entity>,
+    frame: Handle<Mesh>,
+    solid: Handle<Mesh>,
+    fades: Vec<Handle<GlowMaterial>>,
 }
 
 /// One's hits on enemies: a white X where the bolt struck, for a moment (a tag-out: a bigger
