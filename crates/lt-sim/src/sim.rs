@@ -490,6 +490,27 @@ pub struct DecoySnap {
     pub gun_hand: Option<Hand>,
 }
 
+/// Prism mode: a team's prism, at home, carried, flying (thrown or dropped) or lying on the
+/// floor (`dropped`: seconds until it goes home).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Prism {
+    pub team: Team,
+    pub home: Vec3,
+    pub pos: Vec3,
+    pub vel: Vec3,
+    pub carrier: Option<PlayerId>,
+    pub dropped: Option<f32>,
+    /// Thrown by: none of that team may catch it back for a moment.
+    #[serde(default)]
+    pub thrower: Option<(PlayerId, f32)>,
+}
+
+impl Prism {
+    pub fn at_home(&self) -> bool {
+        self.carrier.is_none() && self.dropped.is_none() && self.vel == Vec3::ZERO
+    }
+}
+
 /// A barrier: a wall of hard light standing on the floor (`centre` at half its height),
 /// facing `normal` (the way its player looked from, horizontal).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -567,6 +588,9 @@ pub struct Snapshot {
     /// Decoys running.
     #[serde(default)]
     pub decoys: Vec<DecoySnap>,
+    /// Prism mode: the prisms (Red's, Blue's).
+    #[serde(default)]
+    pub prisms: Vec<Prism>,
     /// The arena event going on (seconds left), and whether points count double.
     pub event: Option<(ArenaEvent, f32)>,
     pub double: bool,
@@ -724,6 +748,8 @@ pub struct Sim {
     pub sensors: Vec<Sensor>,
     /// Decoys running.
     pub decoys: Vec<Decoy>,
+    /// Prism mode: the prisms (Red's, Blue's).
+    pub prisms: Vec<Prism>,
     /// The arena event going on, with its seconds left; when the next one comes (seconds into
     /// the match); and whether points count double now.
     pub event: Option<(ArenaEvent, f32)>,
@@ -804,6 +830,7 @@ impl Sim {
             barriers: Vec::new(),
             sensors: Vec::new(),
             decoys: Vec::new(),
+            prisms: Vec::new(),
             event: None,
             next_event: 0.0,
             double: false,
@@ -984,6 +1011,7 @@ impl Sim {
         self.barriers.clear();
         self.sensors.clear();
         self.decoys.clear();
+        self.prisms.clear();
         self.event = None;
         self.double = false;
         self.time_left = self.rules.match_time;
@@ -1056,6 +1084,7 @@ impl Sim {
         }
         self.step_events();
         self.step_movers();
+        self.step_prisms();
         self.step_players();
         self.step_medbeams();
         self.step_gates();
@@ -1282,6 +1311,8 @@ impl Sim {
         let gravity = self.gravity();
         let hold = matches!(self.phase, MatchPhase::Countdown(_));
         for i in 0..self.players.len() {
+            // (A prism's carrier has its hands full: no firing.)
+            let carrying = self.carrying(self.players[i].id);
             if hold {
                 let c = &mut self.players[i].cmd;
                 c.fire = false;
@@ -1594,7 +1625,7 @@ impl Sim {
             // Firing (`Gun::trigger`; dual pistols: each, the first's shot paid for before the
             // second's trigger, and numbered first when both fire at once).
             let mut gun = p.gun();
-            let trigger = gun.trigger(p.cmd.fire, p.cmd.gun_hand.is_some(), &rules);
+            let trigger = gun.trigger(p.cmd.fire, p.cmd.gun_hand.is_some() && !carrying, &rules);
             p.set_gun(gun);
             let mut triggers = vec![(trigger, false)];
             if p.weapon == Weapon::Dual {
@@ -1602,7 +1633,7 @@ impl Sim {
                 if let Some(Trigger::Fire(s)) = trigger {
                     gun2.ammo = gun2.ammo.saturating_sub(s.cost(&rules));
                 }
-                let t2 = gun2.trigger(p.cmd.fire2, p.cmd.gun2_hand.is_some(), &rules);
+                let t2 = gun2.trigger(p.cmd.fire2, p.cmd.gun2_hand.is_some() && !carrying, &rules);
                 p.prev_fire2 = gun2.prev_fire;
                 triggers.push((t2, true));
             } else {
@@ -2616,6 +2647,219 @@ impl Sim {
         }
     }
 
+    /// Whether player `id` carries a prism (and can't fire or throw grenades).
+    pub fn carrying(&self, id: PlayerId) -> bool {
+        self.prisms.iter().any(|p| p.carrier == Some(id))
+    }
+
+    /// The prisms (prism mode): taken by an enemy touching one, carried overhead (thrown with a
+    /// grenade throw, caught by the carrier's team mates), dropped by a carrier tagged out,
+    /// home again when its own team touches it or after `Rules::prism_return` on the floor, and
+    /// captured when carried to its carrier's own home while that team's prism is there.
+    fn step_prisms(&mut self) {
+        let Some(homes) = self.level.prisms else {
+            return;
+        };
+        if self.prisms.is_empty() {
+            self.prisms = [Team::Red, Team::Blue]
+                .iter()
+                .map(|&team| Prism {
+                    team,
+                    home: homes[team.index()],
+                    pos: homes[team.index()],
+                    vel: Vec3::ZERO,
+                    carrier: None,
+                    dropped: None,
+                    thrower: None,
+                })
+                .collect();
+        }
+        let rules = self.rules.clone();
+        let gravity = self.gravity();
+        for k in 0..self.prisms.len() {
+            let pr = self.prisms[k];
+            let team = pr.team;
+            // Carried: overhead, until thrown or its carrier's tagged out.
+            if let Some(id) = pr.carrier {
+                let Some(ci) = self.players.iter().position(|p| p.id == id) else {
+                    self.drop_prism(k, pr.pos);
+                    continue;
+                };
+                let c = &mut self.players[ci];
+                if !c.alive() || c.team == team {
+                    let at = c.feet + Vec3::Y * 0.3;
+                    self.drop_prism(k, at);
+                    continue;
+                }
+                let over = c.eye() + Vec3::Y * 0.45;
+                if let Some((rel, vel)) = c.cmd.throw.take() {
+                    let vel = if vel.is_finite() {
+                        let f = if c.cmd.vr { rules.vr_throw_factor } else { 1.0 };
+                        (vel * f).clamp_length_max(rules.grenade_max_speed)
+                    } else {
+                        Vec3::ZERO
+                    };
+                    let from = c.feet + rel.clamp_length_max(2.0);
+                    let from = if from.is_finite() && self.world.clear(c.eye(), from) {
+                        from
+                    } else {
+                        c.eye()
+                    };
+                    let p = &mut self.prisms[k];
+                    p.carrier = None;
+                    p.pos = from;
+                    p.vel = vel + Vec3::Y * 0.01;
+                    p.thrower = Some((id, 0.4));
+                    self.events.push(SimEvent::PrismThrown {
+                        team,
+                        player: id,
+                        pos: from,
+                    });
+                    continue;
+                }
+                self.prisms[k].pos = over;
+                // Home with it, one's own prism there: captured.
+                let own = c.team;
+                let feet = c.feet;
+                let own_home = homes[own.index()];
+                let own_there = self.prisms.iter().any(|p| p.team == own && p.at_home());
+                let near_home = (feet - own_home).with_y(0.0).length() < rules.prism_reach * 1.5
+                    && (own_home.y - feet.y).abs() < 2.0;
+                if own_there && near_home {
+                    self.award(own, Some(id), rules.prism_points);
+                    self.events.push(SimEvent::PrismCaptured {
+                        team,
+                        by: id,
+                        pos: own_home,
+                    });
+                    self.send_prism_home(k);
+                }
+                continue;
+            }
+            // Flying: falling, bouncing, caught by the thrower's team mates.
+            let mut pr = pr;
+            if let Some((who, t)) = pr.thrower {
+                pr.thrower = (t > TICK).then_some((who, t - TICK));
+            }
+            if pr.vel != Vec3::ZERO {
+                let (pos, vel, _) = grenade_step(&self.world, pr.pos, pr.vel, 0.3, gravity);
+                pr.pos = pos;
+                pr.vel = vel;
+                if pr.vel == Vec3::ZERO && pr.dropped.is_none() {
+                    pr.dropped = Some(rules.prism_return);
+                }
+                if pr.pos.y < -20.0 {
+                    self.prisms[k] = pr;
+                    self.send_prism_home(k);
+                    self.events.push(SimEvent::PrismReturned {
+                        team,
+                        by: None,
+                        pos: pr.home,
+                    });
+                    continue;
+                }
+            }
+            // On the floor: home again in a while.
+            if let Some(t) = pr.dropped
+                && pr.vel == Vec3::ZERO
+            {
+                if t <= TICK {
+                    self.prisms[k] = pr;
+                    self.send_prism_home(k);
+                    self.events.push(SimEvent::PrismReturned {
+                        team,
+                        by: None,
+                        pos: pr.home,
+                    });
+                    continue;
+                }
+                pr.dropped = Some(t - TICK);
+            }
+            self.prisms[k] = pr;
+            // Touched: by its own team, home it goes (unless it's home already); by the enemy,
+            // taken (caught in flight from further).
+            let flying = pr.vel != Vec3::ZERO;
+            let toucher = self
+                .players
+                .iter()
+                .filter(|p| p.alive() && !self.carrying(p.id))
+                .filter(|p| pr.thrower.is_none_or(|(who, _)| who != p.id))
+                // (Near it across, and within reach up and down.)
+                .filter(|p| (pr.pos.y - (p.feet.y + 1.0)).abs() < 1.3)
+                .map(|p| (p.id, p.team, (p.feet - pr.pos).with_y(0.0).length()))
+                .filter(|&(_, t, d)| {
+                    let reach = if flying && t != team {
+                        rules.prism_catch
+                    } else {
+                        rules.prism_reach
+                    };
+                    d < reach
+                })
+                .min_by(|a, b| a.2.total_cmp(&b.2));
+            match toucher {
+                Some((id, t, _)) if t == team => {
+                    if !pr.at_home() {
+                        self.send_prism_home(k);
+                        self.events.push(SimEvent::PrismReturned {
+                            team,
+                            by: Some(id),
+                            pos: pr.home,
+                        });
+                    }
+                }
+                Some((id, _, _)) => {
+                    let p = &mut self.prisms[k];
+                    p.carrier = Some(id);
+                    p.vel = Vec3::ZERO;
+                    p.dropped = None;
+                    p.thrower = None;
+                    self.events.push(if flying {
+                        SimEvent::PrismCaught {
+                            team,
+                            player: id,
+                            pos: pr.pos,
+                        }
+                    } else {
+                        SimEvent::PrismTaken {
+                            team,
+                            player: id,
+                            pos: pr.pos,
+                        }
+                    });
+                    // (Taking it gives away a cloak.)
+                    if let Some(c) = self.players.iter_mut().find(|p| p.id == id) {
+                        c.protect = 0.0;
+                    }
+                }
+                None => {}
+            }
+        }
+    }
+
+    /// Prism `k` falls where its carrier was.
+    fn drop_prism(&mut self, k: usize, at: Vec3) {
+        let rules = &self.rules;
+        let p = &mut self.prisms[k];
+        p.carrier = None;
+        p.pos = at;
+        p.vel = Vec3::Y * 0.5;
+        p.dropped = Some(rules.prism_return);
+        p.thrower = None;
+        self.events.push(SimEvent::PrismDropped {
+            team: p.team,
+            pos: at,
+        });
+    }
+
+    fn send_prism_home(&mut self, k: usize) {
+        let p = &mut self.prisms[k];
+        p.pos = p.home;
+        p.vel = Vec3::ZERO;
+        p.carrier = None;
+        p.dropped = None;
+        p.thrower = None;
+    }
+
     /// Decoys: running on ahead at a player's pace (stopped by walls) until their time is up.
     fn step_decoys(&mut self) {
         let speed = self.rules.move_speed;
@@ -3160,6 +3404,7 @@ impl Sim {
             barriers: self.barriers.clone(),
             sensors: self.sensors.clone(),
             decoys: self.decoys.iter().map(|d| d.snap()).collect(),
+            prisms: self.prisms.clone(),
             event: self.event,
             double: self.double,
             phase: self.phase,
@@ -4566,6 +4811,79 @@ mod tests {
         sim.players[0].lose_powerups();
         assert_eq!(sim.player(a).unwrap().weapon, Weapon::Blaster);
         assert_eq!(sim.snapshot().players[0].gun2_hand, None);
+    }
+
+    #[test]
+    fn prisms_are_taken_carried_home_dropped_and_returned() {
+        let rules = Rules {
+            mode: crate::level::GameMode::Prism,
+            ..Rules::default()
+        };
+        let mut sim = Sim::new(5, rules);
+        assert!(sim.level.targets.is_empty(), "no targets in prism mode");
+        let homes = sim.level.prisms.expect("prism homes");
+        let a = sim.add_player("a", Some(Team::Red), false).unwrap();
+        let b = sim.add_player("b", Some(Team::Blue), false).unwrap();
+        sim.step();
+        assert_eq!(sim.prisms.len(), 2);
+        assert!(sim.prisms.iter().all(|p| p.at_home()));
+        let blue = homes[Team::Blue.index()];
+        let red = homes[Team::Red.index()];
+        // a (Red) walks up to Blue's prism: taken.
+        sim.players[0].feet = blue;
+        sim.players[0].protect = 0.0;
+        sim.players[1].feet = red + Vec3::new(0.0, 0.0, 3.0);
+        sim.drain_events();
+        sim.step();
+        assert_eq!(sim.prisms[Team::Blue.index()].carrier, Some(a));
+        assert!(sim.carrying(a));
+        // It can't fire with it.
+        sim.set_cmd(
+            a,
+            PlayerCmd {
+                gun_hand: Some(Hand::Right),
+                fire: true,
+                ..Default::default()
+            },
+        );
+        sim.step();
+        assert!(sim.bolts.iter().all(|x| x.owner != a));
+        sim.set_cmd(a, PlayerCmd::default());
+        // Tagged out: dropped; b touches it: home again.
+        let i = sim.players.iter().position(|p| p.id == a).unwrap();
+        sim.players[i].respawn = Some(5.0);
+        for _ in 0..30 {
+            sim.step();
+        }
+        let pr = sim.prisms[Team::Blue.index()];
+        assert!(pr.carrier.is_none() && pr.dropped.is_some(), "{pr:?}");
+        sim.players[1].feet = pr.pos - Vec3::Y * 0.5;
+        sim.step();
+        assert!(sim.prisms[Team::Blue.index()].at_home());
+        assert!(
+            sim.drain_events()
+                .iter()
+                .any(|e| matches!(e, SimEvent::PrismReturned { by: Some(x), .. } if *x == b))
+        );
+        // Taken again and carried to Red's home (its own prism there): captured.
+        sim.players[i].respawn = None;
+        sim.players[i].feet = blue;
+        sim.players[1].feet = red + Vec3::new(0.0, 0.0, 40.0);
+        sim.step();
+        assert_eq!(sim.prisms[Team::Blue.index()].carrier, Some(a));
+        let before = sim.scores[Team::Red.index()];
+        sim.players[i].feet = red;
+        sim.step();
+        assert_eq!(
+            sim.scores[Team::Red.index()] - before,
+            sim.rules.prism_points
+        );
+        assert!(sim.prisms.iter().all(|p| p.at_home()));
+        assert!(
+            sim.drain_events()
+                .iter()
+                .any(|e| matches!(e, SimEvent::PrismCaptured { by, .. } if *by == a))
+        );
     }
 
     #[test]

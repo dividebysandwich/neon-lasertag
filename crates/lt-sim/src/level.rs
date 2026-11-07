@@ -64,8 +64,8 @@ impl ArenaSize {
     /// cell counts, so the megatarget's room sits right in the middle).
     pub fn dims_for(self, mode: GameMode) -> Dims {
         let d = self.dims();
-        match mode {
-            GameMode::Classic => d,
+        match mode.layout() {
+            GameMode::Classic | GameMode::Prism | GameMode::Infection => d,
             GameMode::Megatarget => {
                 let even = |n: usize| (n as f32 * 1.5 / 2.0).round() as usize * 2;
                 Dims {
@@ -100,15 +100,36 @@ pub enum GameMode {
     /// No team targets: two secondary targets at the arena's sides, each guarded by two
     /// turrets, and the megatarget in a shielded room in the middle (`Mega`).
     Megatarget,
+    /// Capture the prism: the classic arena without targets; each team's prism stands in front
+    /// of its first target's alcove (`Level::prisms`), to be carried home by the enemy.
+    Prism,
+    /// Infection: the classic arena without targets; a few cloaked phantoms (Red) turn the
+    /// survivors (Blue) they tag out into phantoms.
+    Infection,
 }
 
 impl GameMode {
-    pub const ALL: [GameMode; 2] = [GameMode::Classic, GameMode::Megatarget];
+    pub const ALL: [GameMode; 4] = [
+        GameMode::Classic,
+        GameMode::Megatarget,
+        GameMode::Prism,
+        GameMode::Infection,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             GameMode::Classic => "classic",
             GameMode::Megatarget => "megatarget",
+            GameMode::Prism => "prism",
+            GameMode::Infection => "infection",
+        }
+    }
+
+    /// The arena it's played in: the classic one, or the Megatarget mode's.
+    pub fn layout(self) -> GameMode {
+        match self {
+            GameMode::Megatarget => GameMode::Megatarget,
+            _ => GameMode::Classic,
         }
     }
 
@@ -118,6 +139,9 @@ impl GameMode {
             .find(|m| m.name().eq_ignore_ascii_case(s.trim()))
     }
 }
+
+/// How high a prism hovers over the floor at home (m).
+pub const PRISM_HOVER: f32 = 1.1;
 
 /// The host's choice of arena size: one size, or a random one for every match.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1103,6 +1127,8 @@ pub struct Level {
     pub pads: Vec<JumpPad>,
     /// Laser gates (their nodes stay linked in `nav`).
     pub gates: Vec<LaserGate>,
+    /// Prism mode: each team's prism's home (`Team::index`), `PRISM_HOVER` over the floor.
+    pub prisms: Option<[Vec3; 2]>,
 }
 
 impl Level {
@@ -1125,6 +1151,34 @@ impl Level {
 
     /// The arena for `seed`, `size` and `mode` (the same on every machine).
     pub fn generate_for(seed: u64, size: ArenaSize, mode: GameMode) -> Level {
+        let mut level = Self::generate_layout(seed, size, mode.layout());
+        level.mode = mode;
+        if matches!(mode, GameMode::Prism | GameMode::Infection) {
+            // No targets: in prism mode each team's first one's alcove is its prism's home,
+            // on the floor in front of it.
+            let world = level.world_at(0);
+            let home = |team: Team| {
+                let t = level
+                    .targets
+                    .iter()
+                    .filter(|t| t.team == team)
+                    .min_by_key(|t| t.id)?;
+                let c = level.grid.dims.cell_centre(t.rear_cell.0, t.rear_cell.1);
+                // (Hovering at chest height over the floor there.)
+                let floor = world.ground(c.x, c.z, t.min.y)?;
+                Some(Vec3::new(c.x, floor + PRISM_HOVER, c.z))
+            };
+            if mode == GameMode::Prism
+                && let (Some(r), Some(b)) = (home(Team::Red), home(Team::Blue))
+            {
+                level.prisms = Some([r, b]);
+            }
+            level.targets.clear();
+        }
+        level
+    }
+
+    fn generate_layout(seed: u64, size: ArenaSize, mode: GameMode) -> Level {
         let dm = size.dims_for(mode);
         for attempt in 0..500u64 {
             let mut rng =
@@ -2343,7 +2397,7 @@ fn validate(g: &Grid, nav: &Nav, mode: GameMode) -> bool {
         }
     }
     match mode {
-        GameMode::Classic => {
+        GameMode::Classic | GameMode::Prism | GameMode::Infection => {
             if !upper_crosses(g, nav) {
                 return false;
             }
@@ -2619,7 +2673,7 @@ fn place_gates(
 ) -> Vec<LaserGate> {
     let dm = g.dims;
     let first = match mode {
-        GameMode::Classic => dm.half() + 1,
+        GameMode::Classic | GameMode::Prism | GameMode::Infection => dm.half() + 1,
         GameMode::Megatarget => mega_row(dm) + 6,
     };
     let rows = first..dm.target_row() - 1;
@@ -2751,7 +2805,7 @@ fn place_mirrors(g: &Grid, mode: GameMode, rng: &mut ChaCha8Rng) -> Vec<Panel> {
     };
     // (In Megatarget mode, clear of the pockets' and the room's rows and the row in front.)
     let first = match mode {
-        GameMode::Classic => dm.half() + 1,
+        GameMode::Classic | GameMode::Prism | GameMode::Infection => dm.half() + 1,
         GameMode::Megatarget => mega_row(dm) + 6,
     };
     let rows = first..dm.target_row() - 1;
@@ -2851,7 +2905,7 @@ fn place_pads(level: &Level, mode: GameMode, rng: &mut ChaCha8Rng) -> Vec<JumpPa
     let dm = g.dims;
     let nav = &level.nav;
     let first = match mode {
-        GameMode::Classic => dm.half() + 1,
+        GameMode::Classic | GameMode::Prism | GameMode::Infection => dm.half() + 1,
         GameMode::Megatarget => mega_row(dm) + 6,
     };
     let rows = first..dm.target_row();
@@ -3182,6 +3236,7 @@ fn build_level(seed: u64, g: Grid, nav: Nav, movers: Vec<Mover>, mode: GameMode)
         mirrors: Vec::new(),
         pads: Vec::new(),
         gates: Vec::new(),
+        prisms: None,
     }
 }
 

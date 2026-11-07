@@ -488,7 +488,9 @@ fn step_game(
         cmd.gadget = true;
     }
     // (Nobody fires in the countdown: no bolt shown that the sim won't fire.)
-    if matches!(game.snap.phase, lt_sim::MatchPhase::Countdown(_)) {
+    // (Nor with a prism in hand: the sim won't fire either.)
+    let carrying = game.me.is_some() && game.snap.prisms.iter().any(|p| p.carrier == game.me);
+    if carrying || matches!(game.snap.phase, lt_sim::MatchPhase::Countdown(_)) {
         cmd.fire = false;
         cmd.fire2 = false;
     }

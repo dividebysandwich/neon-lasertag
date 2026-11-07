@@ -424,7 +424,9 @@ fn read_input(
         .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
         .is_some_and(|p| p.grenades > 0)
         // (No grenades with dual pistols: both hands are full.)
-        && !dual;
+        && !dual
+        // (A prism carried is thrown as a grenade.)
+        || game.me.is_some() && game.snap.prisms.iter().any(|p| p.carrier == game.me);
     // (`.1`: shown for testing, `LT_DEV` "arc".)
     let holding = grabbed && has && on(Action::Grenade) || arc.1;
     let released = settings.just_released(Action::Grenade, &input);

@@ -54,6 +54,14 @@ targets at the arena's edges to pass the forcefields for 60 s, then hit the mega
 secondary targets are guarded by turrets; shoot the yellow target above a turret to switch it
 off for 15 s.
 
+### Capture the Prism
+
+`--mode prism`: the classic arena without targets. Each team's prism hovers on the ground under
+its first target's alcove. Touch the enemy's prism to take it and carry it to your own prism's
+spot while yours is there: 1000 points. You can't fire while carrying it, but you can throw it
+(the grenade input) for a team mate to catch. Tagged out, you drop it; it goes home when its own
+team touches it or after 20 s on the floor.
+
 ### Arena features
 
 - **Mirrors** bounce a bolt once, so you can bank shots around corners.
@@ -124,7 +132,7 @@ Seated VR players can use **Calibrate height** in Options to play at full height
 | `--bots N` | Number of bots; starts a match straight away |
 | `--difficulty easy\|normal\|hard` | Bot difficulty |
 | `--arena small\|medium\|large\|random` | Arena size (`random` picks one per match) |
-| `--mode classic\|megatarget` | Game mode (default `megatarget`) |
+| `--mode classic\|megatarget\|prism\|infection` | Game mode (default `megatarget`) |
 | `--match-time S` | Match length in seconds (local games) |
 | `--host [PORT]` | Host a game on your network |
 | `--public` | With `--host`: list the game on the internet |

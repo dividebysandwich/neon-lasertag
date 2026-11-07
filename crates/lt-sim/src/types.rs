@@ -571,6 +571,38 @@ pub enum SimEvent {
         player: PlayerId,
         pos: Vec3,
     },
+    /// Prism mode: `team`'s prism taken by `player` (from its home or the floor), thrown,
+    /// caught, dropped (its carrier tagged out), back home, and carried home by the enemy.
+    PrismTaken {
+        team: Team,
+        player: PlayerId,
+        pos: Vec3,
+    },
+    PrismThrown {
+        team: Team,
+        player: PlayerId,
+        pos: Vec3,
+    },
+    PrismCaught {
+        team: Team,
+        player: PlayerId,
+        pos: Vec3,
+    },
+    PrismDropped {
+        team: Team,
+        pos: Vec3,
+    },
+    PrismReturned {
+        team: Team,
+        /// Brought back by a team mate (`None`: its time on the floor ran out).
+        by: Option<PlayerId>,
+        pos: Vec3,
+    },
+    PrismCaptured {
+        team: Team,
+        by: PlayerId,
+        pos: Vec3,
+    },
     /// A bounty on `player` (`Sim::bounty`), claimed by `by` tagging them out, or lasted out.
     BountyOn {
         player: PlayerId,

@@ -4,7 +4,7 @@
 //! neon-lasertag [--vr | --gl-vr | --flat] [--seed N] [--bots N] [--name NAME]
 //!          [--host [PORT]] [--public] [--server-name NAME] [--connect HOST[:PORT]] [--autopilot]
 //!          [--difficulty easy|normal|hard] [--arena small|medium|large|random]
-//!          [--mode classic|megatarget]
+//!          [--mode classic|megatarget|prism|infection]
 //!          [--left-handed] [--match-time SECS]
 //!          [--screenshot FILE --after SECS] [--quit-after SECS]
 //! ```
@@ -167,7 +167,7 @@ impl Args {
                     .and_then(lt_sim::level::GameMode::parse)
                 {
                     Some(m) => a.game_mode = m,
-                    None => eprintln!("--mode: classic or megatarget"),
+                    None => eprintln!("--mode: classic, megatarget, prism or infection"),
                 },
                 "--left-handed" => a.left_handed = true,
                 "--match-time" => a.match_time = next(&mut i).and_then(|v| v.parse().ok()),

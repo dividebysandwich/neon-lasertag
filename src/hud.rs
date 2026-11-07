@@ -1380,6 +1380,7 @@ pub fn my_points(e: &SimEvent, game: &Game) -> Option<(&'static str, u32)> {
             ("BOUNTY", r.bounty_points.saturating_sub(r.tag_points))
         }
         SimEvent::BountySurvived { player } if player == me => ("BOUNTY", r.bounty_points),
+        SimEvent::PrismCaptured { by, .. } if by == me => ("CAPTURE", r.prism_points),
         _ => return None,
     };
     Some((what, if game.snap.double { points * 2 } else { points }))
@@ -1806,6 +1807,10 @@ pub enum GoalKind {
     /// Megatarget mode: a secondary target still to hit, and (both hit) the megatarget.
     Secondary,
     Core,
+    /// Prism mode: the enemy's prism, one's own away from home, and home (carrying theirs).
+    Prism,
+    Rescue,
+    Home,
 }
 
 impl GoalKind {
@@ -1815,6 +1820,9 @@ impl GoalKind {
             GoalKind::Defend => "DEFEND",
             GoalKind::Secondary => "SECONDARY",
             GoalKind::Core => "MEGATARGET",
+            GoalKind::Prism => "PRISM",
+            GoalKind::Rescue => "RESCUE",
+            GoalKind::Home => "HOME",
         }
     }
 }
@@ -1873,6 +1881,23 @@ pub fn goals(game: &Game, p: &lt_sim::sim::PlayerSnap) -> Vec<(Vec3, GoalKind)> 
             (t.centre() + Vec3::Y * 0.8, kind)
         })
         .collect();
+    // Prism mode: home with theirs; else theirs, and one's own when it's away.
+    if let Some(homes) = game.level.prisms {
+        let above = Vec3::Y * 0.9;
+        if game.snap.prisms.iter().any(|x| x.carrier == Some(p.id)) {
+            out.push((homes[p.team.index()] + above, GoalKind::Home));
+        } else if let Some(x) = game.snap.prisms.iter().find(|x| x.team != p.team) {
+            out.push((x.pos + above, GoalKind::Prism));
+        }
+        if let Some(x) = game
+            .snap
+            .prisms
+            .iter()
+            .find(|x| x.team == p.team && !x.at_home())
+        {
+            out.push((x.pos + above, GoalKind::Rescue));
+        }
+    }
     if let Some(m) = &game.level.mega {
         if p.power.is_some() {
             let below = Vec3::Y * (lt_sim::level::CORE_HALF + 0.6);
@@ -1896,8 +1921,10 @@ pub const GOAL_ALPHA: f32 = 0.6;
 /// The flat screen's colour for a goal marker of `kind` (`mine`: the local player's team).
 fn goal_color(kind: GoalKind, mine: Team) -> Color {
     match kind {
-        GoalKind::Attack => crate::endscreen::team_ui_color(Some(mine.other())),
-        GoalKind::Defend => crate::endscreen::team_ui_color(Some(mine)),
+        GoalKind::Attack | GoalKind::Prism => crate::endscreen::team_ui_color(Some(mine.other())),
+        GoalKind::Defend | GoalKind::Rescue | GoalKind::Home => {
+            crate::endscreen::team_ui_color(Some(mine))
+        }
         GoalKind::Secondary => neonui::AMBER,
         GoalKind::Core => neonui::MAGENTA,
     }
@@ -2313,6 +2340,11 @@ pub fn pickup_banner(
 }
 
 /// The banner for an arena event starting or ending, if `e` is one.
+/// A team's colour for the HUD.
+fn team_ui(team: Team) -> Color {
+    crate::endscreen::team_ui_color(Some(team))
+}
+
 pub fn event_banner_for(e: &SimEvent, rules: &lt_sim::Rules) -> Option<Banner> {
     let pale = Color::srgb(0.75, 0.78, 0.95);
     let gold = Color::srgb(1.0, 0.82, 0.25);
@@ -2391,6 +2423,54 @@ pub fn event_banner_for(e: &SimEvent, rules: &lt_sim::Rules) -> Option<Banner> {
         SimEvent::BountySurvived { .. } => Some(Banner {
             time: 2.0,
             ..banner("BOUNTY SURVIVED", String::new(), BOUNTY_GOLD)
+        }),
+        SimEvent::PrismCaptured { team, .. } => Some(banner(
+            "PRISM CAPTURED",
+            format!(
+                "{} SCORES {}",
+                if team == Team::Red { "BLUE" } else { "RED" },
+                rules.prism_points
+            ),
+            Color::srgb(0.85, 0.9, 1.0),
+        )),
+        SimEvent::PrismTaken { team, .. } => Some(Banner {
+            time: 2.0,
+            small: true,
+            ..banner(
+                if team == Team::Red {
+                    "RED PRISM TAKEN"
+                } else {
+                    "BLUE PRISM TAKEN"
+                },
+                String::new(),
+                team_ui(team),
+            )
+        }),
+        SimEvent::PrismDropped { team, .. } => Some(Banner {
+            time: 2.0,
+            small: true,
+            ..banner(
+                if team == Team::Red {
+                    "RED PRISM DROPPED"
+                } else {
+                    "BLUE PRISM DROPPED"
+                },
+                String::new(),
+                team_ui(team),
+            )
+        }),
+        SimEvent::PrismReturned { team, .. } => Some(Banner {
+            time: 2.0,
+            small: true,
+            ..banner(
+                if team == Team::Red {
+                    "RED PRISM HOME"
+                } else {
+                    "BLUE PRISM HOME"
+                },
+                String::new(),
+                team_ui(team),
+            )
         }),
         SimEvent::Countdown { n } => Some(Banner {
             time: 0.95,

@@ -672,7 +672,9 @@ fn read_controls(
             let has = game
                 .me
                 .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
-                .is_some_and(|p| p.grenades > 0);
+                .is_some_and(|p| p.grenades > 0)
+                // (A prism carried is thrown as a grenade.)
+                || game.me.is_some() && game.snap.prisms.iter().any(|p| p.carrier == game.me);
             for h in [Hand::Right, Hand::Left] {
                 // (Not while B / Y is held for the menu, nor with a panel up.)
                 if has

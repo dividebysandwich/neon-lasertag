@@ -1969,8 +1969,10 @@ fn place_marks(
                 continue;
             }
             let (mesh, c) = match kind {
-                GoalKind::Attack => (solid, team_color(Some(p.team.other()))),
-                GoalKind::Defend => (frame, team_color(Some(p.team))),
+                GoalKind::Attack | GoalKind::Prism => (solid, team_color(Some(p.team.other()))),
+                GoalKind::Defend | GoalKind::Rescue | GoalKind::Home => {
+                    (frame, team_color(Some(p.team)))
+                }
                 GoalKind::Secondary => (solid, Hue::Amber.color()),
                 GoalKind::Core => (solid, Hue::Magenta.color()),
             };

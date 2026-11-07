@@ -152,6 +152,13 @@ pub struct Rules {
     /// Seconds a bounty runs, and the points it's worth (for the tag-out, all in).
     pub bounty_time: f32,
     pub bounty_points: u32,
+    /// Prism mode: points for carrying the enemy's prism home, seconds a dropped one lies
+    /// before it goes home, how close a player has to come to take one (m), and to catch a
+    /// thrown one.
+    pub prism_points: u32,
+    pub prism_return: f32,
+    pub prism_reach: f32,
+    pub prism_catch: f32,
     pub double_last: f32,
     /// The arena's size (with the seed and the mode, all a client needs to build the same
     /// arena).
@@ -266,6 +273,10 @@ impl Default for Rules {
             lowgrav_factor: 0.35,
             bounty_time: 30.0,
             bounty_points: 300,
+            prism_points: 1000,
+            prism_return: 20.0,
+            prism_reach: 1.6,
+            prism_catch: 2.0,
             blackout_time: 20.0,
             double_last: 60.0,
             arena: ArenaSize::Small,

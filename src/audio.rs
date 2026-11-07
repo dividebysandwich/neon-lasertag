@@ -449,6 +449,21 @@ fn play_events(
                     .flatten();
                 play(&mut commands, gain, &sounds.charge_full, at, 0.8, 1.0)
             }
+            SimEvent::PrismTaken { pos, .. } | SimEvent::PrismCaught { pos, .. } => {
+                play(&mut commands, gain, &sounds.pickup, Some(pos), 1.0, 0.8)
+            }
+            SimEvent::PrismThrown { pos, .. } => {
+                play(&mut commands, gain, &sounds.throw, Some(pos), 0.9, 0.9)
+            }
+            SimEvent::PrismDropped { pos, .. } => {
+                play(&mut commands, gain, &sounds.bounce, Some(pos), 1.0, 0.7)
+            }
+            SimEvent::PrismReturned { .. } => {
+                play(&mut commands, gain, &sounds.power_up, None, 0.6, 1.2)
+            }
+            SimEvent::PrismCaptured { .. } => {
+                play(&mut commands, gain, &sounds.mega_win, None, 1.0, 1.0)
+            }
             SimEvent::BountyClaimed { .. } | SimEvent::BountySurvived { .. } => {
                 play(&mut commands, gain, &sounds.mega_win, None, 0.6, 1.3)
             }

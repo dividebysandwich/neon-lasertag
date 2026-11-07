@@ -2,7 +2,7 @@
 //! the master server unless `--private` and announced on the local network unless `--no-lan`.
 //!
 //!     lt-server [--port 27420] [--name NAME] [--seed N] [--bots 8] [--difficulty normal]
-//!               [--arena small|medium|large|random] [--mode classic|megatarget]
+//!               [--arena small|medium|large|random] [--mode classic|megatarget|prism|infection]
 //!               [--master URL] [--private] [--no-lan]
 
 use std::time::{Duration, Instant};
@@ -59,7 +59,7 @@ fn args() -> Args {
             },
             "--mode" => match it.next().as_deref().and_then(GameMode::parse) {
                 Some(m) => a.mode = m,
-                None => eprintln!("--mode takes classic or megatarget"),
+                None => eprintln!("--mode takes classic, megatarget, prism or infection"),
             },
             "--master" => a.master = it.next().unwrap_or(a.master),
             "--private" => a.private = true,
@@ -67,7 +67,7 @@ fn args() -> Args {
             "-h" | "--help" => {
                 println!(
                     "lt-server [--port N] [--name NAME] [--seed N] [--bots N] [--difficulty easy|normal|hard] \
-                     [--arena small|medium|large|random] [--mode classic|megatarget] [--master URL] [--private] [--no-lan]"
+                     [--arena small|medium|large|random] [--mode classic|megatarget|prism|infection] [--master URL] [--private] [--no-lan]"
                 );
                 std::process::exit(0);
             }

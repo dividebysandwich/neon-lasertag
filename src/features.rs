@@ -49,6 +49,7 @@ impl Plugin for FeaturesPlugin {
                 sync_barriers,
                 sync_sensors,
                 sync_tethers,
+                sync_prisms,
             )
                 .chain()
                 .run_if(resource_exists::<Game>),
@@ -664,6 +665,109 @@ fn sync_tethers(
         }
         keep
     });
+}
+
+/// Prism mode: each prism a spinning octahedron of light in its team's colour (over its
+/// carrier's head when carried), and a ring on the floor at its home.
+#[allow(clippy::too_many_arguments)]
+fn sync_prisms(
+    mut commands: Commands,
+    game: Res<Game>,
+    time: Res<Time>,
+    palette: Res<crate::materials::Palette>,
+    mut views: Local<Option<(u64, [Entity; 2])>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut q: Query<&mut Transform>,
+) {
+    let Some(homes) = game.level.prisms else {
+        return;
+    };
+    // (Again for a new arena, or the same one rebuilt.)
+    if views.is_none_or(|v| v.0 != game.level.seed || q.get(v.1[0]).is_err()) {
+        // An octahedron, 0.5 m tall.
+        let mut m = MeshData::default();
+        let (h, r) = (0.25, 0.16);
+        let pts = [
+            Vec3::Y * h,
+            Vec3::NEG_Y * h,
+            Vec3::X * r,
+            Vec3::Z * r,
+            Vec3::NEG_X * r,
+            Vec3::NEG_Z * r,
+        ];
+        for (tip, sign) in [(0usize, 1.0f32), (1, -1.0)] {
+            for k in 0..4 {
+                let (a, b) = (pts[2 + k], pts[2 + (k + 1) % 4]);
+                let (a, b) = if sign > 0.0 { (b, a) } else { (a, b) };
+                let n = (a - pts[tip]).cross(b - pts[tip]).normalize();
+                for v in [pts[tip], a, b] {
+                    m.pos.push(v.to_array());
+                    m.nrm.push(n.to_array());
+                    m.uv.push([0.0, 0.0]);
+                }
+                let i = m.idx.len() as u32;
+                m.idx.extend([i, i + 1, i + 2]);
+            }
+        }
+        let mesh = meshes.add(m.to_mesh());
+        let ring = meshes.add(Torus::new(0.55, 0.65));
+        let mut ents = [Entity::PLACEHOLDER; 2];
+        for team in [lt_sim::Team::Red, lt_sim::Team::Blue] {
+            let c = team_color(Some(team));
+            let e = commands
+                .spawn((
+                    ArenaPart,
+                    Mesh3d(mesh.clone()),
+                    MeshMaterial3d(palette.bolt_for(Some(team))),
+                    Transform::from_translation(homes[team.index()]),
+                    Name::new("prism"),
+                ))
+                .id();
+            commands.spawn((
+                PointLight {
+                    color: Color::linear_rgb(c.x, c.y, c.z),
+                    intensity: 20_000.0,
+                    range: 4.0,
+                    shadow_maps_enabled: false,
+                    ..default()
+                },
+                Transform::IDENTITY,
+                ChildOf(e),
+            ));
+            commands.spawn((
+                ArenaPart,
+                Mesh3d(ring.clone()),
+                MeshMaterial3d(palette.accent_for(Some(team))),
+                Transform::from_translation(
+                    homes[team.index()] - Vec3::Y * (lt_sim::level::PRISM_HOVER - 0.03),
+                )
+                .with_scale(Vec3::new(1.0, 0.3, 1.0)),
+                Name::new("prism home"),
+            ));
+            ents[team.index()] = e;
+        }
+        *views = Some((game.level.seed, ents));
+    }
+    let Some((_, ents)) = *views else { return };
+    let t = time.elapsed_secs();
+    for p in &game.snap.prisms {
+        if let Ok(mut tr) = q.get_mut(ents[p.team.index()]) {
+            let bob = if p.at_home() {
+                0.08 * (t * 2.0).sin()
+            } else {
+                0.0
+            };
+            tr.translation = p.pos + Vec3::Y * bob;
+            tr.rotation = Quat::from_rotation_y(t * 1.5);
+            // (Pulsing while it lies away from home.)
+            let s = if p.dropped.is_some() {
+                1.0 + 0.2 * (t * 8.0).sin()
+            } else {
+                1.0
+            };
+            tr.scale = Vec3::splat(s);
+        }
+    }
 }
 
 fn on_events(

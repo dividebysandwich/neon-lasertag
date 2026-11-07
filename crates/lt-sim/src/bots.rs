@@ -866,6 +866,9 @@ enum Plan {
     /// Megatarget mode: hit both secondary targets, then get into the room and hit the
     /// megatarget.
     Mega,
+    /// Prism mode: take the enemy's prism home, bring one's own back, or see a team mate's
+    /// carrier home.
+    Prism,
 }
 
 /// Something to do before going on with the plan.
@@ -1618,6 +1621,36 @@ impl Bot {
         self.route_goal = None;
         self.peek = None;
         self.mega_spot = None;
+        // Infection: phantoms hunt; survivors mostly hold together, now and then hunt back.
+        if sim.level.mode == crate::level::GameMode::Infection {
+            let hunt = p.team == Team::Red || self.rng.random_bool(0.3);
+            for plan in [if hunt { Plan::Engage } else { Plan::Hold }, Plan::Engage] {
+                if plan == Plan::Engage {
+                    self.plan = Plan::Engage;
+                    return;
+                }
+                if let Some(s) = self.pick_spot(sim, g, p, plan) {
+                    self.plan = plan;
+                    self.spot = Some(s);
+                    self.claim(p.team, g.pos[s]);
+                    return;
+                }
+            }
+        }
+        // Prism mode: most go for the prisms, the rest hunt.
+        if sim.level.prisms.is_some() {
+            let go = match self.role {
+                Role::Offense => 0.85,
+                Role::Defense => 0.6,
+            };
+            if self.rng.random_bool(go) {
+                self.plan = Plan::Prism;
+                self.plan_left = self.rng.random_range(20.0..30.0);
+            } else {
+                self.plan = Plan::Engage;
+            }
+            return;
+        }
         let role_plan = match (self.role, sim.level.mega.is_some()) {
             (Role::Offense, false) => Plan::Attack,
             (Role::Defense, false) => Plan::Defend,
@@ -1725,7 +1758,7 @@ impl Bot {
                     }
                     2.0 * t.cover - 0.06 * dist
                 }
-                Plan::Engage | Plan::Mega => continue,
+                Plan::Engage | Plan::Mega | Plan::Prism => continue,
             };
             // Worse bots care less about cover: their choice is noisier and cover counts less.
             s *= 0.5 + 0.5 * self.skill;
@@ -1751,6 +1784,42 @@ impl Bot {
             Plan::Hold | Plan::Attack | Plan::Defend => self.spot.map(|s| (s, g.pos[s])),
             Plan::Engage => self.engage_dest(sim, g, p),
             Plan::Mega => self.mega_dest(sim, g, p),
+            Plan::Prism => self
+                .prism_dest(sim, g, p)
+                .or_else(|| self.engage_dest(sim, g, p)),
+        }
+    }
+
+    /// The prism plan's next stop: home with the enemy's prism; one's own, lying about, to
+    /// bring it back, or its carrier, to tag them out; else the enemy's prism, or (a team mate
+    /// carrying it) along with them.
+    fn prism_dest(&mut self, sim: &Sim, g: &BotGraph, p: &Player) -> Option<(usize, Vec3)> {
+        let homes = sim.level.prisms?;
+        let own = sim.prisms.iter().find(|x| x.team == p.team)?;
+        let theirs = sim.prisms.iter().find(|x| x.team != p.team)?;
+        let at = |pos: Vec3| g.nearest(&sim.world, pos).map(|n| (n, pos));
+        let feet_of = |id: PlayerId| sim.player(id).map(|o| o.feet);
+        let floor = |pos: Vec3| pos - Vec3::Y * crate::level::PRISM_HOVER;
+        if theirs.carrier == Some(p.id) {
+            return at(floor(homes[p.team.index()]));
+        }
+        if !own.at_home() {
+            return match own.carrier {
+                Some(c) => feet_of(c).and_then(at),
+                None => at(floor(own.pos)),
+            };
+        }
+        match theirs.carrier {
+            None => at(floor(theirs.pos)),
+            // (Escorting: a few metres off is close enough.)
+            Some(c) => {
+                let f = feet_of(c)?;
+                if f.distance(p.feet) < 4.0 {
+                    None
+                } else {
+                    at(f)
+                }
+            }
         }
     }
 
@@ -3051,6 +3120,41 @@ mod tests {
             }
         }
         assert!(found > 3, "{found}");
+    }
+
+    #[test]
+    fn bots_take_and_capture_prisms() {
+        let mut n = [0usize; 3];
+        for seed in [3u64, 8] {
+            let mut sim = Sim::new(
+                seed,
+                Rules {
+                    mode: level::GameMode::Prism,
+                    match_time: 300.0,
+                    ..Rules::default()
+                },
+            );
+            let mut bots = Bots::default();
+            bots.fill(&mut sim, 8, 0.6);
+            for _ in 0..(300.0 / TICK) as usize {
+                bots.think(&mut sim);
+                sim.step();
+                for e in sim.drain_events() {
+                    match e {
+                        SimEvent::PrismTaken { .. } => n[0] += 1,
+                        SimEvent::PrismReturned { by: Some(_), .. } => n[1] += 1,
+                        SimEvent::PrismCaptured { .. } => n[2] += 1,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        println!(
+            "prisms taken {}, returned {}, captured {}",
+            n[0], n[1], n[2]
+        );
+        assert!(n[0] >= 4, "taken: {n:?}");
+        assert!(n[2] >= 1, "captured: {n:?}");
     }
 
     #[test]
