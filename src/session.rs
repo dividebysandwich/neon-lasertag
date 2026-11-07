@@ -163,7 +163,10 @@ fn dev_script(
         "next" => {
             cmds.write(SessionCmd::NextMatch);
         }
-        "hit" => {
+        // A hit on the local player by the nearest enemy (`hit`), or (only shown and heard, the
+        // match goes on as it was) the local player's on them (`hit-them`) or tagging them out
+        // (`tag-them`).
+        "hit" | "hit-them" | "tag-them" => {
             let Some(game) = game else { return };
             let Some(me) = game
                 .me
@@ -181,14 +184,28 @@ fn dev_script(
                         .distance(me.feet)
                         .total_cmp(&b.feet.distance(me.feet))
                 });
-            if let Some(e) = enemy {
-                events.write(crate::game::GameEvent(lt_sim::SimEvent::Hit {
+            let Some(e) = enemy else { return };
+            let event = match action.as_str() {
+                "hit" => lt_sim::SimEvent::Hit {
                     player: me.id,
                     by: e.id,
                     pos: me.feet + me.head.pos,
                     hits: 1,
-                }));
-            }
+                },
+                "hit-them" => lt_sim::SimEvent::Hit {
+                    player: e.id,
+                    by: me.id,
+                    pos: e.feet + e.head.pos,
+                    hits: 1,
+                },
+                _ => lt_sim::SimEvent::TaggedOut {
+                    player: e.id,
+                    by: me.id,
+                    pos: e.feet,
+                    respawn_in: game.rules.respawn_min,
+                },
+            };
+            events.write(crate::game::GameEvent(event));
         }
         // Megatarget mode, local games: hit both secondary targets at once, or go to Red's
         // doorway, into the room, before the first turret or into the first pocket.

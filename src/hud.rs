@@ -26,6 +26,12 @@ struct EventBanner;
 /// The line under the banner saying what the event does.
 #[derive(Component)]
 struct EventBannerSub;
+/// One of the four strokes of the hit marker, an X around the crosshair.
+#[derive(Component)]
+struct HitMarkStroke;
+/// Line `0` of the points just scored, rising beside the crosshair.
+#[derive(Component)]
+struct PointsLine(usize);
 /// Under the crosshair: the pickup just taken, and what it does.
 #[derive(Component)]
 struct PickupNote;
@@ -107,7 +113,18 @@ struct Feed {
     lines: Vec<(String, Color, f32)>,
     flash: f32,
     marks: Vec<HitMark>,
+    /// The hit marker's seconds left, and whether it marks a tag-out.
+    hit_mark: f32,
+    tag_mark: bool,
+    /// The points just scored: text and seconds left.
+    points: Vec<(String, f32)>,
 }
+
+/// Seconds the hit marker shows (a tag-out's, longer), and a points line.
+const HIT_MARK: f32 = 0.22;
+const TAG_MARK: f32 = 0.5;
+const POINTS_LIFE: f32 = 1.6;
+const POINTS_LINES: usize = 4;
 
 pub struct HudPlugin;
 
@@ -128,6 +145,7 @@ impl Plugin for HudPlugin {
                     powerup_status,
                     event_banner,
                     pickup_note,
+                    hit_marker,
                 )
                     .chain()
                     .run_if(resource_exists::<Game>),
@@ -365,6 +383,49 @@ fn spawn(mut commands: Commands) {
                 c.spawn(reticle_bar(14.0, 0.0, 2.0, 9.0));
                 c.spawn(reticle_bar(14.0, 21.0, 2.0, 9.0));
                 c.spawn(reticle_bar(13.5, 13.5, 3.0, 3.0));
+                // The hit marker: four strokes on the diagonals, pointing in.
+                for k in 0..4 {
+                    let a = std::f32::consts::FRAC_PI_4 + k as f32 * std::f32::consts::FRAC_PI_2;
+                    let (x, y) = (15.0 + 19.0 * a.cos(), 15.0 + 19.0 * a.sin());
+                    c.spawn((
+                        HitMarkStroke,
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(x - 6.0),
+                            top: Val::Px(y - 1.5),
+                            width: Val::Px(12.0),
+                            height: Val::Px(3.0),
+                            border_radius: BorderRadius::all(Val::Px(1.5)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::NONE),
+                        UiTransform {
+                            rotation: Rot2::radians(a),
+                            ..default()
+                        },
+                    ));
+                }
+            });
+            // The points just scored, rising to the right of the crosshair.
+            p.spawn(Node {
+                position_type: PositionType::Absolute,
+                left: Val::Percent(50.0),
+                top: Val::Percent(50.0),
+                ..default()
+            })
+            .with_children(|c| {
+                for i in 0..POINTS_LINES {
+                    c.spawn((
+                        PointsLine(i),
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(36.0),
+                            ..default()
+                        },
+                        text("", 18.0, Color::NONE, 900),
+                        TextLayout::new(Justify::Left, LineBreak::NoWrap),
+                    ));
+                }
             });
         });
     // Under the crosshair: the pickup just taken.
@@ -619,6 +680,20 @@ fn color_of(game: &Game, id: PlayerId) -> Color {
 
 fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMut<Feed>) {
     for GameEvent(e) in events.read() {
+        if let Some(tag) = hit_confirm(e, &game) {
+            if tag || !feed.tag_mark || feed.hit_mark <= 0.0 {
+                feed.hit_mark = if tag { TAG_MARK } else { HIT_MARK };
+                feed.tag_mark = tag;
+            }
+        }
+        if let Some((what, points)) = my_points(e, &game) {
+            let x2 = if game.snap.double { "  X2" } else { "" };
+            feed.points
+                .push((format!("+{points} {what}{x2}"), POINTS_LIFE));
+            if feed.points.len() > POINTS_LINES {
+                feed.points.remove(0);
+            }
+        }
         match *e {
             SimEvent::TaggedOut { player, by, .. } => {
                 let c = if by == lt_sim::HAZARD || player == by {
@@ -866,6 +941,96 @@ fn clock_events(snap: &lt_sim::sim::Snapshot) -> (String, Color) {
         parts.push("2X POINTS".to_string());
     }
     (parts.join("  "), color)
+}
+
+/// Whether `e` is the local player's bolt hitting an enemy: `Some(true)` for a tag-out.
+pub fn hit_confirm(e: &SimEvent, game: &Game) -> Option<bool> {
+    let me = game.me?;
+    let team = |id| {
+        game.snap
+            .players
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| p.team)
+    };
+    let enemy = |id| id != me && team(id).is_some() && team(id) != team(me);
+    match *e {
+        SimEvent::Hit {
+            player, by, hits, ..
+        } if by == me && enemy(player) && hits < game.rules.hits_to_tag => Some(false),
+        SimEvent::TaggedOut { player, by, .. } if by == me && enemy(player) => Some(true),
+        _ => None,
+    }
+}
+
+/// The points `e` gives the local player, if any, and what for (twice as many while points
+/// count double).
+pub fn my_points(e: &SimEvent, game: &Game) -> Option<(&'static str, u32)> {
+    let me = game.me?;
+    let r = &game.rules;
+    let (what, points) = match *e {
+        SimEvent::TaggedOut { .. } if hit_confirm(e, game) == Some(true) => ("TAG", r.tag_points),
+        SimEvent::Assist { player, .. } if player == me => ("ASSIST", r.assist_points),
+        SimEvent::Defended { player, .. } if player == me => ("DEFEND", r.defend_points),
+        SimEvent::TargetHit { by, .. } if by == me => ("TARGET", r.target_points),
+        SimEvent::SecondaryHit { by, .. } if by == me => ("SECONDARY", r.secondary_points),
+        SimEvent::MegaHit { by, .. } if by == me => ("MEGATARGET", r.megatarget_points),
+        _ => return None,
+    };
+    Some((what, if game.snap.double { points * 2 } else { points }))
+}
+
+/// The hit marker (white, a tag-out's bigger and pink) and the points rising beside the
+/// crosshair.
+#[allow(clippy::type_complexity)]
+fn hit_marker(
+    time: Res<Time>,
+    mut feed: ResMut<Feed>,
+    mut strokes: Query<(&mut BackgroundColor, &mut UiTransform), With<HitMarkStroke>>,
+    mut lines: Query<(
+        &PointsLine,
+        &mut Node,
+        &mut Text,
+        &mut TextColor,
+        &mut TextShadow,
+    )>,
+) {
+    let dt = time.delta_secs();
+    feed.hit_mark = (feed.hit_mark - dt).max(0.0);
+    let total = if feed.tag_mark { TAG_MARK } else { HIT_MARK };
+    let k = feed.hit_mark / total;
+    let c = if feed.tag_mark {
+        neonui::PINK
+    } else {
+        Color::WHITE
+    };
+    for (mut bg, mut tr) in &mut strokes {
+        bg.0 = c.with_alpha(k.sqrt());
+        // (Springing out a little, further for a tag-out.)
+        let grow = if feed.tag_mark { 1.6 } else { 1.0 };
+        tr.scale = Vec2::splat(grow * (0.8 + 0.4 * k));
+    }
+    for l in feed.points.iter_mut() {
+        l.1 -= dt;
+    }
+    feed.points.retain(|l| l.1 > 0.0);
+    let n = feed.points.len();
+    for (line, mut node, mut text, mut color, mut shadow) in &mut lines {
+        let Some((s, life)) = feed.points.get(line.0) else {
+            color.0 = Color::NONE;
+            shadow.color.set_alpha(0.0);
+            continue;
+        };
+        if text.0 != *s {
+            text.0 = s.clone();
+        }
+        let age = POINTS_LIFE - life;
+        // (The newest lowest; rising as they age, fading at the end.)
+        node.top = Val::Px(-12.0 + 22.0 * (line.0 as f32 - (n - 1) as f32) - 18.0 * age);
+        let a = (life / 0.4).min(1.0);
+        color.0 = neonui::AMBER.with_alpha(a);
+        shadow.color.set_alpha(0.85 * a);
+    }
 }
 
 /// The bottom left panel: team and score, hits left (blinking while the blaster is down), ammo
