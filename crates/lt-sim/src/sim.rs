@@ -353,6 +353,8 @@ pub struct BoltExtra {
     pub struck: u64,
     /// Bounces off every wall (the ricochet rifle).
     pub ricochet: bool,
+    /// The prism lance's shot: gone once its tick's way is clear, a head hit counts extra.
+    pub lance: bool,
     /// A remote client judges this bolt's hits on players (`shot::HitClaim`); the sim's copy
     /// stops at them without hitting. Its shot (`PlayerCmd::shot`) and pellet.
     pub client: bool,
@@ -368,6 +370,7 @@ impl Default for BoltExtra {
             pierce: false,
             struck: 0,
             ricochet: false,
+            lance: false,
             client: false,
             shot: 0,
             pellet: 0,
@@ -1540,8 +1543,20 @@ impl Sim {
                 bolt_contact(&self.world, &self.barriers, &self.rules, b, ghosts)
             }
         };
+        if b.extra.lance {
+            let to = match contact {
+                Contact::Clear => b.pos + b.vel * TICK,
+                Contact::Player { at, .. } | Contact::Barrier { at, .. } => at,
+                Contact::Arena { q, .. } => q,
+            };
+            self.events.push(SimEvent::Streak {
+                player: b.owner,
+                from: b.pos,
+                to,
+            });
+        }
         match contact {
-            Contact::Clear => false,
+            Contact::Clear => b.extra.lance,
             Contact::Barrier { index, at } => {
                 self.events.push(SimEvent::BarrierHit {
                     id: self.barriers[index].id,
@@ -1549,11 +1564,11 @@ impl Sim {
                 });
                 true
             }
-            Contact::Player { index, at } => {
+            Contact::Player { index, at, part } => {
                 // A client judges this one's hits (`claim_hit`): it just stops (a beam flies
                 // on).
                 if !b.extra.client {
-                    self.hit_player(index, b, at);
+                    self.hit_part(index, b, at, part == crate::hitbox::Part::Head);
                 }
                 if !b.extra.pierce {
                     return true;
@@ -1716,7 +1731,16 @@ impl Sim {
             self.bolts.retain(|x| x.id != bolt_id);
         }
         b.pos = c.at - b.vel.normalize_or_zero() * 0.1;
-        self.hit_player(vi, &b, c.at);
+        // A head hit: the spot near where the head was.
+        let head = c.head
+            && [view, view + 1].iter().any(|&t| {
+                self.past(t).is_some_and(|h| {
+                    self.history[h].1.iter().any(|g| {
+                        g.id == c.victim && c.at.distance(g.eye) <= crate::hitbox::HEAD_RADIUS + 0.3
+                    })
+                })
+            });
+        self.hit_part(vi, &b, c.at, head);
         Claim::Accepted
     }
 
@@ -1735,6 +1759,24 @@ impl Sim {
                 i += 1;
             }
         }
+    }
+
+    /// `hit_player`, with a prism lance's head hit dealing `Rules::lance_head_damage`.
+    fn hit_part(&mut self, pi: usize, b: &Bolt, at: Vec3, head: bool) {
+        if !(head && b.extra.lance) {
+            return self.hit_player(pi, b, at);
+        }
+        let p = &self.players[pi];
+        if p.shield <= 0.0 && p.cooldown <= 0.0 && p.protect <= 0.0 {
+            self.events.push(SimEvent::Headshot {
+                player: p.id,
+                by: b.owner,
+                pos: at,
+            });
+        }
+        let mut b = *b;
+        b.extra.damage = self.rules.lance_head_damage;
+        self.hit_player(pi, &b, at)
     }
 
     fn hit_player(&mut self, pi: usize, b: &Bolt, at: Vec3) {
@@ -3421,6 +3463,58 @@ mod tests {
     }
 
     #[test]
+    fn the_lance_hits_at_once_and_head_hits_count_double() {
+        let (mut sim, a, b) = duel();
+        sim.rules.reload_rate = 0.0;
+        sim.give(a, PickupKind::Lance);
+        assert_eq!(sim.player(a).unwrap().weapon, Weapon::Lance);
+        let aim = |sim: &Sim, at: Vec3| {
+            let me = sim.player(a).unwrap();
+            let muzzle_pos = me.eye() - Vec3::Y * 0.2 - me.feet;
+            let dir = (at - (me.feet + muzzle_pos)).normalize();
+            PlayerCmd {
+                gun_hand: Some(Hand::Right),
+                muzzle: Pose {
+                    pos: muzzle_pos,
+                    rot: look_rot(dir),
+                },
+                fire: true,
+                ..Default::default()
+            }
+        };
+        // At the chest: one hit, in the tick it's fired, and no bolt left flying.
+        let chest = sim.player(b).unwrap().chest();
+        sim.set_cmd(a, aim(&sim, chest));
+        sim.drain_events();
+        sim.step();
+        assert_eq!(sim.player(b).unwrap().hits, 1);
+        assert_eq!(
+            sim.player(a).unwrap().ammo,
+            sim.rules.ammo - sim.rules.lance_cost
+        );
+        let ev = sim.drain_events();
+        assert!(ev.iter().any(|e| matches!(e, SimEvent::Streak { .. })));
+        assert!(!ev.iter().any(|e| matches!(e, SimEvent::Headshot { .. })));
+        assert!(sim.bolts.iter().all(|x| x.owner != a));
+        // At the head (once the hit cooldown and the lance's own are over): two more.
+        let cmd = aim(&sim, chest);
+        sim.set_cmd(a, PlayerCmd { fire: false, ..cmd });
+        for _ in 0..(sim.rules.hit_cooldown.max(sim.rules.lance_cooldown) / TICK) as usize + 2 {
+            sim.step();
+        }
+        let head = sim.player(b).unwrap().eye();
+        sim.set_cmd(a, aim(&sim, head));
+        sim.step();
+        let ev = sim.drain_events();
+        assert!(
+            ev.iter().any(|e| matches!(e, SimEvent::Headshot { .. })),
+            "{ev:?}"
+        );
+        assert_eq!(sim.player(b).unwrap().hits, 3);
+        assert!(ev.iter().any(|e| matches!(e, SimEvent::TaggedOut { .. })));
+    }
+
+    #[test]
     fn barriers_stop_enemy_bolts_only() {
         let (mut sim, a, b) = duel();
         sim.give(a, PickupKind::Barrier);
@@ -4294,6 +4388,7 @@ mod tests {
             victim: b,
             view: (view + k) as f32 + 0.3,
             at,
+            head: false,
         };
         let bad = [
             HitClaim {

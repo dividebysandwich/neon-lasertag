@@ -2059,6 +2059,7 @@ fn powerup_chip(
     match kind {
         PickupKind::Rapid if p.rapid => chip("RAPID FIRE".into(), None, false),
         PickupKind::Shotgun if p.weapon == Weapon::Shotgun => chip("SHOTGUN".into(), None, false),
+        PickupKind::Lance if p.weapon == Weapon::Lance => chip("PRISM LANCE".into(), None, false),
         PickupKind::Ricochet if p.weapon == Weapon::Ricochet => {
             chip("RICOCHET".into(), None, false)
         }
@@ -2165,6 +2166,15 @@ pub fn pickup_banner(
             "{}: A WALL THAT STOPS ENEMY BOLTS FOR {:.0} S",
             key(Action::Gadget, "GRIP OF THE FREE HAND"),
             rules.barrier_time
+        ),
+        PickupKind::Lance => format!(
+            "{}A SHOT THAT HITS AT ONCE - A HEAD HIT COUNTS {} ({} SHOTS)",
+            match controls {
+                Controls::Keys => format!("HOLD {} TO ZOOM - ", key_hint(settings, Action::Zoom)),
+                Controls::Vr => String::new(),
+            },
+            rules.lance_head_damage,
+            rules.lance_cost
         ),
         PickupKind::Ricochet => format!(
             "BOLTS BOUNCE OFF EVERY WALL - UP TO {} TIMES",

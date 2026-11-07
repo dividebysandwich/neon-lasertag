@@ -859,7 +859,13 @@ fn sync_bolts(
         }
         keep
     });
-    for b in &game.snap.bolts {
+    // (A prism lance's shot shows as its streak instead: `SimEvent::Streak`.)
+    for b in game
+        .snap
+        .bolts
+        .iter()
+        .filter(|b| b.vel.length_squared() < 1.0e6)
+    {
         let dir = b.vel.normalize_or(Vec3::Y);
         let head = b.pos + b.vel * a * TICK;
         // The capsule trails behind the bolt's head (a beam's long and thick); hidden right at
@@ -1299,6 +1305,37 @@ fn effects(
                     60_000.0,
                     4.0,
                     0.25,
+                );
+            }
+            // A prism lance's shot: a thin, bright streak along its way, fading fast.
+            SimEvent::Streak { player, from, to } => {
+                let len = from.distance(to);
+                if len > 0.01 {
+                    let dir = (to - from) / len;
+                    commands.spawn((
+                        Tracer {
+                            life: 0.45,
+                            max: 0.45,
+                            width: 0.025,
+                        },
+                        Mesh3d(meshes.spark.clone()),
+                        MeshMaterial3d(palette.bolt_for(team_of(player))),
+                        Transform::from_translation((from + to) / 2.0)
+                            .with_rotation(Quat::from_rotation_arc(Vec3::Z, dir))
+                            .with_scale(Vec3::new(0.025, 0.025, len)),
+                    ));
+                }
+            }
+            SimEvent::Headshot { pos, .. } => {
+                burst(
+                    &mut commands,
+                    &meshes,
+                    palette.bolt_for(None),
+                    pos,
+                    14,
+                    4.0,
+                    0.03,
+                    seed,
                 );
             }
             SimEvent::Launched { pos, .. } => {

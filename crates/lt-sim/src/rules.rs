@@ -41,6 +41,12 @@ pub struct Rules {
     /// Times a ricochet rifle's bolt bounces off any wall, and its least time between shots.
     pub ricochet_bounces: u8,
     pub ricochet_cooldown: f32,
+    /// The prism lance: how far its shot reaches (m), its least time between shots, the shots
+    /// one costs, and the hits a head hit deals.
+    pub lance_range: f32,
+    pub lance_cooldown: f32,
+    pub lance_cost: u16,
+    pub lance_head_damage: u8,
     pub move_speed: f32,
     /// Jumping: the upward speed (m/s), how long after walking off an edge one still may (s),
     /// and how long before landing a press still counts (s).
@@ -162,6 +168,10 @@ impl Default for Rules {
             mirror_bounces: 1,
             ricochet_bounces: 3,
             ricochet_cooldown: 0.5,
+            lance_range: 90.0,
+            lance_cooldown: 1.2,
+            lance_cost: 2,
+            lance_head_damage: 2,
             move_speed: 4.0,
             crouch_factor: 0.5,
             countdown: 3.0,

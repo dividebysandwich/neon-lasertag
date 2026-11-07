@@ -49,6 +49,8 @@ struct Sounds {
     charge_loop: Handle<AudioSource>,
     charge_full: Handle<AudioSource>,
     beam_fire: Handle<AudioSource>,
+    lance_fire: Handle<AudioSource>,
+    headshot: Handle<AudioSource>,
     barrier_up: Handle<AudioSource>,
     barrier_hit: Handle<AudioSource>,
     barrier_down: Handle<AudioSource>,
@@ -114,6 +116,8 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
     commands.insert_resource(Sounds {
         fire: s("laser_fire"),
         fire_red: s("laser_fire_red"),
+        lance_fire: s("lance_fire"),
+        headshot: s("headshot"),
         shotgun: s("shotgun"),
         deny: s("deny"),
         hit: s("hit_player"),
@@ -367,13 +371,17 @@ fn play_events(
                     .players
                     .iter()
                     .any(|p| p.id == player && p.team == lt_sim::Team::Red);
-                let shotgun = game
+                let weapon = game
                     .snap
                     .players
                     .iter()
-                    .any(|p| p.id == player && p.weapon == Weapon::Shotgun);
+                    .find(|p| p.id == player)
+                    .map(|p| p.weapon);
+                let shotgun = weapon == Some(Weapon::Shotgun);
                 let sound = if shotgun {
                     &sounds.shotgun
+                } else if weapon == Some(Weapon::Lance) {
+                    &sounds.lance_fire
                 } else if red {
                     &sounds.fire_red
                 } else {
@@ -434,6 +442,17 @@ fn play_events(
                     })
                     .flatten();
                 play(&mut commands, gain, &sounds.charge_full, at, 0.8, 1.0)
+            }
+            SimEvent::Headshot { by, pos, .. } => {
+                let mine = Some(by) == me;
+                play(
+                    &mut commands,
+                    gain,
+                    &sounds.headshot,
+                    (!mine).then_some(pos),
+                    if mine { 0.9 } else { 0.7 },
+                    1.0,
+                )
             }
             SimEvent::BeamFired { player, pos, .. } => {
                 let mine = Some(player) == me;

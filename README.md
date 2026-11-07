@@ -76,6 +76,7 @@ gadget at a time; a new one replaces the old.
 | Shotgun | Replaces your blaster: 10 short-range bolts per shot. |
 | Charge gun | Replaces your blaster: hold the trigger to charge a beam that pierces players and deals two hits. |
 | Ricochet rifle | Replaces your blaster: slower-firing bolts that bounce off every wall up to 3 times (but not off targets). |
+| Prism lance | Replaces your blaster: a slow marksman rifle whose shot hits instantly; a head hit counts as two. Zoom with Z / mouse button 5 (VR: a laser sight). |
 | Cloak | Nearly invisible for 100 s; you flicker into view when you fire or are hit. |
 | Barrier | Put up a wall of light for 8 s that blocks enemy bolts but lets your team's through. |
 | Speed boost | Run 50% faster for 15 s. |
@@ -97,6 +98,7 @@ summary of the rules.
 | Grenade | Hold B / Y, throw, let go | Hold G or right mouse button, let go |
 | Shield | Trigger of the free hand | Q |
 | Gadget (barrier ...) | Grip of the free hand | E |
+| Zoom (prism lance) | - | Z or mouse button 5 |
 | Scores | In-game menu, or look at your wrist | Hold Tab |
 | Menu | Menu button, or hold B / Y | Esc |
 

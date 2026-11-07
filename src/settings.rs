@@ -23,11 +23,12 @@ pub enum Action {
     Grenade,
     Shield,
     Gadget,
+    Zoom,
     Scores,
 }
 
 impl Action {
-    pub const ALL: [Action; 13] = [
+    pub const ALL: [Action; 14] = [
         Action::Forward,
         Action::Back,
         Action::Left,
@@ -40,6 +41,7 @@ impl Action {
         Action::Grenade,
         Action::Shield,
         Action::Gadget,
+        Action::Zoom,
         Action::Scores,
     ];
 
@@ -57,6 +59,7 @@ impl Action {
             Action::Grenade => "Grenade (hold, let go)",
             Action::Shield => "Shield (switch on)",
             Action::Gadget => "Gadget (use)",
+            Action::Zoom => "Zoom (prism lance)",
             Action::Scores => "Scores (hold)",
         }
     }
@@ -75,6 +78,7 @@ impl Action {
             Action::Grenade => "grenade",
             Action::Shield => "shield",
             Action::Gadget => "barrier",
+            Action::Zoom => "zoom",
             Action::Scores => "scores",
         }
     }
@@ -94,6 +98,7 @@ impl Action {
             Action::Grenade => [Some(Key(KeyCode::KeyG)), Some(Mouse(MouseButton::Right))],
             Action::Shield => [Some(Key(KeyCode::KeyQ)), None],
             Action::Gadget => [Some(Key(KeyCode::KeyE)), None],
+            Action::Zoom => [Some(Key(KeyCode::KeyZ)), Some(Mouse(MouseButton::Forward))],
             Action::Scores => [Some(Key(KeyCode::Tab)), None],
         }
     }

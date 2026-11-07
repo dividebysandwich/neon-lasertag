@@ -651,6 +651,30 @@ def beam_fire():
     return echoes(zap + crack + punch + hiss, [0.09, 0.2], [0.3, 0.15], 5000)
 
 
+def lance_fire():
+    T = 0.9
+    x = seconds(T)
+    # A sharp crack and a high, glassy whine falling away (the prism lance).
+    crack = click(T, 2500, 15000, 0.002) * 1.8
+    f = 5200 * np.exp(-x / 0.06) + 900
+    whine = np.sin(2 * np.pi * phase(f)) * env(T, 0.0005, 0.18, hold=0.01) * 0.5
+    glass = ring(T, [2900, 4350, 6100], [0.25, 0.18, 0.12], [0.35, 0.25, 0.18]) * 0.4
+    punch = thump(T, 70, 0.08, drop=0.5) * 0.9
+    return echoes(crack + whine + glass + punch, [0.11, 0.26], [0.3, 0.15], 6000)
+
+
+def headshot():
+    T = 0.5
+    x = seconds(T)
+    # Two bright ascending pings over a hard knock.
+    pings = sum(
+        at(T, start, np.sin(2 * np.pi * hz * seconds(T - start)) * env(T - start, 0.001, 0.09))
+        for hz, start in ((1760, 0.0), (2637, 0.06))
+    ) * 0.5
+    knock = thump(T, 140, 0.05, drop=0.6) * 0.9 + click(T, 2000, 9000, 0.002) * 0.6
+    return pings + knock
+
+
 def barrier_up():
     T = 0.7
     x = seconds(T)
@@ -744,6 +768,8 @@ SOUNDS = {
     "charge_loop": (charge_loop, -26.0, 271),
     "charge_full": (charge_full, -21.0, 281),
     "beam_fire": (beam_fire, -14.0, 291),
+    "lance_fire": (lance_fire, -14.0, 292),
+    "headshot": (headshot, -15.0, 293),
     "barrier_up": (barrier_up, -19.0, 301),
     "barrier_hit": (barrier_hit, -20.0, 311),
     "barrier_down": (barrier_down, -22.0, 321),

@@ -30,6 +30,8 @@ pub struct Look {
     pub crouch: f32,
     /// Crouching by toggle (`Settings::toggle_crouch`): down until pressed again.
     pub crouch_on: bool,
+    /// Zooming in with the prism lance: 0 not at all, 1 all the way (eased).
+    pub zoom: f32,
 }
 
 /// How far crouching lowers the eyes (m), how long it takes (time constant, s), and how much
@@ -142,9 +144,19 @@ pub fn camera_bundle() -> impl Bundle {
     )
 }
 
-/// The field of view from the settings (`Settings::fov`).
-fn apply_fov(settings: Res<Settings>, mut cams: Query<&mut Projection, With<MainCamera>>) {
-    let want = settings.fov.to_radians();
+/// How far the prism lance's zoom narrows the view, and how long it takes (time constant, s).
+const ZOOM: f32 = 2.5;
+const ZOOM_TIME: f32 = 0.06;
+
+/// The field of view from the settings (`Settings::fov`), narrowed by the zoom.
+fn apply_fov(
+    settings: Res<Settings>,
+    look: Res<Look>,
+    mut cams: Query<&mut Projection, With<MainCamera>>,
+) {
+    let fov = settings.fov.to_radians();
+    let zoomed = 2.0 * ((fov / 2.0).tan() / ZOOM).atan();
+    let want = fov + (zoomed - fov) * look.zoom;
     for mut p in &mut cams {
         let off = matches!(&*p, Projection::Perspective(pp) if (pp.fov - want).abs() > 1e-4);
         if off && let Projection::Perspective(pp) = &mut *p {
@@ -244,8 +256,19 @@ fn read_input(
     let on = |a: Action| settings.pressed(a, &input);
     let dt = real.delta_secs().clamp(1e-4, 0.05);
     let mut turned = Vec2::ZERO;
+    let lance = game
+        .me
+        .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
+        .is_some_and(|p| p.weapon == Weapon::Lance && p.respawn.is_none());
+    let zoom = if grabbed && lance && on(Action::Zoom) {
+        1.0
+    } else {
+        0.0
+    };
+    look.zoom += (zoom - look.zoom) * (1.0 - (-dt / ZOOM_TIME).exp());
     if grabbed {
-        let s = 0.0022 * settings.sensitivity;
+        // (Slower zoomed in, as the view.)
+        let s = 0.0022 * settings.sensitivity / (1.0 + (ZOOM - 1.0) * look.zoom);
         let dy = if settings.invert_y {
             -motion.delta.y
         } else {

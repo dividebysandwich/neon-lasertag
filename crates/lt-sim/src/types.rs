@@ -71,13 +71,17 @@ pub enum PickupKind {
     /// The ricochet rifle instead of the blaster until tagged out: slower bolts that bounce
     /// off every wall up to `Rules::ricochet_bounces` times; taking one also fills it up.
     Ricochet,
+    /// The prism lance instead of the blaster until tagged out: a slow-firing marksman rifle
+    /// whose shot reaches `Rules::lance_range` at once and deals `Rules::lance_head_damage`
+    /// hits to the head (for `Rules::lance_cost` shots); taking one also fills it up.
+    Lance,
     /// A gadget, carried until put up (`PlayerCmd::gadget`): a wall of hard light in front of the
     /// player for `Rules::barrier_time`, stopping every bolt but its team's.
     Barrier,
 }
 
 impl PickupKind {
-    pub const ALL: [PickupKind; 9] = [
+    pub const ALL: [PickupKind; 10] = [
         PickupKind::Grenade,
         PickupKind::Rapid,
         PickupKind::Shield,
@@ -87,9 +91,10 @@ impl PickupKind {
         PickupKind::Charge,
         PickupKind::Barrier,
         PickupKind::Ricochet,
+        PickupKind::Lance,
     ];
     /// The powerups (everything but the grenade).
-    pub const POWERUPS: [PickupKind; 8] = [
+    pub const POWERUPS: [PickupKind; 9] = [
         PickupKind::Rapid,
         PickupKind::Shield,
         PickupKind::Shotgun,
@@ -98,6 +103,7 @@ impl PickupKind {
         PickupKind::Charge,
         PickupKind::Barrier,
         PickupKind::Ricochet,
+        PickupKind::Lance,
     ];
 
     pub fn name(self) -> &'static str {
@@ -111,6 +117,7 @@ impl PickupKind {
             PickupKind::Charge => "charge gun",
             PickupKind::Barrier => "barrier",
             PickupKind::Ricochet => "ricochet rifle",
+            PickupKind::Lance => "prism lance",
         }
     }
 
@@ -126,6 +133,7 @@ impl PickupKind {
             PickupKind::Charge => "charge",
             PickupKind::Barrier => "barrier",
             PickupKind::Ricochet => "ricochet",
+            PickupKind::Lance => "lance",
         }
     }
 
@@ -137,7 +145,9 @@ impl PickupKind {
     pub fn pool(self) -> Option<Pool> {
         match self {
             PickupKind::Grenade => None,
-            PickupKind::Shotgun | PickupKind::Charge | PickupKind::Ricochet => Some(Pool::Weapon),
+            PickupKind::Shotgun | PickupKind::Charge | PickupKind::Ricochet | PickupKind::Lance => {
+                Some(Pool::Weapon)
+            }
             PickupKind::Barrier => Some(Pool::Gadget),
             PickupKind::Rapid | PickupKind::Shield | PickupKind::Cloak | PickupKind::Speed => {
                 Some(Pool::Power)
@@ -151,6 +161,7 @@ impl PickupKind {
             PickupKind::Shotgun => Some(Weapon::Shotgun),
             PickupKind::Charge => Some(Weapon::Charge),
             PickupKind::Ricochet => Some(Weapon::Ricochet),
+            PickupKind::Lance => Some(Weapon::Lance),
             _ => None,
         }
     }
@@ -173,6 +184,8 @@ pub enum Weapon {
     Charge,
     /// Bolts bounce off every wall (`Rules::ricochet_bounces`).
     Ricochet,
+    /// Hitscan: the shot crosses `Rules::lance_range` at once, a head hit counts double.
+    Lance,
 }
 
 /// A carried gadget (one at a time, used with `PlayerCmd::gadget`).
@@ -437,6 +450,18 @@ pub enum SimEvent {
         player: PlayerId,
         pos: Vec3,
         kind: PickupKind,
+    },
+    /// A prism lance's shot: its way from `from` to `to` (one leg of it, a mirror turning it).
+    Streak {
+        player: PlayerId,
+        from: Vec3,
+        to: Vec3,
+    },
+    /// A hit to the head that counted extra (before its `Hit`).
+    Headshot {
+        player: PlayerId,
+        by: PlayerId,
+        pos: Vec3,
     },
     /// A bolt hit a player (`hits` taken so far, 1..=hits_to_tag); `by` is the shooter.
     Hit {

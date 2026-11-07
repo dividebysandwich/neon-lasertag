@@ -14,7 +14,7 @@ use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::collide::World;
-use crate::hitbox::first_hit;
+use crate::hitbox::{Part, first_hit};
 use crate::level::Level;
 use crate::rules::Rules;
 use crate::sim::{Barrier, Bolt, BoltExtra, EYE, TICK};
@@ -28,6 +28,8 @@ pub enum Shot {
     Beam,
     /// A bolt that bounces off every wall.
     Ricochet,
+    /// The prism lance's (all but) hitscan shot.
+    Lance,
 }
 
 /// The parts of a player the trigger works with.
@@ -60,6 +62,7 @@ impl Gun {
     pub fn interval(&self, rules: &Rules) -> f32 {
         let base = match self.weapon {
             Weapon::Ricochet => rules.ricochet_cooldown,
+            Weapon::Lance => rules.lance_cooldown,
             _ => rules.fire_cooldown,
         };
         if self.rapid { base * 0.5 } else { base }
@@ -100,6 +103,7 @@ impl Gun {
                     Weapon::Shotgun => return Some(Trigger::Fire(Shot::Spread)),
                     Weapon::Blaster => return Some(Trigger::Fire(Shot::Bolt)),
                     Weapon::Ricochet => return Some(Trigger::Fire(Shot::Ricochet)),
+                    Weapon::Lance => return Some(Trigger::Fire(Shot::Lance)),
                 }
             }
         }
@@ -127,12 +131,18 @@ impl Gun {
     /// Pays for a shot.
     pub fn fired(&mut self, shot: Shot, rules: &Rules) {
         self.fire_cd = self.interval(rules);
-        let cost = if shot == Shot::Beam {
-            rules.beam_cost
-        } else {
-            1
-        };
-        self.ammo = self.ammo.saturating_sub(cost);
+        self.ammo = self.ammo.saturating_sub(shot.cost(rules));
+    }
+}
+
+impl Shot {
+    /// The shots it takes from the gun.
+    pub fn cost(self, rules: &Rules) -> u16 {
+        match self {
+            Shot::Beam => rules.beam_cost,
+            Shot::Lance => rules.lance_cost,
+            _ => 1,
+        }
     }
 }
 
@@ -191,6 +201,15 @@ pub fn shot_bolts(shot: Shot, dir: Vec3, rules: &Rules, seed: u64) -> Vec<(Vec3,
                 })
                 .collect()
         }
+        // (Across its whole range in a tick, and a tick more after a mirror.)
+        Shot::Lance => vec![(
+            dir * rules.lance_range / TICK,
+            TICK * (1 + rules.mirror_bounces as u32) as f32 - TICK * 0.5,
+            BoltExtra {
+                lance: true,
+                ..BoltExtra::default()
+            },
+        )],
         Shot::Ricochet => vec![(
             dir * rules.blaster_bolt_speed * 0.75,
             rules.bolt_life,
@@ -227,10 +246,11 @@ pub struct BoltTarget<'a> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Contact {
     Clear,
-    /// A player (`index` as given with the targets), at `at`.
+    /// A player (`index` as given with the targets), at `at`, on `part`.
     Player {
         index: usize,
         at: Vec3,
+        part: Part,
     },
     /// A barrier (index into the barriers given).
     Barrier {
@@ -273,7 +293,7 @@ pub fn bolt_contact<'a>(
             barrier = Some(k);
         }
     }
-    let mut victim: Option<usize> = None;
+    let mut victim: Option<(usize, Part)> = None;
     for (i, p) in targets {
         let passes = !p.alive
             || b.team.is_some() && (p.id == b.owner || b.team == Some(p.team))
@@ -281,16 +301,16 @@ pub fn bolt_contact<'a>(
         if passes {
             continue;
         }
-        if let Some((s, _)) = first_hit(p.feet, p.eye, p.cmd, b.pos, to)
+        if let Some((s, part)) = first_hit(p.feet, p.eye, p.cmd, b.pos, to)
             && s <= t_best
         {
             t_best = s;
-            victim = Some(i);
+            victim = Some((i, part));
         }
     }
     let at = b.pos + (to - b.pos) * t_best;
-    if let Some(index) = victim {
-        Contact::Player { index, at }
+    if let Some((index, part)) = victim {
+        Contact::Player { index, at, part }
     } else if let Some(index) = barrier {
         Contact::Barrier { index, at }
     } else if let Some((q, n)) = hit {
@@ -342,4 +362,7 @@ pub struct HitClaim {
     pub view: f32,
     /// Where it met them.
     pub at: Vec3,
+    /// It met their head.
+    #[serde(default)]
+    pub head: bool,
 }

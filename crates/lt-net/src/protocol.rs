@@ -6,7 +6,7 @@ use lt_sim::{PlayerCmd, PlayerId, Rules, SimEvent, Team};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL: u16 = 18;
+pub const PROTOCOL: u16 = 19;
 pub const DEFAULT_PORT: u16 = 27420;
 /// How many of its latest commands a client sends with each input (a lost packet loses
 /// nothing).
@@ -101,6 +101,7 @@ mod tests {
             victim: 2,
             view: 120.5,
             at: glam::Vec3::new(1.0, 1.2, -3.0),
+            head: false,
         }]);
         assert_eq!(decode::<ToServer>(&encode(&hits)), Some(hits));
     }
