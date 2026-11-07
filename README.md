@@ -158,7 +158,7 @@ holster on the left hip; or `LT_LEFT_HANDED=1`), `--autopilot` (a bot plays you,
 `--match-time S` (local games), `--screenshot FILE --after 5,10`, `--quit-after S`.
 Testing: `LT_DEV="6:menu,8:leave,10:play-hard,14:hit,20:next"` scripts menu actions and hits (`options`
 opens the options screen, `arc` shows the throw arc, `target` hits a team target;
-`give-KIND` gives you a pickup's contents (`give-all-KIND` everyone) and `drop-KIND` lays one in front of you, KIND
+`give-KIND` gives you a pickup's contents (`give-all-KIND` everyone, `take-KIND` as if you walked over one, announced) and `drop-KIND` lays one in front of you, KIND
 `grenade`, `rapid`, `shield`, `shotgun`, `cloak`, `speed`, `charge`, `barrier`; `fire=S` holds the trigger down for S s, `barrier` puts up a carried barrier; `blackout` and `overdrive` start those arena events, `double` jumps to the last minute's double points; `shields-up` switches everyone's shield on, `summon` (or `summon=M`) puts the
 nearest other player 4 m (M m) in front of you; Megatarget mode: `power` hits both secondary targets, `warp-door`, `warp-room`, `warp-turret` and `warp-pocket` move
 you there; `warp-mirror` puts you before the nearest mirror, `warp-pad` (or `warp-pad=M`) 1 m (M m) before

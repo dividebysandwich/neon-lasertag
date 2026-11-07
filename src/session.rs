@@ -21,7 +21,7 @@ use bevy::prelude::*;
 use lt_sim::bots::Difficulty;
 
 use crate::arena::ArenaPart;
-use crate::game::{Game, InputSet, LocalCmd, Mover, Source};
+use crate::game::{Game, GameEvent, InputSet, LocalCmd, Mover, Source};
 use crate::scenery::Scenery;
 
 /// Seconds from the end of a local match to the next one.
@@ -330,14 +330,16 @@ fn dev_script(
             });
         }
         // Local games: `give-KIND` hands the local player a pickup's contents (`give-all-KIND`:
-        // everyone), `drop-KIND` lays one 2.5 m in front of them (KIND: grenade, rapid, ...).
-        a if a.starts_with("give-") || a.starts_with("drop-") => {
+        // everyone; `take-KIND`: as if walked over one, announced), `drop-KIND` lays one 2.5 m
+        // in front of them (KIND: grenade, rapid, ...).
+        a if a.starts_with("give-") || a.starts_with("drop-") || a.starts_with("take-") => {
             let all = a.starts_with("give-all-");
             let Some(kind) = lt_sim::PickupKind::parse(&a[if all { 9 } else { 5 }..]) else {
                 warn!("LT_DEV: unknown pickup in {a}");
                 return;
             };
-            let give = a.starts_with("give-");
+            let take = a.starts_with("take-");
+            let give = take || a.starts_with("give-");
             commands.queue(move |w: &mut World| {
                 let Some(mut game) = w.get_resource_mut::<Game>() else {
                     return;
@@ -353,6 +355,15 @@ fn dev_script(
                     }
                 } else if give {
                     sim.give(me, kind);
+                    if take && let Some(p) = sim.player(me) {
+                        let pos = p.feet;
+                        w.write_message(GameEvent(lt_sim::SimEvent::PickedUp {
+                            id: u32::MAX,
+                            player: me,
+                            pos,
+                            kind,
+                        }));
+                    }
                 } else if let Some(p) = sim.player(me) {
                     let ahead = Quat::from_rotation_y(p.cmd.yaw) * Vec3::NEG_Z * 2.5;
                     let pos = p.feet + ahead + Vec3::Y * lt_sim::sim::PICKUP_HEIGHT;

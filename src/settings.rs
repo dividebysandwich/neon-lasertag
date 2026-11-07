@@ -235,7 +235,13 @@ pub struct Settings {
     pub music_volume: f32,
     /// Per action (in `Action::ALL` order): two bindings.
     pub bindings: Vec<(Action, [Option<Binding>; 2])>,
+    /// How often each kind of pickup (by its `PickupKind::id`) was taken so far, counted up to
+    /// `EXPLAINED`: its announcement says what it does until then.
+    pub taken: Vec<(String, u32)>,
 }
+
+/// Pickups of a kind whose announcements explain it.
+pub const EXPLAINED: u32 = 3;
 
 impl Default for Settings {
     fn default() -> Self {
@@ -245,6 +251,7 @@ impl Default for Settings {
             sound_volume: 1.0,
             music_volume: 1.0,
             bindings: Action::ALL.iter().map(|&a| (a, a.defaults())).collect(),
+            taken: Vec::new(),
         }
     }
 }
@@ -256,6 +263,25 @@ pub struct Inputs<'a> {
 }
 
 impl Settings {
+    /// Counts a pickup of `kind` taken; whether it should still be explained (saving the count
+    /// meanwhile).
+    pub fn take(&mut self, kind: lt_sim::PickupKind) -> bool {
+        let id = kind.id();
+        let n = match self.taken.iter_mut().find(|(k, _)| k == id) {
+            Some((_, n)) => n,
+            None => {
+                self.taken.push((id.to_string(), 0));
+                &mut self.taken.last_mut().unwrap().1
+            }
+        };
+        if *n >= EXPLAINED {
+            return false;
+        }
+        *n += 1;
+        self.save();
+        true
+    }
+
     pub fn get(&self, a: Action) -> [Option<Binding>; 2] {
         self.bindings
             .iter()
@@ -339,6 +365,7 @@ impl Settings {
                 s.invert_y = saved.invert_y;
                 s.sound_volume = saved.sound_volume.clamp(0.0, 1.0);
                 s.music_volume = saved.music_volume.clamp(0.0, 1.0);
+                s.taken = saved.taken;
                 for (id, names) in saved.bindings {
                     if let Some(a) = Action::ALL.iter().find(|a| a.id() == id)
                         && let Some((_, bs)) = s.bindings.iter_mut().find(|(x, _)| x == a)
@@ -371,6 +398,7 @@ impl Settings {
                     )
                 })
                 .collect(),
+            taken: self.taken.clone(),
         };
         let text = match ron::ser::to_string_pretty(&saved, ron::ser::PrettyConfig::default()) {
             Ok(t) => t,
@@ -394,6 +422,7 @@ struct Saved {
     sound_volume: f32,
     music_volume: f32,
     bindings: Vec<(String, Vec<Option<String>>)>,
+    taken: Vec<(String, u32)>,
 }
 
 impl Default for Saved {
@@ -404,6 +433,7 @@ impl Default for Saved {
             sound_volume: 1.0,
             music_volume: 1.0,
             bindings: Vec::new(),
+            taken: Vec::new(),
         }
     }
 }

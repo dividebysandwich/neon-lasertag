@@ -1327,10 +1327,25 @@ fn event_banner(
     mut banner: Local<Option<Entity>>,
     mut queue: Local<crate::hud::BannerQueue>,
     game: Res<Game>,
+    mut settings: ResMut<crate::settings::Settings>,
+    palette: Res<Palette>,
 ) {
     for GameEvent(e) in events.read() {
         if let Some(b) = crate::hud::event_banner_for(e, &game.rules) {
             queue.push(b);
+        }
+        // The local player's pickups, saying what they do the first few times.
+        if let SimEvent::PickedUp { player, kind, .. } = *e
+            && Some(player) == game.me
+        {
+            let explain = settings.take(kind);
+            queue.push(crate::hud::pickup_banner(
+                kind,
+                &game.rules,
+                &settings,
+                crate::hud::Controls::Vr,
+                explain,
+            ));
         }
     }
     if let Some(b) = queue.tick(time.delta_secs()) {
@@ -1348,18 +1363,24 @@ fn event_banner(
             .id();
         // (Pale blue for the blackout's: white.)
         let c = b.color.to_srgba();
-        let mat = if c.blue > c.red {
-            &mats.white
+        let mat = match b.pickup.and_then(|k| palette.pickup.get(&k)) {
+            Some(m) => &m.0,
+            None if c.blue > c.red => &mats.white,
+            None => &mats.gold,
+        };
+        // (A pickup's smaller, under where an event's shows.)
+        let (h, y) = if b.pickup.is_some() {
+            (0.025, -0.1)
         } else {
-            &mats.gold
+            (0.045, 0.0)
         };
         segtext::spawn(
             &mut commands,
             &mut meshes,
             root,
             b.title,
-            0.045,
-            Vec3::ZERO,
+            h,
+            Vec3::Y * y,
             Align::Center,
             mat,
             Some(&mats.glow[2]),
@@ -1371,7 +1392,7 @@ fn event_banner(
                 root,
                 &b.sub,
                 0.014,
-                Vec3::Y * -0.05,
+                Vec3::Y * (y - h * 0.5 - 0.03),
                 Align::Center,
                 &mats.white,
                 None,

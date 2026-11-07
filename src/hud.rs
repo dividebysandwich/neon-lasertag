@@ -26,6 +26,11 @@ struct EventBanner;
 /// The line under the banner saying what the event does.
 #[derive(Component)]
 struct EventBannerSub;
+/// Under the crosshair: the pickup just taken, and what it does.
+#[derive(Component)]
+struct PickupNote;
+#[derive(Component)]
+struct PickupNoteSub;
 #[derive(Component)]
 struct CenterText;
 /// The bottom left panel (framed in the local player's team colour).
@@ -122,6 +127,7 @@ impl Plugin for HudPlugin {
                     mega_status,
                     powerup_status,
                     event_banner,
+                    pickup_note,
                 )
                     .chain()
                     .run_if(resource_exists::<Game>),
@@ -360,6 +366,24 @@ fn spawn(mut commands: Commands) {
                 c.spawn(reticle_bar(14.0, 21.0, 2.0, 9.0));
                 c.spawn(reticle_bar(13.5, 13.5, 3.0, 3.0));
             });
+        });
+    // Under the crosshair: the pickup just taken.
+    commands
+        .spawn((
+            HudRoot,
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Percent(60.0),
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(2.0),
+                ..default()
+            },
+        ))
+        .with_children(|p| {
+            p.spawn((PickupNote, text("", 26.0, Color::NONE, 900)));
+            p.spawn((PickupNoteSub, text("", 16.0, Color::NONE, 700)));
         });
     // Middle: respawn countdown and messages.
     commands
@@ -1023,6 +1047,46 @@ fn hit_arcs(
     }
 }
 
+/// Announces the pickups the local player takes (saying what they do the first few times).
+#[allow(clippy::type_complexity)]
+fn pickup_note(
+    mut events: MessageReader<GameEvent>,
+    game: Res<Game>,
+    mut settings: ResMut<Settings>,
+    time: Res<Time>,
+    mut queue: Local<BannerQueue>,
+    mut q: Query<(&mut Text, &mut TextColor), (With<PickupNote>, Without<PickupNoteSub>)>,
+    mut sub: Query<(&mut Text, &mut TextColor), With<PickupNoteSub>>,
+) {
+    let (Ok((mut text, mut color)), Ok((mut sub_text, mut sub_color))) =
+        (q.single_mut(), sub.single_mut())
+    else {
+        return;
+    };
+    for GameEvent(e) in events.read() {
+        if let SimEvent::PickedUp { player, kind, .. } = *e
+            && Some(player) == game.me
+        {
+            let explain = settings.take(kind);
+            queue.push(pickup_banner(
+                kind,
+                &game.rules,
+                &settings,
+                Controls::Keys,
+                explain,
+            ));
+        }
+    }
+    if let Some(b) = queue.tick(time.delta_secs()) {
+        text.0 = b.title.to_uppercase();
+        sub_text.0 = b.sub;
+        color.0 = b.color;
+    }
+    let a = (queue.left / 0.4).min(1.0);
+    color.0.set_alpha(a);
+    sub_color.0 = neonui::TEXT.with_alpha(a);
+}
+
 /// The local player's powerups as chips: shown while held, flashing in their last seconds.
 #[allow(clippy::type_complexity)]
 fn powerup_status(
@@ -1170,6 +1234,81 @@ pub struct Banner {
     pub color: Color,
     /// Seconds it shows.
     pub time: f32,
+    /// The pickup it announces (shown smaller, in its colour).
+    pub pickup: Option<PickupKind>,
+}
+
+/// How a pickup's announcement names the controls.
+pub enum Controls {
+    Keys,
+    Vr,
+}
+
+/// The announcement of a pickup taken: its name, and (`explain`) what it does and how to use it.
+pub fn pickup_banner(
+    kind: PickupKind,
+    rules: &lt_sim::Rules,
+    settings: &Settings,
+    controls: Controls,
+    explain: bool,
+) -> Banner {
+    let key = |a: Action, vr: &str| match controls {
+        Controls::Keys => format!("PRESS {}", key_hint(settings, a)),
+        Controls::Vr => vr.to_string(),
+    };
+    let sub = match kind {
+        PickupKind::Grenade => format!(
+            "{} - IT SPINS AND FIRES BOLTS ALL AROUND",
+            match controls {
+                Controls::Keys => format!(
+                    "HOLD {} AND LET GO TO THROW",
+                    key_hint(settings, Action::Grenade)
+                ),
+                Controls::Vr => "HOLD B OR Y - THROW - LET GO".to_string(),
+            }
+        ),
+        PickupKind::Rapid => {
+            "YOUR BLASTER FIRES TWICE AS FAST UNTIL YOU ARE TAGGED OUT".to_string()
+        }
+        PickupKind::Shield => format!(
+            "{}: NO BOLT HURTS YOU FOR {:.0} S",
+            key(Action::Shield, "TRIGGER OF THE FREE HAND"),
+            rules.shield_time
+        ),
+        PickupKind::Shotgun => format!(
+            "{} BOLTS A SHOT IN A SPREAD - THEY FLY ONLY {:.0} M",
+            rules.shotgun_bolts, rules.shotgun_range
+        ),
+        PickupKind::Cloak => format!(
+            "UNSEEN FROM AFAR FOR {:.0} S - FIRING OR A HIT SHOWS YOU",
+            rules.cloak_time
+        ),
+        PickupKind::Speed => format!(
+            "YOU RUN {:.0}% FASTER FOR {:.0} S",
+            (rules.speed_factor - 1.0) * 100.0,
+            rules.speed_time
+        ),
+        PickupKind::Charge => format!(
+            "HOLD FIRE {:.0} S AND LET GO: A BEAM THROUGH PLAYERS ({} SHOTS)",
+            rules.charge_time, rules.beam_cost
+        ),
+        PickupKind::Barrier => format!(
+            "{}: A WALL THAT STOPS ENEMY BOLTS FOR {:.0} S",
+            key(Action::Barrier, "GRIP OF THE FREE HAND"),
+            rules.barrier_time
+        ),
+    };
+    Banner {
+        title: kind.name(),
+        sub: if explain { sub } else { String::new() },
+        color: if kind == PickupKind::Grenade {
+            neonui::TEXT
+        } else {
+            powerup_color(kind)
+        },
+        time: if explain { 4.0 } else { 1.5 },
+        pickup: Some(kind),
+    }
 }
 
 /// The banner for an arena event starting or ending, if `e` is one.
@@ -1181,6 +1320,7 @@ pub fn event_banner_for(e: &SimEvent, rules: &lt_sim::Rules) -> Option<Banner> {
         sub,
         color,
         time: BANNER_TIME,
+        pickup: None,
     };
     match *e {
         SimEvent::EventStart {
@@ -1274,7 +1414,7 @@ fn event_banner(
         }
     }
     if let Some(banner) = queue.tick(time.delta_secs()) {
-        text.0 = banner.title.to_string();
+        text.0 = banner.title.to_uppercase();
         sub_text.0 = banner.sub;
         color.0 = banner.color;
     }
