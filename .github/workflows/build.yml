@@ -46,10 +46,11 @@ jobs:
   # they reuse the release build's dependencies instead of compiling Bevy a second time (the dev
   # profile builds dependencies at opt-level 3 too, with debuginfo). Builds drop the default
   # `dev` feature (bevy/dynamic_linking).
-  # Packages: an archive with the game and its assets folder (tools/package.sh), and on Linux an
-  # AppImage (tools/appimage.sh). The aarch64 Linux build is the Steam Frame's: its AppImage
-  # starts in VR (`--gl-vr`). The packages are uploaded before the tests run, so a failing test
-  # still leaves a build to try (the job, and a release, fail all the same).
+  # Packages: an archive with the game and its assets folder (tools/package.sh), on Linux an
+  # AppImage (tools/appimage.sh) and on Windows an MSI installer (tools/msi.sh). The aarch64
+  # Linux build is the Steam Frame's: its AppImage starts in VR (`--gl-vr`). The packages are
+  # uploaded before the tests run, so a failing test still leaves a build to try (the job, and a
+  # release, fail all the same).
   build:
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -127,12 +128,23 @@ jobs:
             --version "${GITHUB_REF_NAME//\//-}"
           ls -l dist
 
+      # The WiX CLI is a .NET tool; the runner has .NET but not WiX.
+      - name: Package (MSI)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          tools/msi.sh --target ${{ matrix.target }} --version "${GITHUB_REF_NAME//\//-}"
+          ls -l dist
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.package.outputs.name }}
           path: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.msi
             dist/*.AppImage
             dist/*.AppImage.zsync
           if-no-files-found: error

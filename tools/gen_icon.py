@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Draws the application icon (a neon crosshair on black) for the Linux packages.
+"""Draws the application icon (a neon crosshair on black) for the Linux and Windows packages.
 
-    python3 tools/gen_icon.py [packaging/linux/lasertag.png]
+    python3 tools/gen_icon.py [packaging/linux/lasertag.png] [packaging/windows/lasertag.ico]
 
 Needs Pillow. The glow is the crosshair blurred at a few radii and added under the sharp lines.
 """
@@ -34,6 +34,7 @@ def crosshair(scale):
 
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else "packaging/linux/lasertag.png"
+    ico = sys.argv[2] if len(sys.argv) > 2 else "packaging/windows/lasertag.ico"
     sharp = crosshair(SS).resize((SIZE, SIZE), Image.LANCZOS)
     img = Image.new("RGB", (SIZE, SIZE), (0, 0, 0))
     for radius in (14, 6, 2):
@@ -41,6 +42,8 @@ def main():
     img = ImageChops.add(img, sharp)
     img.save(out)
     print(out)
+    img.save(ico, sizes=[(n, n) for n in (16, 24, 32, 48, 64, 128, 256)])
+    print(ico)
 
 
 if __name__ == "__main__":
