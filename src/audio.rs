@@ -384,7 +384,8 @@ fn play_events(
                     gain,
                     sound,
                     (!mine).then_some(pos),
-                    if mine { 0.55 } else { 1.0 },
+                    // (The shotgun's sample is quieter than the lasers' at the same peak.)
+                    if mine { 0.55 } else { 1.0 } * if shotgun { 1.4 } else { 1.0 },
                     1.0,
                     Mix::Fire,
                 );
