@@ -122,6 +122,9 @@ struct Feed {
     tagged_by: String,
 }
 
+/// Little enough of a full blaster to warn about.
+pub const LOW_AMMO: f32 = 0.25;
+
 /// Seconds the hit marker shows (a tag-out's, longer), and a points line.
 const HIT_MARK: f32 = 0.22;
 const TAG_MARK: f32 = 0.5;
@@ -1099,6 +1102,7 @@ fn status_panel(
         *shadow = glow(c, 0.45, 16.0);
     }
     let reload = if p.reloading { "REFILLING  " } else { "" };
+    let flash = (time.elapsed_secs() * 3.0).fract() < 0.6;
     for (part, mut t, mut color) in &mut parts {
         let (want, col) = match part {
             StatusPart::Team => (
@@ -1106,14 +1110,22 @@ fn status_panel(
                 c,
             ),
             StatusPart::Score => (format!("SCORE {}", p.score), neonui::TEXT),
-            StatusPart::Ammo => (
-                format!("{reload}{} / {}", p.ammo, game.rules.ammo),
-                if p.ammo == 0 {
-                    neonui::PINK
+            StatusPart::Ammo => {
+                let low = p.ammo as f32 <= game.rules.ammo as f32 * LOW_AMMO;
+                let warn = if low && !p.reloading && p.ammo > 0 {
+                    "LOW  "
                 } else {
-                    neonui::TEXT
-                },
-            ),
+                    ""
+                };
+                (
+                    format!("{reload}{warn}{} / {}", p.ammo, game.rules.ammo),
+                    if p.ammo == 0 || (low && !p.reloading && flash) {
+                        neonui::PINK
+                    } else {
+                        neonui::TEXT
+                    },
+                )
+            }
             StatusPart::Grenade => {
                 if p.grenades > 0 {
                     (
@@ -1144,7 +1156,7 @@ fn status_panel(
     if let Ok((mut node, mut bg, mut shadow)) = fill.single_mut() {
         let k = p.ammo as f32 / game.rules.ammo.max(1) as f32;
         node.width = Val::Percent(100.0 * k.clamp(0.0, 1.0));
-        let c = if k <= 0.25 {
+        let c = if k <= LOW_AMMO {
             neonui::PINK
         } else {
             neonui::CYAN
@@ -1259,6 +1271,7 @@ fn pickup_note(
     mut settings: ResMut<Settings>,
     time: Res<Time>,
     mut queue: Local<BannerQueue>,
+    mut refill_from: Local<Option<f32>>,
     mut q: Query<(&mut Text, &mut TextColor), (With<PickupNote>, Without<PickupNoteSub>)>,
     mut sub: Query<(&mut Text, &mut TextColor), With<PickupNoteSub>>,
 ) {
@@ -1280,6 +1293,20 @@ fn pickup_note(
                 explain,
             ));
         }
+        // (A refill only when it took a while: firing on a pad refills after every shot.)
+        let now = time.elapsed_secs();
+        if let SimEvent::Reloading { player } = *e
+            && Some(player) == game.me
+            && refill_from.is_none()
+        {
+            *refill_from = Some(now);
+        }
+        if let Some(b) = resupply_banner(e, &game) {
+            let healed = b.title == "HEALED";
+            if healed || refill_from.take().is_some_and(|t| now - t > 1.0) {
+                queue.push(b);
+            }
+        }
     }
     if let Some(b) = queue.tick(time.delta_secs()) {
         text.0 = b.title.to_uppercase();
@@ -1289,6 +1316,24 @@ fn pickup_note(
     let a = (queue.left / 0.4).min(1.0);
     color.0.set_alpha(a);
     sub_color.0 = neonui::TEXT.with_alpha(a);
+}
+
+/// A short note when the local player's blaster is full again or their hits are healed.
+pub fn resupply_banner(e: &SimEvent, game: &Game) -> Option<Banner> {
+    let me = game.me?;
+    let (title, color) = match *e {
+        SimEvent::Reloaded { player } if player == me => ("BLASTER FULL", neonui::CYAN),
+        SimEvent::Healed { player } if player == me => ("HEALED", neonui::GREEN),
+        _ => return None,
+    };
+    Some(Banner {
+        title,
+        sub: String::new(),
+        color,
+        time: 1.2,
+        pickup: None,
+        small: true,
+    })
 }
 
 /// The local player's powerups as chips: shown while held, flashing in their last seconds.

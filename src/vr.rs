@@ -1129,7 +1129,11 @@ fn wrist(
     }
     let secs = p.respawn.map(|r| r.ceil() as u32);
     // Shots left (blinking when empty), or the respawn countdown.
-    let ammo = if p.ammo > 0 || blink_slow(&time) {
+    // (Blinking fast while low, slowly when empty.)
+    let low = p.ammo as f32 <= game.rules.ammo as f32 * crate::hud::LOW_AMMO && !p.reloading;
+    let ammo = if p.ammo > 0 && (!low || (time.elapsed_secs() * 3.0).fract() < 0.7)
+        || p.ammo == 0 && blink_slow(&time)
+    {
         format!("{:>2}", p.ammo.min(99))
     } else {
         String::new()
@@ -1252,6 +1256,7 @@ fn haptics(
     local: Res<LocalCmd>,
     mover: Res<Mover>,
     mut rumble: ResMut<Rumble>,
+    mut was_low: Local<bool>,
 ) {
     let Some(me) = game.me else { return };
     let gun = vr.gun.map_or(1, |h| h.index());
@@ -1315,6 +1320,11 @@ fn haptics(
                 rumble.play(gun, 0.0, 0.06, 0.9);
                 rumble.play(gun, 0.12, 0.04, 0.6);
             }
+            // Healed: two soft pulses in both hands.
+            SimEvent::Healed { player } if player == me => {
+                rumble.both(0.0, 0.08, 0.25);
+                rumble.both(0.15, 0.08, 0.25);
+            }
             // A light tick for each hit on an enemy.
             SimEvent::Hit { .. } if crate::hud::hit_confirm(e, &game) == Some(false) => {
                 rumble.play(gun, 0.0, 0.02, 0.5);
@@ -1322,13 +1332,18 @@ fn haptics(
             _ => {}
         }
     }
+    let p = game.snap.players.iter().find(|p| p.id == me);
+    // Running low on shots: a double tick in the gun hand, once.
+    let low = p.is_some_and(|p| {
+        p.ammo > 0 && p.ammo as f32 <= game.rules.ammo as f32 * crate::hud::LOW_AMMO
+    });
+    if low && !*was_low {
+        rumble.play(gun, 0.0, 0.03, 0.4);
+        rumble.play(gun, 0.1, 0.03, 0.4);
+    }
+    *was_low = low;
     // Charging: a hum in the gun hand growing as it charges.
-    let charging = game
-        .snap
-        .players
-        .iter()
-        .find(|p| p.id == me)
-        .map_or(0.0, |p| p.charging);
+    let charging = p.map_or(0.0, |p| p.charging);
     if charging > 0.0 {
         let k = (charging / game.rules.charge_time).min(1.0);
         rumble.play(gun, 0.0, 0.02, 0.08 + 0.25 * k);
