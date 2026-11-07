@@ -48,7 +48,7 @@ and how to use it (the first three times of each kind), what your Megatarget pro
 when a powerup runs out; a forcefield you may not pass yet warns you when you come close. Under
 the clock (VR: on the wrist) a blackout counts down and 2x shows. Your powerups sit as chips in
 their colours above your status panel (VR: icons on the wrist), the timed ones with a bar
-draining. Tagged out, you see who did it (in their team's colour), with what and how many hits they had left; the flat screen's view turns to them and follows them, and in VR an arrow points to them with how far away they are. Your hits on enemies mark the crosshair (VR: a tick in the gun hand), the points you
+draining. Tagged out, you see who did it (in their team's colour), with what and how many hits they had left; the flat screen's view turns to them and follows them, and in VR an arrow points to them with how far away they are. Your hits on enemies mark the crosshair (VR: an X where the bolt struck, and a tick in the gun hand), the points you
 score rise beside it (VR: over the wrist), and the blaster warns when it runs low. A turret
 switched off shows a bar draining under its target.
 

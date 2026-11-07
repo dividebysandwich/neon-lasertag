@@ -63,6 +63,7 @@ impl Plugin for VrUiPlugin {
                     view_tint.run_if(resource_exists::<Game>),
                     event_banner.run_if(resource_exists::<Game>),
                     tag_recap.run_if(resource_exists::<Game>),
+                    hit_marks.run_if(resource_exists::<Game>),
                 )
                     .chain()
                     .after(PoseSet)
@@ -1814,6 +1815,91 @@ fn event_banner(
         t.rotation = Quat::from_rotation_y((-fwd.x).atan2(-fwd.z));
         t.scale = Vec3::splat((queue.shown / 0.15).min(1.0) * (left / 0.3).min(1.0));
     }
+}
+
+/// One's hits on enemies: a white X where the bolt struck, for a moment (a tag-out: a bigger
+/// pink one, longer), facing the eyes and as big at any distance (as the flat screen's mark
+/// round the crosshair).
+#[allow(clippy::too_many_arguments)]
+fn hit_marks(
+    mut commands: Commands,
+    mut events: MessageReader<GameEvent>,
+    game: Res<Game>,
+    vr: Res<VrState>,
+    input: Res<XrInput>,
+    mats: Res<UiMats>,
+    time: Res<Time>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut transforms: Query<&mut Transform>,
+    mut mesh: Local<Option<Handle<Mesh>>>,
+    mut marks: Local<Vec<(Entity, f32, f32, f32)>>,
+) {
+    let mesh = mesh
+        .get_or_insert_with(|| {
+            // Two bars crossed, a gap in the middle.
+            let mut m = crate::assets::MeshData::default();
+            for k in 0..4 {
+                let a = std::f32::consts::FRAC_PI_4 + k as f32 * std::f32::consts::FRAC_PI_2;
+                let (d, n) = (Vec2::new(a.cos(), a.sin()), Vec2::new(-a.sin(), a.cos()));
+                let base = m.pos.len() as u32;
+                for (r, w) in [(0.35, -0.06), (1.0, -0.06), (1.0, 0.06), (0.35, 0.06)] {
+                    let p = d * r + n * w;
+                    m.pos.push([p.x, p.y, 0.0]);
+                    m.nrm.push([0.0, 0.0, 1.0]);
+                    m.uv.push([0.0, 0.0]);
+                }
+                m.idx
+                    .extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+            }
+            meshes.add(m.to_mesh())
+        })
+        .clone();
+    for GameEvent(e) in events.read() {
+        let Some(tag) = crate::hud::hit_confirm(e, &game) else {
+            continue;
+        };
+        let pos = match *e {
+            SimEvent::Hit { pos, .. } | SimEvent::TaggedOut { pos, .. } => pos,
+            _ => continue,
+        };
+        let (mat, life, size) = if tag {
+            (mats.tints[Hue::Pink as usize].text.clone(), 0.5, 1.6)
+        } else {
+            (mats.white.clone(), 0.25, 1.0)
+        };
+        let e = commands
+            .spawn((
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(mat),
+                Transform::from_translation(pos),
+            ))
+            .id();
+        marks.push((e, life, life, size));
+    }
+    let head = (vr.rig
+        * input
+            .head
+            .unwrap_or(Transform::from_xyz(0.0, lt_sim::sim::EYE, 0.0)))
+    .translation;
+    let dt = time.delta_secs();
+    marks.retain_mut(|(e, left, life, size)| {
+        *left -= dt;
+        if *left <= 0.0 {
+            if let Ok(mut c) = commands.get_entity(*e) {
+                c.despawn();
+            }
+            return false;
+        }
+        if let Ok(mut t) = transforms.get_mut(*e) {
+            let d = (head - t.translation).length().max(0.3);
+            // (About 3 degrees across, popping out and shrinking away.)
+            let k = (*left / *life).sqrt();
+            t.scale = Vec3::splat(0.026 * d * *size * (0.6 + 0.4 * k));
+            t.look_at(head, Vec3::Y);
+            t.rotate_local_y(std::f32::consts::PI);
+        }
+        true
+    });
 }
 
 /// Tagged out: floating in front of the eyes (under the banners) who did it and how
