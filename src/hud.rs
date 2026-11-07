@@ -959,6 +959,7 @@ fn update(
                     neonui::PINK,
                 )
             }
+            Some(p) if p.protect > 0.0 => ("PROTECTED  until you fire".to_string(), neonui::TEXT),
             Some(p) if p.cooldown > 0.0 => (
                 format!("HIT!  you can't shoot or be hit for {:.1} s", p.cooldown),
                 neonui::AMBER,
@@ -1019,6 +1020,13 @@ pub fn edge_tint(p: &lt_sim::sim::PlayerSnap, since_respawn: f32, t: f32) -> (Co
     }
     if p.respawn.is_some() {
         return (Color::NONE, 0.0);
+    }
+    if p.protect > 0.0 {
+        // Spawn protection: a soft white pulse, fading out with it.
+        return (
+            Color::WHITE,
+            (0.15 + 0.1 * (t * 6.0).sin()) * p.protect.min(0.5) * 2.0,
+        );
     }
     if p.cloak > 0.0 {
         let seen = !p.cloaked();
@@ -1382,7 +1390,8 @@ fn status_panel(
         color.0 = col;
     }
     let left = game.rules.hits_to_tag.saturating_sub(p.hits);
-    let blink = p.cooldown <= 0.0 || (time.elapsed_secs() * 8.0).fract() < 0.5;
+    let blink =
+        (p.cooldown <= 0.0 && p.protect <= 0.0) || (time.elapsed_secs() * 8.0).fract() < 0.5;
     for (pip, mut node, mut bg, mut shadow) in &mut pips {
         let want = if pip.0 <= game.rules.hits_to_tag {
             Display::Flex

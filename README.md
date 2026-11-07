@@ -14,7 +14,9 @@ Hitting an enemy whom a team mate tags out within 10 s is an assist (50 points),
 out an enemy within 12 m of your own team's targets (Megatarget
 mode: of your team's doorway into the megatarget's room) earns 25 points more for defending.
 
-A player is tagged out by the third hit; after every hit they can't shoot or be hit for 3s.
+A player is tagged out by the third hit; after every hit they can't shoot or be hit for 3s. After
+respawning nobody can hit them for 1.5 s, or until they fire, throw a grenade or put up a
+shield or barrier (they blink meanwhile).
 Stepping onto your own team's spawn pads heals all hits
 .
 The targets are small glowing cores hanging from a roof over the upper level, deep in each team's half.

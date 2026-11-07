@@ -69,6 +69,8 @@ pub struct Player {
     pub hits: u8,
     /// Time left of the blaster's lockout after a hit (no hits taken meanwhile either).
     pub cooldown: f32,
+    /// Seconds left of the protection after respawning (`Rules::spawn_protect`).
+    pub protect: f32,
     pub fire_cd: f32,
     /// Waiting to respawn, seconds left.
     pub respawn: Option<f32>,
@@ -456,6 +458,9 @@ pub struct PlayerSnap {
     pub grenade_hand: Option<Hand>,
     pub hits: u8,
     pub cooldown: f32,
+    /// `Player::protect`.
+    #[serde(default)]
+    pub protect: f32,
     pub respawn: Option<f32>,
     pub grenades: u8,
     pub ammo: u16,
@@ -670,6 +675,7 @@ impl Sim {
             prev_fire: false,
             hits: 0,
             cooldown: 0.0,
+            protect: 0.0,
             fire_cd: 0.0,
             respawn: None,
             grenades: 0,
@@ -983,6 +989,12 @@ impl Sim {
             let respawn_now = {
                 let p = &mut self.players[i];
                 p.cooldown = (p.cooldown - TICK).max(0.0);
+                // (Exactly 0 at the end, not a rounding error above it.)
+                p.protect = if p.protect > TICK * 1.5 {
+                    p.protect - TICK
+                } else {
+                    0.0
+                };
                 let mut gun = p.gun();
                 gun.tick();
                 p.set_gun(gun);
@@ -1001,6 +1013,7 @@ impl Sim {
                 p.respawn = None;
                 p.hits = 0;
                 p.cooldown = 0.0;
+                p.protect = rules.spawn_protect;
                 p.ammo = rules.ammo;
                 p.grenades = 0;
                 p.lose_powerups();
@@ -1099,6 +1112,7 @@ impl Sim {
             if p.cmd.shield && p.shields > 0 && p.shield <= 0.0 {
                 p.shields -= 1;
                 p.shield = rules.shield_time;
+                p.protect = 0.0;
                 self.events.push(SimEvent::ShieldUp { player: p.id });
             } else if p.shield > 0.0 {
                 p.shield -= TICK;
@@ -1113,6 +1127,7 @@ impl Sim {
             p.prev_barrier = p.cmd.barrier;
             if deploy {
                 p.barriers -= 1;
+                p.protect = 0.0;
                 let id = self.id();
                 let b = Barrier {
                     id,
@@ -1155,7 +1170,10 @@ impl Sim {
                 Some(Trigger::Denied) => self.events.push(SimEvent::Denied { player }),
                 Some(Trigger::Empty) => self.events.push(SimEvent::Empty { player }),
                 Some(Trigger::ChargeFull) => self.events.push(SimEvent::ChargeFull { player }),
-                Some(Trigger::Fire(shot)) => self.fire(i, shot, &rules),
+                Some(Trigger::Fire(shot)) => {
+                    self.players[i].protect = 0.0;
+                    self.fire(i, shot, &rules)
+                }
                 None => {}
             }
 
@@ -1165,6 +1183,7 @@ impl Sim {
                 && p.grenades > 0
             {
                 p.grenades -= 1;
+                p.protect = 0.0;
                 let eye = p.eye();
                 let mut pos = p.feet + rel.clamp_length_max(2.0);
                 let (id, team) = (p.id, p.team);
@@ -1541,8 +1560,8 @@ impl Sim {
             });
             return;
         }
-        if p.cooldown > 0.0 {
-            // Still recovering from the last hit: the bolt just fizzles.
+        if p.cooldown > 0.0 || p.protect > 0.0 {
+            // Still recovering from the last hit (or just respawned): the bolt just fizzles.
             self.events.push(SimEvent::BoltImpact {
                 pos: at,
                 normal: (b.pos - at).normalize_or_zero(),
@@ -1870,7 +1889,12 @@ impl Sim {
             }
             for pi in 0..self.players.len() {
                 let p = &self.players[pi];
-                if !p.alive() || p.cooldown > 0.0 || p.shield > 0.0 || !gate.touches(p.feet) {
+                if !p.alive()
+                    || p.cooldown > 0.0
+                    || p.protect > 0.0
+                    || p.shield > 0.0
+                    || !gate.touches(p.feet)
+                {
                     continue;
                 }
                 let at = p.chest();
@@ -2081,10 +2105,11 @@ impl Sim {
     fn send_home(&mut self, pi: usize) {
         let team = self.players[pi].team;
         let s = self.pick_spawn(team);
-        let ammo = self.rules.ammo;
+        let (ammo, protect) = (self.rules.ammo, self.rules.spawn_protect);
         let p = &mut self.players[pi];
         p.hits = 0;
         p.cooldown = 0.0;
+        p.protect = protect;
         p.ammo = ammo;
         p.reloading = None;
         p.mega_hits = 0;
@@ -2216,6 +2241,7 @@ impl Sim {
                     grenade_hand: p.cmd.grenade_hand,
                     hits: p.hits,
                     cooldown: p.cooldown,
+                    protect: p.protect,
                     respawn: p.respawn,
                     grenades: p.grenades,
                     ammo: p.ammo,
@@ -2600,6 +2626,47 @@ mod tests {
         sim.players[0].hits = 2;
         sim.hit_player(0, &bolt, Vec3::ZERO);
         assert_eq!(sim.player(a).unwrap().speed, 0.0);
+    }
+
+    #[test]
+    fn a_respawned_player_is_protected_until_it_runs_out_or_they_fire() {
+        let (mut sim, a, b) = duel();
+        let bolt = Bolt {
+            id: 1,
+            owner: b,
+            owner_team: Team::Blue,
+            team: Some(Team::Blue),
+            pos: Vec3::ZERO,
+            vel: Vec3::ZERO,
+            life: 1.0,
+            extra: BoltExtra::default(),
+        };
+        sim.players[0].respawn = Some(TICK);
+        sim.step();
+        assert!(sim.player(a).unwrap().alive());
+        assert!(sim.player(a).unwrap().protect > 1.0);
+        sim.hit_player(0, &bolt, Vec3::ZERO);
+        assert_eq!(sim.player(a).unwrap().hits, 0);
+        // Firing ends it.
+        sim.set_cmd(
+            a,
+            PlayerCmd {
+                gun_hand: Some(Hand::Right),
+                fire: true,
+                ..Default::default()
+            },
+        );
+        sim.step();
+        assert_eq!(sim.player(a).unwrap().protect, 0.0);
+        sim.hit_player(0, &bolt, Vec3::ZERO);
+        assert_eq!(sim.player(a).unwrap().hits, 1);
+        // And it runs out by itself.
+        sim.players[0].respawn = Some(TICK);
+        sim.set_cmd(a, PlayerCmd::default());
+        for _ in 0..(sim.rules.spawn_protect / TICK) as usize + 2 {
+            sim.step();
+        }
+        assert_eq!(sim.player(a).unwrap().protect, 0.0);
     }
 
     #[test]

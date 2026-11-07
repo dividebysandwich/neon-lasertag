@@ -525,7 +525,7 @@ fn sync_players(
             };
         }
         let remaining = 3u8.saturating_sub(p.hits);
-        let lit = |k: u8| k <= remaining && (p.cooldown <= 0.0 || blink);
+        let lit = |k: u8| k <= remaining && ((p.cooldown <= 0.0 && p.protect <= 0.0) || blink);
         for &(e, k) in &v.bars {
             set_vis(&mut vis, e, lit(k));
         }

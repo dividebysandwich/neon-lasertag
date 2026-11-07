@@ -1041,7 +1041,8 @@ fn wrist(
             feet + pose.pos + pose.rot * (Vec3::new(0.0, 0.035, 0.06) + tilt * Vec3::Z * 0.03);
         t.rotation = pose.rot * tilt;
     }
-    let blink = p.cooldown <= 0.0 || (time.elapsed_secs() * 8.0).fract() < 0.5;
+    let blink =
+        (p.cooldown <= 0.0 && p.protect <= 0.0) || (time.elapsed_secs() * 8.0).fract() < 0.5;
     let n = game.rules.hits_to_tag.min(MAX_BARS as u8);
     let left = n.saturating_sub(p.hits);
     // (Three bars 24 mm apart; more, closer and narrower, over the same width.)

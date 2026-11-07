@@ -2003,6 +2003,7 @@ impl Bot {
         let hittable = |id: PlayerId| {
             sim.player(id).is_some_and(|o| {
                 o.cooldown < 0.5
+                    && o.protect < 0.5
                     && o.shield <= 0.0
                     && !sim.barrier_blocks(eye, o.chest(), Some(p.team))
             })

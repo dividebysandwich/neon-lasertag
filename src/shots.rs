@@ -225,7 +225,7 @@ impl Shots {
                                 player: p.id,
                                 pos: at,
                             }
-                        } else if p.cooldown > 0.0 {
+                        } else if p.cooldown > 0.0 || p.protect > 0.0 {
                             SimEvent::BoltImpact {
                                 pos: at,
                                 normal: -f.bolt.vel.normalize_or_zero(),

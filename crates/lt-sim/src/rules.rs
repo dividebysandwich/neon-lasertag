@@ -11,6 +11,9 @@ pub struct Rules {
     pub hits_to_tag: u8,
     /// After each hit: no hits taken and no firing for this long (moving is allowed).
     pub hit_cooldown: f32,
+    /// After respawning: no hits taken for this long, or until firing, throwing or putting up a
+    /// shield or barrier.
+    pub spawn_protect: f32,
     /// Respawn wait: `respawn_min` when tagged at one's own base, up to `respawn_max` far away.
     pub respawn_min: f32,
     pub respawn_max: f32,
@@ -123,6 +126,7 @@ impl Default for Rules {
         Rules {
             hits_to_tag: 3,
             hit_cooldown: 3.0,
+            spawn_protect: 1.5,
             respawn_min: 5.0,
             respawn_max: 15.0,
             tag_points: 100,

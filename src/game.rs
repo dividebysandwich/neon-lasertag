@@ -269,6 +269,7 @@ fn blend(a: &Snapshot, b: &Snapshot, k: f32, view: f64) -> Snapshot {
                     r.hands[i].rot = p.hands[i].rot.slerp(q.hands[i].rot, k);
                 }
                 r.cooldown = p.cooldown + (q.cooldown - p.cooldown) * k;
+                r.protect = p.protect + (q.protect - p.protect) * k;
                 r
             }
             _ => p.clone(),
