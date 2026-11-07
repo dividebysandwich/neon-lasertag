@@ -26,6 +26,8 @@ pub enum Shot {
     Bolt,
     Spread,
     Beam,
+    /// A bolt that bounces off every wall.
+    Ricochet,
 }
 
 /// The parts of a player the trigger works with.
@@ -56,11 +58,11 @@ pub enum Trigger {
 impl Gun {
     /// Least time between shots.
     pub fn interval(&self, rules: &Rules) -> f32 {
-        if self.rapid {
-            rules.fire_cooldown * 0.5
-        } else {
-            rules.fire_cooldown
-        }
+        let base = match self.weapon {
+            Weapon::Ricochet => rules.ricochet_cooldown,
+            _ => rules.fire_cooldown,
+        };
+        if self.rapid { base * 0.5 } else { base }
     }
 
     /// The tick's timers (before `trigger`).
@@ -97,6 +99,7 @@ impl Gun {
                     Weapon::Charge => self.charging = Some(0.0),
                     Weapon::Shotgun => return Some(Trigger::Fire(Shot::Spread)),
                     Weapon::Blaster => return Some(Trigger::Fire(Shot::Bolt)),
+                    Weapon::Ricochet => return Some(Trigger::Fire(Shot::Ricochet)),
                 }
             }
         }
@@ -188,6 +191,14 @@ pub fn shot_bolts(shot: Shot, dir: Vec3, rules: &Rules, seed: u64) -> Vec<(Vec3,
                 })
                 .collect()
         }
+        Shot::Ricochet => vec![(
+            dir * rules.blaster_bolt_speed * 0.75,
+            rules.bolt_life,
+            BoltExtra {
+                ricochet: true,
+                ..BoltExtra::default()
+            },
+        )],
         Shot::Beam => vec![(
             dir * rules.beam_speed,
             rules.beam_range / rules.beam_speed,
@@ -294,14 +305,25 @@ pub fn on_box(q: Vec3, min: Vec3, max: Vec3) -> bool {
     q.cmpge(min - 0.01).all() && q.cmple(max + 0.01).all()
 }
 
-/// A bolt that struck the arena at `q`: off a mirror again if it struck one and may still
-/// bounce (the mirror's normal), from where it struck.
-pub fn bounce(level: &Level, rules: &Rules, b: &mut Bolt, q: Vec3) -> Option<Vec3> {
-    if b.extra.bounces >= rules.mirror_bounces {
-        return None;
-    }
-    let m = level.mirrors.iter().find(|m| on_box(q, m.min, m.max))?;
-    let n = m.normal;
+/// A bolt that struck the arena at `q` (normal `n`): off a mirror again if it struck one and may
+/// still bounce, or off any wall but a scoring panel for a ricochet bolt (the normal it bounced
+/// off), from where it struck.
+pub fn bounce(level: &Level, rules: &Rules, b: &mut Bolt, q: Vec3, n: Vec3) -> Option<Vec3> {
+    let n = if b.extra.ricochet {
+        if b.extra.bounces >= rules.ricochet_bounces || level.scores_at(q) {
+            return None;
+        }
+        n
+    } else {
+        if b.extra.bounces >= rules.mirror_bounces {
+            return None;
+        }
+        level
+            .mirrors
+            .iter()
+            .find(|m| on_box(q, m.min, m.max))?
+            .normal
+    };
     b.vel -= 2.0 * b.vel.dot(n) * n;
     // (The flight moves it on by a tick's worth after this.)
     b.pos = q + n * 0.02 - b.vel * TICK;

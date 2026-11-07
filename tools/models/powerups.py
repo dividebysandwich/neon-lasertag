@@ -13,6 +13,8 @@ Meshes (game frame, Y up, metres):
   centre.
 - `barrier`: a wall of hard light between two posts: a tall panel with a glowing face and a
   band across it, ~0.4 m wide, ~0.34 m tall, origin at the centre.
+- `ricochet`: a bolt's zigzag path bouncing between two walls, ~0.38 m wide, ~0.4 m tall,
+  origin at the centre.
 - `shotgun`: the pump shotgun a player holds, in the blaster's frame (barrel along -Z, up +Y,
   origin at the middle of the grip hold), with `hit_1`/`hit_2`/`hit_3` lights on top of the
   receiver (hit_1 nearest the player) and a `muzzle` disc; the empty `shotgun_muzzle` marks the
@@ -212,6 +214,34 @@ def build_barrier():
     return g
 
 
+def stroke(g, a, b, w, depth, mat="accent"):
+    """A straight bar of width w from a to b (x, y), as a convex slab."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    r = math.hypot(dx, dy)
+    nx, ny = -dy / r * w / 2, dx / r * w / 2
+    poly = [(a[0] + nx, a[1] + ny), (a[0] - nx, a[1] - ny), (b[0] - nx, b[1] - ny),
+            (b[0] + nx, b[1] + ny)]
+    if L.signed_area(poly) < 0:
+        poly.reverse()
+    slab(g, poly, -depth, depth, mat)
+
+
+def build_ricochet():
+    g = L.Geo()
+    # Two walls (body), and the path between them: in from the top left, three bounces.
+    for s in (-1, 1):
+        box(g, (s * 0.19 - 0.02, -0.2, -0.04), (s * 0.19 + 0.02, 0.2, 0.04), mat="body")
+    pts = [(-0.1, 0.2), (0.16, 0.09), (-0.16, -0.03), (0.16, -0.15), (0.0, -0.21)]
+    for a, b in zip(pts, pts[1:]):
+        stroke(g, a, b, 0.045, 0.025)
+    # A spark at each bounce.
+    for x, y in pts[1:4]:
+        ring = [(x + 0.035 * math.cos(t), y + 0.035 * math.sin(t))
+                for t in (2 * math.pi * k / 8 for k in range(8))]
+        slab(g, ring, -0.035, 0.035, "accent")
+    return g
+
+
 def build_shotgun():
     g = L.Geo()
 
@@ -283,7 +313,8 @@ def main():
     L.material("muzzle", base=(1, 1, 1), emit=(1, 1, 1), strength=5.0)
     for name, build in (("rapid", build_rapid), ("shield", build_shield), ("cloak", build_cloak),
                         ("shotgun", build_shotgun), ("speed", build_speed),
-                        ("charge", build_charge), ("barrier", build_barrier)):
+                        ("charge", build_charge), ("barrier", build_barrier),
+                        ("ricochet", build_ricochet)):
         g = build()
         L.make_object(name, g)
         print("powerup %s %d tris" % (name, g.tris()))

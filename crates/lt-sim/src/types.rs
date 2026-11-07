@@ -68,13 +68,16 @@ pub enum PickupKind {
     /// deals `Rules::beam_damage` hits (for `Rules::beam_cost` shots); taking one also fills it
     /// up.
     Charge,
+    /// The ricochet rifle instead of the blaster until tagged out: slower bolts that bounce
+    /// off every wall up to `Rules::ricochet_bounces` times; taking one also fills it up.
+    Ricochet,
     /// A gadget, carried until put up (`PlayerCmd::gadget`): a wall of hard light in front of the
     /// player for `Rules::barrier_time`, stopping every bolt but its team's.
     Barrier,
 }
 
 impl PickupKind {
-    pub const ALL: [PickupKind; 8] = [
+    pub const ALL: [PickupKind; 9] = [
         PickupKind::Grenade,
         PickupKind::Rapid,
         PickupKind::Shield,
@@ -83,9 +86,10 @@ impl PickupKind {
         PickupKind::Speed,
         PickupKind::Charge,
         PickupKind::Barrier,
+        PickupKind::Ricochet,
     ];
     /// The powerups (everything but the grenade).
-    pub const POWERUPS: [PickupKind; 7] = [
+    pub const POWERUPS: [PickupKind; 8] = [
         PickupKind::Rapid,
         PickupKind::Shield,
         PickupKind::Shotgun,
@@ -93,6 +97,7 @@ impl PickupKind {
         PickupKind::Speed,
         PickupKind::Charge,
         PickupKind::Barrier,
+        PickupKind::Ricochet,
     ];
 
     pub fn name(self) -> &'static str {
@@ -105,6 +110,7 @@ impl PickupKind {
             PickupKind::Speed => "speed boost",
             PickupKind::Charge => "charge gun",
             PickupKind::Barrier => "barrier",
+            PickupKind::Ricochet => "ricochet rifle",
         }
     }
 
@@ -119,6 +125,7 @@ impl PickupKind {
             PickupKind::Speed => "speed",
             PickupKind::Charge => "charge",
             PickupKind::Barrier => "barrier",
+            PickupKind::Ricochet => "ricochet",
         }
     }
 
@@ -130,7 +137,7 @@ impl PickupKind {
     pub fn pool(self) -> Option<Pool> {
         match self {
             PickupKind::Grenade => None,
-            PickupKind::Shotgun | PickupKind::Charge => Some(Pool::Weapon),
+            PickupKind::Shotgun | PickupKind::Charge | PickupKind::Ricochet => Some(Pool::Weapon),
             PickupKind::Barrier => Some(Pool::Gadget),
             PickupKind::Rapid | PickupKind::Shield | PickupKind::Cloak | PickupKind::Speed => {
                 Some(Pool::Power)
@@ -143,6 +150,7 @@ impl PickupKind {
         match self {
             PickupKind::Shotgun => Some(Weapon::Shotgun),
             PickupKind::Charge => Some(Weapon::Charge),
+            PickupKind::Ricochet => Some(Weapon::Ricochet),
             _ => None,
         }
     }
@@ -163,6 +171,8 @@ pub enum Weapon {
     Blaster,
     Shotgun,
     Charge,
+    /// Bolts bounce off every wall (`Rules::ricochet_bounces`).
+    Ricochet,
 }
 
 /// A carried gadget (one at a time, used with `PlayerCmd::gadget`).

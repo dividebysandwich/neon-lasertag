@@ -38,6 +38,9 @@ pub struct Rules {
     pub bolt_life: f32,
     /// Times a bolt bounces off mirrors (the next one stops it).
     pub mirror_bounces: u8,
+    /// Times a ricochet rifle's bolt bounces off any wall, and its least time between shots.
+    pub ricochet_bounces: u8,
+    pub ricochet_cooldown: f32,
     pub move_speed: f32,
     /// Jumping: the upward speed (m/s), how long after walking off an edge one still may (s),
     /// and how long before landing a press still counts (s).
@@ -157,6 +160,8 @@ impl Default for Rules {
             blaster_bolt_speed: 96.0,
             bolt_life: 2.0,
             mirror_bounces: 1,
+            ricochet_bounces: 3,
+            ricochet_cooldown: 0.5,
             move_speed: 4.0,
             crouch_factor: 0.5,
             countdown: 3.0,

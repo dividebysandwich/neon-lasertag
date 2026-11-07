@@ -2059,6 +2059,9 @@ fn powerup_chip(
     match kind {
         PickupKind::Rapid if p.rapid => chip("RAPID FIRE".into(), None, false),
         PickupKind::Shotgun if p.weapon == Weapon::Shotgun => chip("SHOTGUN".into(), None, false),
+        PickupKind::Ricochet if p.weapon == Weapon::Ricochet => {
+            chip("RICOCHET".into(), None, false)
+        }
         PickupKind::Charge if p.weapon == Weapon::Charge => {
             if p.charging >= rules.charge_time {
                 chip("CHARGED - LET GO".into(), Some(1.0), true)
@@ -2162,6 +2165,10 @@ pub fn pickup_banner(
             "{}: A WALL THAT STOPS ENEMY BOLTS FOR {:.0} S",
             key(Action::Gadget, "GRIP OF THE FREE HAND"),
             rules.barrier_time
+        ),
+        PickupKind::Ricochet => format!(
+            "BOLTS BOUNCE OFF EVERY WALL - UP TO {} TIMES",
+            rules.ricochet_bounces
         ),
     };
     Banner {

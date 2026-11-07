@@ -246,7 +246,7 @@ impl Shots {
                     }
                     Contact::Arena { q, n } => {
                         struck.push_back((clock, q));
-                        if let Some(n) = shot::bounce(level, rules, &mut f.bolt, q) {
+                        if let Some(n) = shot::bounce(level, rules, &mut f.bolt, q, n) {
                             out.push(SimEvent::Reflected {
                                 pos: q,
                                 normal: n,
@@ -293,6 +293,7 @@ impl Shots {
             team: f.bolt.team,
             beam: f.bolt.extra.pierce,
             owner: me,
+            bounces: f.bolt.extra.bounces,
         }));
         if let Some(p) = snap.players.iter_mut().find(|p| p.id == me) {
             p.ammo = self.gun.ammo;

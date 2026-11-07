@@ -1106,6 +1106,18 @@ pub struct Level {
 }
 
 impl Level {
+    /// Whether `q` (where a bolt struck) is on something a hit counts on: a target panel, a
+    /// Megatarget panel or a turret's switch (a ricochet bolt stops there).
+    pub fn scores_at(&self, q: Vec3) -> bool {
+        let on = |min: Vec3, max: Vec3| crate::shot::on_box(q, min, max);
+        self.targets.iter().any(|t| on(t.min, t.max))
+            || self.mega.as_ref().is_some_and(|m| {
+                on(m.core.min, m.core.max)
+                    || m.secondaries.iter().any(|p| on(p.min, p.max))
+                    || m.turrets.iter().any(|t| on(t.switch.min, t.switch.max))
+            })
+    }
+
     /// The classic arena for `seed` and `size` (the same on every machine).
     pub fn generate(seed: u64, size: ArenaSize) -> Level {
         Self::generate_for(seed, size, GameMode::Classic)

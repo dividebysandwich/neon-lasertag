@@ -867,7 +867,8 @@ fn sync_bolts(
         let scale = if b.beam {
             Vec3::new(2.5, 6.0, 2.5)
         } else {
-            Vec3::ONE
+            // (A ricochet bolt grows with every bounce.)
+            Vec3::splat(1.0 + 0.3 * b.bounces as f32)
         };
         let pos = head - dir * 0.4 * scale.y;
         let rot = Quat::from_rotation_arc(Vec3::Y, dir);

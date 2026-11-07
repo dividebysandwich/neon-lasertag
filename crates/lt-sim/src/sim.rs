@@ -351,6 +351,8 @@ pub struct BoltExtra {
     /// Flies on through the players it hits (each hit once: `struck`, by player id bit).
     pub pierce: bool,
     pub struck: u64,
+    /// Bounces off every wall (the ricochet rifle).
+    pub ricochet: bool,
     /// A remote client judges this bolt's hits on players (`shot::HitClaim`); the sim's copy
     /// stops at them without hitting. Its shot (`PlayerCmd::shot`) and pellet.
     pub client: bool,
@@ -365,6 +367,7 @@ impl Default for BoltExtra {
             damage: 1,
             pierce: false,
             struck: 0,
+            ricochet: false,
             client: false,
             shot: 0,
             pellet: 0,
@@ -546,6 +549,9 @@ pub struct BoltSnap {
     /// A charge gun's beam.
     pub beam: bool,
     pub owner: PlayerId,
+    /// Walls bounced off so far.
+    #[serde(default)]
+    pub bounces: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -1559,7 +1565,7 @@ impl Sim {
             Contact::Arena { q, n } => {
                 // A mirror: off it again (as many times as the rules allow), from where it
                 // struck.
-                if let Some(n) = crate::shot::bounce(&self.level, &self.rules, b, q) {
+                if let Some(n) = crate::shot::bounce(&self.level, &self.rules, b, q, n) {
                     self.events.push(SimEvent::Reflected {
                         pos: q,
                         normal: n,
@@ -1690,8 +1696,8 @@ impl Sim {
                 break;
             }
             // A wall ends the way (a mirror turns it).
-            if let Some((_, q, _)) = self.world.ray(b.pos, to)
-                && crate::shot::bounce(&self.level, &self.rules, &mut b, q).is_none()
+            if let Some((_, q, n)) = self.world.ray(b.pos, to)
+                && crate::shot::bounce(&self.level, &self.rules, &mut b, q, n).is_none()
             {
                 break;
             }
@@ -2511,6 +2517,7 @@ impl Sim {
                     team: b.team,
                     beam: b.extra.pierce,
                     owner: b.owner,
+                    bounces: b.extra.bounces,
                 })
                 .collect(),
             grenades: self
@@ -3329,6 +3336,88 @@ mod tests {
         );
         sim.give(a, PickupKind::Shotgun);
         assert_eq!(sim.player(a).unwrap().weapon, Weapon::Shotgun);
+    }
+
+    #[test]
+    fn ricochet_bolts_bounce_off_any_wall_but_not_off_targets() {
+        let (mut sim, a, _) = duel();
+        sim.give(a, PickupKind::Ricochet);
+        assert_eq!(sim.player(a).unwrap().weapon, Weapon::Ricochet);
+        assert!(sim.player(a).unwrap().fire_interval(&sim.rules) > sim.rules.fire_cooldown);
+        let level = sim.level.clone();
+        let rules = sim.rules.clone();
+        let bolt = |ricochet| Bolt {
+            id: 0,
+            owner: a,
+            owner_team: Team::Red,
+            team: Some(Team::Red),
+            pos: Vec3::ZERO,
+            vel: Vec3::new(10.0, 0.0, 0.0),
+            life: 1.0,
+            extra: BoltExtra {
+                ricochet,
+                ..BoltExtra::default()
+            },
+        };
+        // A plain wall, away from any mirror or panel.
+        let q = Vec3::new(1000.0, 1.0, 1000.0);
+        let mut b = bolt(true);
+        for k in 0..rules.ricochet_bounces {
+            assert!(
+                crate::shot::bounce(&level, &rules, &mut b, q, Vec3::NEG_X).is_some(),
+                "bounce {k}"
+            );
+        }
+        assert!(
+            crate::shot::bounce(&level, &rules, &mut b, q, Vec3::NEG_X).is_none(),
+            "no more"
+        );
+        // A blaster bolt stops at a wall.
+        let mut b = bolt(false);
+        assert!(crate::shot::bounce(&level, &rules, &mut b, q, Vec3::NEG_X).is_none());
+        // A ricochet bolt stops at a target panel (and scores there).
+        let t = level.targets[0];
+        let mut b = bolt(true);
+        let on_t = (t.min + t.max) / 2.0;
+        assert!(level.scores_at(on_t));
+        assert!(crate::shot::bounce(&level, &rules, &mut b, on_t, Vec3::NEG_X).is_none());
+
+        // Fired along a wall's normal, it comes back.
+        sim.players[1].feet = Vec3::new(0.0, 0.0, 1000.0);
+        let me = sim.player(a).unwrap();
+        let from = me.eye();
+        let (_, q, n) = (1..36)
+            .find_map(|k| {
+                let d = Quat::from_rotation_y(k as f32 * 0.17) * Vec3::NEG_Z;
+                sim.world
+                    .ray(from, from + d * 12.0)
+                    .filter(|(_, q, _)| !level.scores_at(*q))
+            })
+            .expect("a wall near the spawn");
+        let _ = q;
+        let dir = -n;
+        sim.set_cmd(
+            a,
+            PlayerCmd {
+                gun_hand: Some(Hand::Right),
+                muzzle: Pose {
+                    pos: from - me.feet,
+                    rot: look_rot(dir),
+                },
+                fire: true,
+                ..Default::default()
+            },
+        );
+        sim.drain_events();
+        for _ in 0..60 {
+            sim.step();
+        }
+        let bounced = sim
+            .drain_events()
+            .iter()
+            .filter(|e| matches!(e, SimEvent::Reflected { .. }))
+            .count();
+        assert!(bounced >= 1, "bounced {bounced}");
     }
 
     #[test]

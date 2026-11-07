@@ -75,6 +75,7 @@ gadget at a time; a new one replaces the old.
 | Shield | Activate to become immune to bolts for 10 s. |
 | Shotgun | Replaces your blaster: 10 short-range bolts per shot. |
 | Charge gun | Replaces your blaster: hold the trigger to charge a beam that pierces players and deals two hits. |
+| Ricochet rifle | Replaces your blaster: slower-firing bolts that bounce off every wall up to 3 times (but not off targets). |
 | Cloak | Nearly invisible for 100 s; you flicker into view when you fire or are hit. |
 | Barrier | Put up a wall of light for 8 s that blocks enemy bolts but lets your team's through. |
 | Speed boost | Run 50% faster for 15 s. |
