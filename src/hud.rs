@@ -64,9 +64,11 @@ struct HitFlash;
 /// moment after respawning (white).
 #[derive(Component)]
 struct EdgeTint;
-/// One of the three hits-left lights.
+/// One of the hits-left lights (as many shown as hits tag a player out).
 #[derive(Component)]
 struct Pip(u8);
+/// Hits-left lights at most.
+const MAX_PIPS: u8 = 6;
 /// The HUD's top level nodes (hidden without a game and on the end screen).
 #[derive(Component)]
 struct HudRoot;
@@ -603,7 +605,7 @@ fn spawn(mut commands: Commands) {
                     r.spawn((StatusPart::Score, text("", 16.0, neonui::TEXT, 700)));
                 });
                 b.spawn(neonui::row(8.0)).with_children(|r| {
-                    for k in 1..=3 {
+                    for k in 1..=MAX_PIPS {
                         r.spawn((
                             Pip(k),
                             Node {
@@ -1198,7 +1200,7 @@ fn status_panel(
         (&mut BorderColor, &mut BoxShadow),
         (With<StatusPanel>, Without<Pip>, Without<AmmoFill>),
     >,
-    mut pips: Query<(&Pip, &mut BackgroundColor, &mut BoxShadow), Without<AmmoFill>>,
+    mut pips: Query<(&Pip, &mut Node, &mut BackgroundColor, &mut BoxShadow), Without<AmmoFill>>,
     mut fill: Query<(&mut Node, &mut BackgroundColor, &mut BoxShadow), With<AmmoFill>>,
 ) {
     let Some(p) = game
@@ -1253,9 +1255,17 @@ fn status_panel(
         }
         color.0 = col;
     }
-    let left = 3u8.saturating_sub(p.hits);
+    let left = game.rules.hits_to_tag.saturating_sub(p.hits);
     let blink = p.cooldown <= 0.0 || (time.elapsed_secs() * 8.0).fract() < 0.5;
-    for (pip, mut bg, mut shadow) in &mut pips {
+    for (pip, mut node, mut bg, mut shadow) in &mut pips {
+        let want = if pip.0 <= game.rules.hits_to_tag {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        if node.display != want {
+            node.display = want;
+        }
         let lit = pip.0 <= left && blink;
         bg.0 = if lit {
             c

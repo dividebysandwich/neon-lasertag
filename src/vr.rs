@@ -775,7 +775,7 @@ fn holster(
 struct Wrist {
     root: Entity,
     digits: Vec<Digit>,
-    bars: [Entity; 3],
+    bars: Vec<Entity>,
     grenade: Entity,
     /// A big countdown in front of the eyes while tagged out.
     panel: Entity,
@@ -793,6 +793,9 @@ struct Wrist {
     /// its colour draining with its time left (shown while it runs).
     powerups: Vec<(PickupKind, Entity, Entity)>,
 }
+
+/// Hits-left bars on the wrist at most.
+const MAX_BARS: usize = 6;
 
 /// The wrist's powerup icons' size (of the pickups').
 const ICON_SCALE: f32 = 0.08;
@@ -836,16 +839,20 @@ fn spawn_wrist(
         &white,
     );
     let bar = meshes.add(Cuboid::new(0.018, 0.006, 0.004));
-    let bars = [0, 1, 2].map(|k| {
-        commands
-            .spawn((
-                Mesh3d(bar.clone()),
-                MeshMaterial3d(white.clone()),
-                Transform::from_xyz(-0.03 + k as f32 * 0.024, 0.0, 0.0),
-                ChildOf(root),
-            ))
-            .id()
-    });
+    // (Laid out by `wrist` for the hits that tag a player out.)
+    let bars = (0..MAX_BARS)
+        .map(|_| {
+            commands
+                .spawn((
+                    Mesh3d(bar.clone()),
+                    MeshMaterial3d(white.clone()),
+                    Transform::IDENTITY,
+                    Visibility::Hidden,
+                    ChildOf(root),
+                ))
+                .id()
+        })
+        .collect();
     let grenade = commands
         .spawn((
             Mesh3d(meshes.add(Sphere::new(0.006))),
@@ -1030,8 +1037,15 @@ fn wrist(
         t.rotation = pose.rot * Quat::from_rotation_x(-1.2);
     }
     let blink = p.cooldown <= 0.0 || (time.elapsed_secs() * 8.0).fract() < 0.5;
-    let left = 3u8.saturating_sub(p.hits);
+    let n = game.rules.hits_to_tag.min(MAX_BARS as u8);
+    let left = n.saturating_sub(p.hits);
+    // (Three bars 24 mm apart; more, closer and narrower, over the same width.)
+    let step = 0.048 / (n.max(2) - 1) as f32;
     for (k, e) in w.bars.iter().enumerate() {
+        if let Ok(mut t) = transforms.get_mut(*e) {
+            t.translation = Vec3::new(-0.03 + k as f32 * step, 0.0, 0.0);
+            t.scale = Vec3::new((step / 0.024).min(1.0), 1.0, 1.0);
+        }
         if let Ok(mut v) = vis.get_mut(*e) {
             *v = if (k as u8) < left && blink {
                 Visibility::Inherited
