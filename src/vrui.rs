@@ -1008,14 +1008,9 @@ fn build_end(b: &mut Builder, game: &Game) -> (Vec<Button>, Vec3) {
     let ti = team_index(team);
     let (mat, glow) = (b.mats.team[ti].clone(), b.mats.glow[ti].clone());
     let mut y = height / 2.0 - 0.06 - 0.055;
-    b.text(
-        text,
-        0.11,
-        Vec2::new(0.0, y),
-        Align::Center,
-        &mat,
-        Some(&glow),
-    );
+    // As big as fits inside the frame ("BLUE WINS" at full size doesn't).
+    let h = (0.11f32).min((width - 0.12) / vfont::width(text, 1.0, TEXT));
+    b.text(text, h, Vec2::new(0.0, y), Align::Center, &mat, Some(&glow));
     y -= 0.12;
     let [r, bl] = game.snap.scores;
     let (red, blue, white) = (
