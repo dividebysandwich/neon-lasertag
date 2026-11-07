@@ -647,7 +647,7 @@ fn build_help(b: &mut Builder, game: &Game, height: f32) {
     y -= 0.03;
     b.text("RULES", th, Vec2::new(left, y), Align::Left, &violet, None);
     y -= 0.05;
-    for rule in crate::hud::rules_lines(&game.rules, game.level.mega.is_some()) {
+    for rule in crate::hud::rules_lines(&game.rules, game.level.mode) {
         for line in wrap(&rule, lh, width) {
             b.text(&line, lh, Vec2::new(left, y), Align::Left, &white, None);
             y -= lh * 1.5;

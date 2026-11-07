@@ -1285,34 +1285,61 @@ pub fn next_hint(
 
 /// The rules in short, for the in-game menus (capitals, digits and `- : ' ( )` only, for VR's
 /// stroke font).
-pub fn rules_lines(rules: &lt_sim::Rules, mega: bool) -> Vec<String> {
-    let mut out = vec![
-        format!(
-            "{} HITS TAG YOU OUT - AFTER A HIT YOU CAN'T SHOOT OR BE HIT FOR {:.0} S",
-            rules.hits_to_tag, rules.hit_cooldown
-        ),
-        format!(
+pub fn rules_lines(rules: &lt_sim::Rules, mode: lt_sim::level::GameMode) -> Vec<String> {
+    use lt_sim::level::GameMode;
+    let mega = mode == GameMode::Megatarget;
+    let mut out = vec![format!(
+        "{} HITS TAG YOU OUT - AFTER A HIT YOU CAN'T SHOOT OR BE HIT FOR {:.0} S",
+        rules.hits_to_tag, rules.hit_cooldown
+    )];
+    match mode {
+        GameMode::Classic | GameMode::Megatarget => out.push(format!(
             "TAG OUT AN ENEMY: {} - ASSIST: {} - DEFEND YOUR {}: +{}",
             rules.tag_points,
             rules.assist_points,
             if mega { "DOORWAY" } else { "TARGETS" },
             rules.defend_points
-        ),
-    ];
-    if mega {
-        out.push(format!(
-            "HIT BOTH SECONDARY TARGETS ({} EACH) TO PASS THE FORCEFIELDS FOR {:.0} S",
-            rules.secondary_points, rules.power_time
-        ));
-        out.push(format!(
-            "THEN THE MEGATARGET IN THE MIDDLE ROOM: {}",
-            rules.megatarget_points
-        ));
-    } else {
-        out.push(format!(
+        )),
+        _ => out.push(format!(
+            "TAG OUT AN ENEMY: {} - ASSIST: {}",
+            rules.tag_points, rules.assist_points
+        )),
+    }
+    match mode {
+        GameMode::Megatarget => {
+            out.push(format!(
+                "HIT BOTH SECONDARY TARGETS ({} EACH) TO PASS THE FORCEFIELDS FOR {:.0} S",
+                rules.secondary_points, rules.power_time
+            ));
+            out.push(format!(
+                "THEN THE MEGATARGET IN THE MIDDLE ROOM: {}",
+                rules.megatarget_points
+            ));
+        }
+        GameMode::Classic => out.push(format!(
             "ENEMY TARGETS: {} A HIT - SHOOT THEM FROM BEHIND OR BELOW",
             rules.target_points
-        ));
+        )),
+        GameMode::Prism => {
+            out.push(format!(
+                "TAKE THE ENEMY PRISM TO YOURS (WHILE IT'S HOME): {}",
+                rules.prism_points
+            ));
+            out.push(
+                "NO SHOOTING WITH A PRISM - THROW IT TO A TEAM MATE - TOUCH YOURS TO SEND IT HOME"
+                    .into(),
+            );
+        }
+        GameMode::Infection => {
+            out.push(format!(
+                "RED PHANTOMS ARE CLOAKED AND TAG OUT IN ONE HIT - THEIR BOLTS FLY {:.0} M",
+                rules.phantom_range
+            ));
+            out.push(format!(
+                "BLUE SURVIVORS TAGGED OUT TURN PHANTOM - EACH SCORES {} EVERY {:.0} S",
+                rules.survive_points, rules.survive_every
+            ));
+        }
     }
     out.push("YOUR SPAWN PADS HEAL YOU - THEY AND THE WHITE STATIONS REFILL YOUR BLASTER".into());
     out.push(format!("THE LAST {:.0} S COUNT DOUBLE", rules.double_last));
