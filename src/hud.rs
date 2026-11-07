@@ -4,12 +4,13 @@
 
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use lt_sim::{PlayerId, SimEvent, Team};
+use lt_sim::{PickupKind, PlayerId, SimEvent, Team};
 
 use crate::desktop::{MainCamera, Overlays};
 use crate::game::{Game, GameEvent};
 use crate::neonui;
 use crate::session::Session;
+use crate::settings::{Action, Settings};
 
 #[derive(Component)]
 struct ScoreText(Team);
@@ -62,9 +63,17 @@ struct MegaText;
 /// The frame around `MegaText` (hidden outside Megatarget mode).
 #[derive(Component)]
 struct MegaBox;
-/// The local player's powerups (bottom left, above the hit lights).
+/// A chip for one of the local player's powerups (bottom left, above the hit lights): framed
+/// in the powerup's colour, its name or state, and a bar draining with its time left.
 #[derive(Component)]
-struct PowerText;
+struct PowerChip(PickupKind);
+#[derive(Component)]
+struct PowerChipText(PickupKind);
+#[derive(Component)]
+struct PowerChipFill(PickupKind);
+/// The track the fill runs in (hidden for powerups without a time).
+#[derive(Component)]
+struct PowerChipBar(PickupKind);
 /// A piece of hit arc `mark` (of `MARKS`), `piece` (of `PIECES`).
 #[derive(Component)]
 struct ArcPiece {
@@ -408,7 +417,61 @@ fn spawn(mut commands: Commands) {
             },
         ))
         .with_children(|p| {
-            p.spawn((PowerText, text("", 17.0, neonui::AMBER, 800)));
+            p.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                flex_wrap: FlexWrap::Wrap,
+                max_width: Val::Px(560.0),
+                column_gap: Val::Px(8.0),
+                row_gap: Val::Px(8.0),
+                ..default()
+            })
+            .with_children(|r| {
+                for kind in PickupKind::POWERUPS {
+                    let c = powerup_color(kind);
+                    r.spawn((
+                        PowerChip(kind),
+                        framed(
+                            c,
+                            Node {
+                                display: Display::None,
+                                flex_direction: FlexDirection::Column,
+                                align_items: AlignItems::Stretch,
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(5.0)),
+                                row_gap: Val::Px(4.0),
+                                ..default()
+                            },
+                        ),
+                    ))
+                    .with_children(|chip| {
+                        chip.spawn((
+                            PowerChipText(kind),
+                            text("", 15.0, c.mix(&neonui::TEXT, 0.3), 800),
+                        ));
+                        chip.spawn((
+                            PowerChipBar(kind),
+                            Node {
+                                height: Val::Px(4.0),
+                                border_radius: BorderRadius::all(Val::Px(2.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.4, 0.42, 0.6, 0.25)),
+                        ))
+                        .with_children(|bar| {
+                            bar.spawn((
+                                PowerChipFill(kind),
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Percent(100.0),
+                                    border_radius: BorderRadius::all(Val::Px(2.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(c),
+                                glow(c, 0.7, 6.0),
+                            ));
+                        });
+                    });
+                }
+            });
             p.spawn((
                 StatusPanel,
                 framed(
@@ -786,6 +849,7 @@ fn clock_events(snap: &lt_sim::sim::Snapshot) -> (String, Color) {
 #[allow(clippy::type_complexity)]
 fn status_panel(
     game: Res<Game>,
+    settings: Res<Settings>,
     time: Res<Time>,
     mut parts: Query<(&StatusPart, &mut Text, &mut TextColor)>,
     mut panel: Query<
@@ -824,7 +888,10 @@ fn status_panel(
             ),
             StatusPart::Grenade => {
                 if p.grenades > 0 {
-                    ("GRENADE READY  (RMB / G)".to_string(), neonui::GREEN)
+                    (
+                        format!("GRENADE READY  [{}]", key_hint(&settings, Action::Grenade)),
+                        neonui::GREEN,
+                    )
                 } else {
                     ("NO GRENADE".to_string(), neonui::DIM)
                 }
@@ -956,14 +1023,142 @@ fn hit_arcs(
     }
 }
 
-/// Megatarget mode: which secondary targets the local player has hit, or the time left to get
-/// into the megatarget's room.
-fn powerup_status(game: Res<Game>, mut q: Query<&mut Text, With<PowerText>>) {
-    let Ok(mut t) = q.single_mut() else { return };
+/// The local player's powerups as chips: shown while held, flashing in their last seconds.
+#[allow(clippy::type_complexity)]
+fn powerup_status(
+    game: Res<Game>,
+    settings: Res<Settings>,
+    time: Res<Time>,
+    mut chips: Query<(&PowerChip, &mut Node, &mut BorderColor, &mut BoxShadow)>,
+    mut texts: Query<(&PowerChipText, &mut Text)>,
+    mut fills: Query<(&PowerChipFill, &mut Node), (Without<PowerChip>, Without<PowerChipBar>)>,
+    mut bars: Query<(&PowerChipBar, &mut Node), Without<PowerChip>>,
+) {
     let me = game
         .me
         .and_then(|id| game.snap.players.iter().find(|p| p.id == id));
-    t.0 = me.map(|p| powerup_line(p, &game.rules)).unwrap_or_default();
+    let state = |kind| me.and_then(|p| powerup_chip(p, kind, &game.rules, &settings));
+    let blink = (time.elapsed_secs() * 6.0).fract() < 0.5;
+    for (chip, mut node, mut border, mut shadow) in &mut chips {
+        let st = state(chip.0);
+        let want = if st.is_some() {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        if node.display != want {
+            node.display = want;
+        }
+        let c = powerup_color(chip.0);
+        let on = !st.is_some_and(|s| s.flash) || blink;
+        *border = BorderColor::all(c.with_alpha(if on { 0.85 } else { 0.25 }));
+        *shadow = glow(c, if on { 0.5 } else { 0.1 }, 14.0);
+    }
+    for (t, mut text) in &mut texts {
+        if let Some(st) = state(t.0)
+            && text.0 != st.label
+        {
+            text.0 = st.label;
+        }
+    }
+    for (b, mut node) in &mut bars {
+        let want = if state(b.0).is_some_and(|s| s.bar.is_some()) {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        if node.display != want {
+            node.display = want;
+        }
+    }
+    for (f, mut node) in &mut fills {
+        let st = state(f.0);
+        let k = st.as_ref().and_then(|s| s.bar);
+        let want = Val::Percent(100.0 * k.unwrap_or(0.0).clamp(0.0, 1.0));
+        if node.width != want {
+            node.width = want;
+        }
+    }
+}
+
+/// The first key bound to `a`, in capitals, for a hint ("Q"), or "-" if none is.
+pub fn key_hint(settings: &Settings, a: Action) -> String {
+    settings
+        .get(a)
+        .iter()
+        .flatten()
+        .next()
+        .map_or("-".into(), |b| b.name().to_uppercase())
+}
+
+/// How a held powerup shows: its label, how full its bar is (`None`: no bar, it lasts until
+/// tagged out), and whether it flashes (about to run out, or charged).
+struct ChipState {
+    label: String,
+    bar: Option<f32>,
+    flash: bool,
+}
+
+/// A powerup's colour on the flat screen (as in the arena).
+fn powerup_color(kind: PickupKind) -> Color {
+    let c = crate::materials::pickup_color(kind);
+    Color::srgb(c.x, c.y, c.z)
+}
+
+/// How `p`'s powerup `kind` shows, if `p` has it.
+fn powerup_chip(
+    p: &lt_sim::sim::PlayerSnap,
+    kind: PickupKind,
+    rules: &lt_sim::Rules,
+    settings: &Settings,
+) -> Option<ChipState> {
+    let chip = |label: String, bar: Option<f32>, flash| Some(ChipState { label, bar, flash });
+    let timed = |name: &str, left: f32, total: f32| {
+        chip(
+            format!("{name} {:.0}", left.ceil()),
+            Some(left / total.max(0.01)),
+            left <= 2.0,
+        )
+    };
+    let carried = |name: &str, n: u8, a| {
+        let count = if n > 1 {
+            format!("{n}x ")
+        } else {
+            String::new()
+        };
+        chip(
+            format!("{count}{name}  [{}]", key_hint(settings, a)),
+            None,
+            false,
+        )
+    };
+    match kind {
+        PickupKind::Rapid if p.rapid => chip("RAPID FIRE".into(), None, false),
+        PickupKind::Shotgun if p.shotgun => chip("SHOTGUN".into(), None, false),
+        PickupKind::Charge if p.charge => {
+            if p.charging >= rules.charge_time {
+                chip("CHARGED - LET GO".into(), Some(1.0), true)
+            } else if p.charging > 0.0 {
+                chip(
+                    "CHARGING".into(),
+                    Some(p.charging / rules.charge_time),
+                    false,
+                )
+            } else {
+                chip("CHARGE GUN - HOLD FIRE".into(), None, false)
+            }
+        }
+        PickupKind::Cloak if p.cloak > 0.0 => timed(
+            if p.cloaked() { "CLOAKED" } else { "SEEN" },
+            p.cloak,
+            rules.cloak_time,
+        ),
+        PickupKind::Speed if p.speed > 0.0 => timed("SPEED", p.speed, rules.speed_time),
+        PickupKind::Shield if p.shield > 0.0 => timed("SHIELD", p.shield, rules.shield_time),
+        PickupKind::Shield if p.shields > 0 => carried("SHIELD", p.shields, Action::Shield),
+        PickupKind::Barrier if p.barriers > 0 => carried("BARRIER", p.barriers, Action::Barrier),
+        _ => None,
+    }
 }
 
 /// An announcement across the middle of the view: what happened, in a word or two, and what
@@ -1089,42 +1284,6 @@ fn event_banner(
         .0
         .set_alpha(a * (0.85 + 0.15 * (time.elapsed_secs() * 8.0).sin()));
     sub_color.0 = neonui::TEXT.with_alpha(a);
-}
-
-/// What the HUD says about a player's powerups ("" with none).
-pub fn powerup_line(p: &lt_sim::sim::PlayerSnap, rules: &lt_sim::Rules) -> String {
-    let mut parts = Vec::new();
-    if p.rapid {
-        parts.push("RAPID FIRE".to_string());
-    }
-    if p.shotgun {
-        parts.push("SHOTGUN".to_string());
-    }
-    if p.charge {
-        parts.push(if p.charging >= rules.charge_time {
-            "CHARGE GUN: CHARGED, LET GO".to_string()
-        } else if p.charging > 0.0 {
-            format!("CHARGE GUN {:.0}%", p.charging / rules.charge_time * 100.0)
-        } else {
-            "CHARGE GUN".to_string()
-        });
-    }
-    if p.cloak > 0.0 {
-        let state = if p.cloaked() { "CLOAKED" } else { "SEEN" };
-        parts.push(format!("{state} {:.0}", p.cloak.ceil()));
-    }
-    if p.speed > 0.0 {
-        parts.push(format!("SPEED {:.0}", p.speed.ceil()));
-    }
-    if p.barriers > 0 {
-        parts.push("BARRIER READY (E)".to_string());
-    }
-    if p.shield > 0.0 {
-        parts.push(format!("SHIELD {:.0}", p.shield.ceil()));
-    } else if p.shields > 0 {
-        parts.push("SHIELD READY (Q)".to_string());
-    }
-    parts.join("   ")
 }
 
 #[allow(clippy::type_complexity)]
