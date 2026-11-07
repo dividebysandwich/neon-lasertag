@@ -2314,15 +2314,29 @@ pub fn yaw_of(dir: Vec3) -> f32 {
     (-dir.x).atan2(-dir.z)
 }
 
-/// Where the eyes are from the neck, looking straight ahead: behind and below them.
+/// Where the eyes are from the neck, looking straight ahead: in front of and above it.
 const NECK_TO_EYE: Vec3 = Vec3::new(0.0, 0.1, -0.08);
 
-/// The eyes of a head turned to `rot` on its neck, `level` where they are looking straight
-/// ahead: a head pitches about the neck, so looking down brings the eyes forward and down
-/// (pitched about the eyes, the skull would swing back). Tracked heads move so by themselves.
+/// The eyes of a head turned to `rot` on its neck, which sits above the body's middle (the
+/// feet, for a desktop player or a bot): `level` is the height of the eyes looking straight
+/// ahead. A head pitches and turns about the neck, so looking down brings the eyes forward and
+/// down and turning swings them round, the skull staying over the shoulders (pivoted about the
+/// eyes, it would swing back). Tracked heads move so by themselves.
 pub fn eye_on_neck(level: Vec3, rot: Quat) -> Vec3 {
     let (yaw, pitch, _) = rot.to_euler(glam::EulerRot::YXZ);
-    level + Quat::from_rotation_y(yaw) * (Quat::from_rotation_x(pitch) * NECK_TO_EYE - NECK_TO_EYE)
+    level - Vec3::Y * NECK_TO_EYE.y
+        + Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch) * NECK_TO_EYE
+}
+
+/// The neck under the eyes at `eye` of a head turned to `rot` (any head, tracked or not).
+pub fn neck_of(eye: Vec3, rot: Quat) -> Vec3 {
+    eye - rot * NECK_TO_EYE
+}
+
+/// The top of the floating chest, hanging below the neck of the eyes at `eye` turned to `rot`
+/// (`CHEST_DROP` below the eyes when they look straight ahead).
+pub fn chest_top(eye: Vec3, rot: Quat) -> Vec3 {
+    neck_of(eye, rot) + Vec3::Y * (NECK_TO_EYE.y - crate::hitbox::CHEST_DROP)
 }
 
 /// The rotation looking along `dir`.
@@ -2391,6 +2405,28 @@ pub fn grenade_path(world: &World, rules: &Rules, from: Vec3, vel: Vec3) -> (Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn heads_turn_on_a_still_neck() {
+        let level = Vec3::Y * EYE;
+        let straight = eye_on_neck(level, Quat::IDENTITY);
+        assert!((straight.y - EYE).abs() < 1e-6, "{straight}");
+        assert!(
+            straight.z < -0.05,
+            "the eyes in front of the neck: {straight}"
+        );
+        let chest = chest_top(straight, Quat::IDENTITY);
+        assert!(chest.abs_diff_eq(Vec3::Y * (EYE - crate::hitbox::CHEST_DROP), 1e-6));
+        // Looking anywhere, the chest stays over the feet.
+        for (yaw, pitch) in [(0.0, -1.0), (0.0, 1.2), (1.5, 0.0), (-2.5, -0.6)] {
+            let rot = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
+            let eye = eye_on_neck(level, rot);
+            assert!(
+                chest_top(eye, rot).abs_diff_eq(chest, 1e-5),
+                "{yaw} {pitch}"
+            );
+        }
+    }
 
     /// An empty-ish arena spot: two players facing each other in the open.
     fn duel() -> (Sim, PlayerId, PlayerId) {

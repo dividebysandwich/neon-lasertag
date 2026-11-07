@@ -424,9 +424,6 @@ const BEAM_LIGHT: f32 = 40_000.0;
 /// A bolt's light (lumens).
 const BOLT_LIGHT: f32 = 60_000.0;
 
-/// How far below the eyes the floating chest hangs.
-const CHEST_DROP: f32 = 0.3;
-
 fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
     let d = (b - a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
     a + d * t
@@ -516,8 +513,8 @@ fn sync_players(
         }
         let head = if mine { local.cmd.head } else { p.head };
         if let Ok(mut t) = transforms.get_mut(v.body) {
-            // Below the head, turned with the body, leaning a little with the head.
-            t.translation = head.pos - Vec3::Y * CHEST_DROP;
+            // Hanging from the neck, turned with the body.
+            t.translation = lt_sim::sim::chest_top(head.pos, head.rot);
             t.rotation = Quat::from_rotation_y(yaw);
         }
         if let Ok(mut t) = transforms.get_mut(v.head) {

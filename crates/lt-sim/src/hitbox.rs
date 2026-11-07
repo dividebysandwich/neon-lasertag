@@ -8,7 +8,8 @@ use glam::{Quat, Vec3};
 use crate::collide::ray_box;
 use crate::types::PlayerCmd;
 
-/// How far below the eyes the floating chest's top is (src/actors.rs CHEST_DROP).
+/// How far below the eyes the floating chest's top is, looking straight ahead (it hangs from
+/// the neck: `sim::chest_top`).
 pub const CHEST_DROP: f32 = 0.3;
 /// How much bigger than its model a head is drawn (src/actors.rs), grown about the skull top
 /// (this high above the eyes), so it reaches down towards the chest rather than up.
@@ -111,7 +112,7 @@ pub fn first_hit(feet: Vec3, eye: Vec3, cmd: &PlayerCmd, a: Vec3, b: Vec3) -> Op
         Part::Head,
     );
     let body = Quat::from_rotation_y(if cmd.yaw.is_finite() { cmd.yaw } else { 0.0 });
-    let chest = eye - Vec3::Y * (CHEST_DROP + CHEST_HALF.y);
+    let chest = crate::sim::chest_top(eye, head_rot) - Vec3::Y * CHEST_HALF.y;
     take(
         ray_obb(a, d, chest, body, -CHEST_HALF, CHEST_HALF, len),
         Part::Chest,

@@ -270,14 +270,16 @@ fn read_input(
         stick *= 0.5;
     }
     let view = Quat::from_rotation_y(look.yaw) * Quat::from_rotation_x(look.pitch);
-    let head = eye_on_neck(Vec3::Y * look.eye_height(), view);
+    // The camera stays over the feet; the head others see turns on its neck in front of it.
+    let cam = Vec3::Y * look.eye_height();
+    let head = eye_on_neck(cam, view);
     let shotgun = game
         .me
         .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
         .is_some_and(|p| p.shotgun);
     // (The shotgun further out, its stock clear of the eye.)
     let hold = if shotgun { SHOTGUN_GRIP } else { GRIP };
-    let grip = head + view * (hold + gun_offset);
+    let grip = cam + view * (hold + gun_offset);
     let grip_rot = view * gun_rot;
     let muzzle = grip
         + grip_rot
@@ -292,7 +294,7 @@ fn read_input(
     } else {
         my_feet(&game, alpha(&time)).unwrap_or_default()
     };
-    let eye = feet + head;
+    let eye = feet + cam;
     let ahead = eye + view * Vec3::NEG_Z * 80.0;
     let aim = game.world.ray(eye, ahead).map_or(ahead, |h| h.1);
     let muzzle_rot = look_rot(aim - (feet + muzzle));
@@ -328,7 +330,7 @@ fn read_input(
     // (`.1`: shown for testing, `LT_DEV` "arc".)
     let holding = grabbed && has && on(Action::Grenade) || arc.1;
     let released = settings.just_released(Action::Grenade, &input);
-    let off_hand = head + view * Vec3::new(-0.22, -0.18, -0.35);
+    let off_hand = cam + view * Vec3::new(-0.22, -0.18, -0.35);
     cmd.hands[0] = Pose {
         pos: off_hand,
         rot: view,
