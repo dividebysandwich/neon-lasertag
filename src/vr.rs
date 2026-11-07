@@ -28,6 +28,7 @@ use lt_sim::{Hand, PickupKind, Pose, SimEvent, Team};
 use crate::assets::Models;
 use crate::game::{Game, GameEvent, InputSet, LocalCmd, Mover, PredictSet};
 use crate::materials::{AccentMaterial, NeonUniform, Palette, team_color};
+use crate::segtext::{self, Align};
 use crate::sevenseg::{Digit, show, spawn_digits};
 
 /// The holster, from the eyes (along the body's facing; x to the gun side). `LT_HOLSTER=x,y,z`
@@ -322,7 +323,7 @@ fn fake_hands(
     if mode.as_deref() == Some("wrist") && input.hands[0].grip.is_none() {
         let rot = Quat::from_rotation_y(flat_yaw(head.rotation));
         // (The wrist display is turned by -1.2 rad about the hand's x: undone.)
-        let t = Transform::from_translation(head.translation + rot * Vec3::new(-0.02, -0.2, -0.3))
+        let t = Transform::from_translation(head.translation + rot * Vec3::new(-0.02, -0.12, -0.3))
             .with_rotation(rot * Quat::from_rotation_x(1.2 - 0.5));
         input.hands[0].grip = Some(t);
         input.hands[0].aim = Some(t);
@@ -781,6 +782,13 @@ struct Wrist {
     panel_digits: Vec<Digit>,
     mega_digits: Vec<Digit>,
     mega_pips: [Entity; 2],
+    /// Under the hit bars: the match's time left (blinking in its last ten seconds), "2X"
+    /// while points count double, and a blackout's seconds left.
+    clock: Vec<Digit>,
+    colon: Entity,
+    double: Entity,
+    blackout: Entity,
+    blackout_digits: Vec<Digit>,
     /// Small copies of the powerups one has, in a row along the top, and under each a bar in
     /// its colour draining with its time left (shown while it runs).
     powerups: Vec<(PickupKind, Entity, Entity)>,
@@ -896,6 +904,67 @@ fn spawn_wrist(
             Some((k, e, bar))
         })
         .collect();
+    // The clock: M SS with a colon of two dots between.
+    let clock = [(-0.035, 1), (-0.012, 2)]
+        .into_iter()
+        .flat_map(|(x, n)| {
+            spawn_digits(
+                &mut commands,
+                &mut meshes,
+                root,
+                Vec3::new(x, -0.03, 0.0),
+                n,
+                0.016,
+                &white,
+            )
+        })
+        .collect();
+    let colon = commands
+        .spawn((Transform::IDENTITY, Visibility::default(), ChildOf(root)))
+        .id();
+    let dot = meshes.add(Cuboid::new(0.002, 0.002, 0.001));
+    for y in [-0.026, -0.034] {
+        commands.spawn((
+            Mesh3d(dot.clone()),
+            MeshMaterial3d(white.clone()),
+            Transform::from_xyz(-0.0245, y, 0.0),
+            ChildOf(colon),
+        ));
+    }
+    let gold = palette
+        .pickup
+        .get(&PickupKind::Rapid)
+        .map_or(white.clone(), |m| m.0.clone());
+    let label = |commands: &mut Commands, meshes: &mut Assets<Mesh>, text: &str, at: Vec3, h| {
+        let e = commands
+            .spawn((Transform::IDENTITY, Visibility::Hidden, ChildOf(root)))
+            .id();
+        segtext::spawn(commands, meshes, e, text, h, at, Align::Left, &gold, None);
+        e
+    };
+    let double = label(
+        &mut commands,
+        &mut meshes,
+        "2X",
+        Vec3::new(0.022, -0.03, 0.0),
+        0.012,
+    );
+    let blackout = label(
+        &mut commands,
+        &mut meshes,
+        "DARK",
+        Vec3::new(-0.04, -0.055, 0.0),
+        0.008,
+    );
+    let blackout_digits = spawn_digits(
+        &mut commands,
+        &mut meshes,
+        blackout,
+        Vec3::new(0.002, -0.055, 0.0),
+        2,
+        0.01,
+        &white,
+    );
     let panel = commands
         .spawn((Transform::IDENTITY, Visibility::Hidden))
         .id();
@@ -917,6 +986,11 @@ fn spawn_wrist(
         panel_digits,
         mega_digits,
         mega_pips,
+        clock,
+        colon,
+        double,
+        blackout,
+        blackout_digits,
         powerups,
     });
 }
@@ -1007,6 +1081,45 @@ fn wrist(
             x += 0.03;
         }
     }
+    // The clock, blinking in the last ten seconds.
+    let clock_left = game.snap.time_left.max(0.0);
+    let ticking = clock_left > 10.0 || game.snap.over || clock_left.fract() > 0.3;
+    let s = clock_left.ceil() as u32;
+    show(
+        &if ticking {
+            format!("{}{:02}", (s / 60).min(9), s % 60)
+        } else {
+            String::new()
+        },
+        &w.clock,
+        &mut vis,
+    );
+    let toggle = |vis: &mut Query<&mut Visibility>, e, on: bool| {
+        if let Ok(mut v) = vis.get_mut(e) {
+            let want = if on {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            };
+            if *v != want {
+                *v = want;
+            }
+        }
+    };
+    toggle(&mut vis, w.colon, ticking);
+    toggle(&mut vis, w.double, game.snap.double);
+    let dark = match game.snap.event {
+        Some((lt_sim::ArenaEvent::Blackout, t)) => Some(t),
+        _ => None,
+    };
+    toggle(&mut vis, w.blackout, dark.is_some());
+    show(
+        &dark.map_or(String::new(), |t| {
+            format!("{:>2}", (t.ceil() as u32).min(99))
+        }),
+        &w.blackout_digits,
+        &mut vis,
+    );
     if let Ok(mut v) = vis.get_mut(w.grenade) {
         *v = if p.grenades > 0 {
             Visibility::Inherited

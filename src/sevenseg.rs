@@ -1,7 +1,8 @@
 //! Seven-segment displays made of accent strips: they glow like the arena and draw in every
 //! renderer (the GL headset renderer has no UI). At each end of the arena, on top of the spectrum
 //! display behind the rear wall, a board shows the scores (Red's left, Blue's right) and a smaller
-//! board above it the time left; VR players also get one on the wrist (src/xr.rs).
+//! board above it the time left. The VR wrist (src/vr.rs) uses the digits for shots left and
+//! the time left.
 
 use bevy::prelude::*;
 use lt_sim::level::Level;
