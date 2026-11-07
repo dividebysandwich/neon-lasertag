@@ -15,7 +15,7 @@
 
 use std::f32::consts::{PI, TAU};
 
-use bevy::audio::{PlaybackMode, Volume};
+use bevy::audio::{PlaybackMode, SpatialAudioSink, Volume};
 use bevy::prelude::*;
 use lt_sim::SimEvent;
 use lt_sim::kit::{STOREY, WALL_T};
@@ -595,6 +595,8 @@ fn spawn_shields(
             PlaybackSettings {
                 mode: PlaybackMode::Loop,
                 spatial: true,
+                // (Turned up to the sound setting's once playing: `animate`.)
+                volume: Volume::Linear(0.0),
                 ..default()
             },
             ShieldHum,
@@ -666,7 +668,8 @@ fn animate(
     mut parts: Query<&mut Transform, (Without<TurretView>, Without<Climber>, Without<CoreView>)>,
     mut accents: ResMut<Assets<AccentMaterial>>,
     mut glows: ResMut<Assets<GlowMaterial>>,
-    mut hums: Query<&mut AudioSink, With<ShieldHum>>,
+    // (Spatial: their sinks are `SpatialAudioSink`s.)
+    mut hums: Query<&mut SpatialAudioSink, With<ShieldHum>>,
 ) {
     let Some(mega) = &game.level.mega else { return };
     let t = time.elapsed_secs();

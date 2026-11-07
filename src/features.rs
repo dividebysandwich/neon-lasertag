@@ -17,7 +17,7 @@
 
 use std::f32::consts::FRAC_PI_2;
 
-use bevy::audio::{PlaybackMode, Volume};
+use bevy::audio::{PlaybackMode, SpatialAudioSink, Volume};
 use bevy::prelude::*;
 use lt_sim::SimEvent;
 use lt_sim::level::{GATE_H, Level, PAD_RADIUS, Panel, pad_flight};
@@ -556,7 +556,8 @@ fn animate(
     game: Res<Game>,
     settings: Option<Res<Settings>>,
     mut gates: Query<&mut GateView>,
-    mut hums: Query<(&GateHum, &mut AudioSink)>,
+    // (Spatial: their sinks are `SpatialAudioSink`s.)
+    mut hums: Query<(&GateHum, &mut SpatialAudioSink)>,
     mut mirrors: Query<&mut MirrorView>,
     mut pads: Query<&mut PadView>,
     mut chevrons: Query<(&PadChevron, &mut Transform)>,
