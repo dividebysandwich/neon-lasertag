@@ -421,12 +421,16 @@ mod tests {
             let me = snap.players.iter().find(|s| s.id == a).cloned();
             let feet = sim.player(a).unwrap().feet;
             let muzzle = feet + Vec3::Y * (EYE - 0.2);
-            // (Aimed at the victim as shown.)
+            // (Aimed at the middle of the victim's chest as shown: it hangs from the neck,
+            // behind the eyes, as `lt_sim::hitbox` has it.)
             let chest = snap
                 .players
                 .iter()
                 .find(|s| s.id == b)
-                .map(|s| s.feet + s.head.pos - Vec3::Y * 0.55)
+                .map(|s| {
+                    lt_sim::sim::chest_top(s.feet + s.head.pos, s.head.rot)
+                        - Vec3::Y * lt_sim::hitbox::CHEST_HALF.y
+                })
                 .unwrap();
             let mut cmd = PlayerCmd {
                 gun_hand: Some(Hand::Right),
