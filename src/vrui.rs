@@ -1317,6 +1317,7 @@ fn apply_option(s: &mut crate::settings::Settings, o: VrOpt, head: Option<f32>) 
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn panels(
     mut commands: Commands,
     mut ui: ResMut<VrUi>,

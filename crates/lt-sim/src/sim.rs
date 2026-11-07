@@ -825,9 +825,7 @@ impl Sim {
             p.lose_powerups();
             self.send_home(i);
         }
-        for t in &mut self.last_target_hit {
-            *t = None;
-        }
+        self.last_target_hit.fill(None);
         self.start_countdown();
     }
 

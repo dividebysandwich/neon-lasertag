@@ -2252,6 +2252,7 @@ impl BannerQueue {
 }
 
 #[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 fn event_banner(
     mut events: MessageReader<GameEvent>,
     game: Res<Game>,

@@ -685,7 +685,7 @@ const PIPS_RANGE: f32 = 30.0;
 /// Over every enemy who has taken hits (and isn't cloaked), a row of lights: their hits left
 /// in their team's colour, the hits taken small and white; facing the viewer and as readable
 /// far off as near.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn damage_pips(
     mut commands: Commands,
     game: Res<Game>,
