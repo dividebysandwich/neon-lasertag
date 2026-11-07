@@ -26,7 +26,13 @@ pub struct MoverView(pub usize);
 pub struct Kit {
     pub pieces: HashMap<PieceKind, HashMap<String, MeshData>>,
     pub shapes: HashMap<PieceKind, Vec<Shape3>>,
+    /// Each piece's ceiling bands (material `CEILING`), one per face.
+    pub ceiling: HashMap<PieceKind, Vec<MeshData>>,
 }
+
+/// The material of the bands where an upper floor's underside meets a wall face (the slab
+/// buries the band on the wall's top edge): shown only on faces with an upper floor tile above.
+const CEILING: &str = "ceiling_accent";
 
 /// One connected accent shape of a kit piece and its halos.
 #[derive(Default)]
@@ -35,6 +41,9 @@ pub struct Shape3 {
     pub glow: MeshData,
     /// Its bounding box's diagonal (the biggest is the piece's outline, always kept).
     pub size: f32,
+    /// The index of the first of it and its mirror image (pieces are X mirror symmetric), so
+    /// the two are kept or left out together.
+    pub pair: usize,
 }
 
 /// `m` split into its connected parts (vertices at the same place joined).
@@ -96,13 +105,14 @@ fn islands(m: &MeshData) -> Vec<MeshData> {
 fn split_shapes(parts: &HashMap<String, MeshData>) -> Vec<Shape3> {
     let mut shapes: Vec<Shape3> = Vec::new();
     for (mat, data) in parts {
-        if mat != "body" && mat != "glow" {
+        if mat != "body" && mat != "glow" && mat != CEILING {
             for a in islands(data) {
                 let (lo, hi) = a.bounds();
                 shapes.push(Shape3 {
                     size: (hi - lo).length(),
                     accent: a,
                     glow: MeshData::default(),
+                    pair: 0,
                 });
             }
         }
@@ -128,6 +138,16 @@ fn split_shapes(parts: &HashMap<String, MeshData>) -> Vec<Shape3> {
         }
     }
     shapes.sort_by(|a, b| b.size.total_cmp(&a.size));
+    let boxes: Vec<(Vec3, Vec3)> = shapes.iter().map(|s| s.accent.bounds()).collect();
+    for (i, s) in shapes.iter_mut().enumerate() {
+        let (lo, hi) = boxes[i];
+        let mirrored = (lo.with_x(-hi.x), hi.with_x(-lo.x));
+        s.pair = (0..=i)
+            .find(|&j| {
+                boxes[j].0.distance(mirrored.0) < 1e-3 && boxes[j].1.distance(mirrored.1) < 1e-3
+            })
+            .unwrap_or(i);
+    }
     shapes
 }
 
@@ -150,6 +170,8 @@ impl Kit {
             kit.pieces.entry(k).or_insert_with(|| fallback_piece(k));
             let shapes = split_shapes(&kit.pieces[&k]);
             kit.shapes.insert(k, shapes);
+            let ceiling = kit.pieces[&k].get(CEILING).map(islands).unwrap_or_default();
+            kit.ceiling.insert(k, ceiling);
         }
         kit
     }
@@ -409,6 +431,9 @@ fn spawn_movers(
             ))
             .id();
         for (mat, data) in parts {
+            if mat == CEILING {
+                continue;
+            }
             let mut d = MeshData::default();
             if mat == "body" {
                 d.append(data, rot, Vec3::ZERO);
@@ -442,6 +467,12 @@ pub fn spawn_arena(
     spawn_movers(commands, level, kit, palette, meshes);
     let (hw, hl) = (level.dims().half_width(), level.dims().half_length());
     let mut chunks: HashMap<(i32, i32), HashMap<&str, MeshData>> = HashMap::new();
+    let uppers: Vec<Vec3> = level
+        .pieces
+        .iter()
+        .filter(|p| p.kind == PieceKind::UpperTile)
+        .map(|p| p.pos)
+        .collect();
     for p in &level.pieces {
         let Some(parts) = kit.pieces.get(&p.kind) else {
             continue;
@@ -496,7 +527,7 @@ pub fn spawn_arena(
             ("accent", "glow")
         };
         let floor = matches!(p.kind, PieceKind::FloorTile | PieceKind::UpperTile);
-        for (i, shape) in kit.shapes.get(&p.kind).into_iter().flatten().enumerate() {
+        for shape in kit.shapes.get(&p.kind).into_iter().flatten() {
             // The floors: a plain white grid (each tile's outline on its top; the corner marks
             // go), the same everywhere. (The upper floor's underside is a ceiling: as it was.)
             let mut tint = tint;
@@ -522,10 +553,11 @@ pub fn spawn_arena(
                         continue;
                     }
                 }
+                // (Keeping the outline, and mirror twins together.)
                 Detail::Full
                     if thin
-                        && i > 0
-                        && piece_random(level, p.kind, p.pos, 10 + i as u64) > KEEP =>
+                        && !outline(shape)
+                        && piece_random(level, p.kind, p.pos, 10 + shape.pair as u64) > KEEP =>
                 {
                     continue;
                 }
@@ -540,6 +572,23 @@ pub fn spawn_arena(
                     .entry(glow_slot)
                     .or_default()
                     .append_tinted(&shape.glow, rot, p.pos, tint);
+            }
+        }
+        // The ceiling bands of the faces with an upper floor tile above them (the cell beyond
+        // the face, a storey up).
+        for band in kit.ceiling.get(&p.kind).into_iter().flatten() {
+            let (lo, hi) = band.bounds();
+            let face = rot * Vec3::new(0.0, 0.0, if lo.z + hi.z > 0.0 { hi.z } else { lo.z });
+            let beyond = p.pos + face + face.normalize() * kit::CELL / 2.0;
+            let covered = uppers.iter().any(|u| {
+                (u.y - p.pos.y - kit::STOREY).abs() < 0.1
+                    && Vec2::new(u.x - beyond.x, u.z - beyond.z).length() < kit::CELL / 4.0
+            });
+            if covered {
+                chunk
+                    .entry(accent_slot)
+                    .or_default()
+                    .append_tinted(band, rot, p.pos, tint);
             }
         }
     }

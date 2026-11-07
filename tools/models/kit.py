@@ -60,6 +60,14 @@ def edge_bands(geo, mn, mx, sides=("+x", "-x", "+y", "+z", "-z"), w=W):
         edge_band(geo, f, hu, hv, w)
 
 
+def ceiling_band(geo, f, hu, hv, w=W):
+    """A band along a full-height face where an upper floor's underside meets it (the upper
+    floor's slab buries the top edge's band): its own material, `ceiling_accent`, which the
+    game shows only on faces with an upper floor tile above them."""
+    v = C["STOREY"] - C["FLOOR_T"] - w / 2 - hv
+    line(geo, f, (-hu + w, v), (hu - w, v), w, glow=0, mat="ceiling_accent")
+
+
 def corner_lines(geo, hx, hz, c, y0, y1, w=0.022):
     """Light lines along the chamfered vertical corners of a post-like prism (no halo: they are
     its edges)."""
@@ -127,6 +135,7 @@ def wall_full():
     edge_bands(g, mn, mx)
     for side in ("+z", "-z"):
         f, hu, hv = box_face(mn, mx, side)  # v = y - 1.5
+        ceiling_band(g, f, hu, hv)
         hc = 1.75 - hv
         ring(g, f, hexagon(0, hc, 0.42), 0.05, glow_in=0.09, glow_out=0.10)
         ring(g, f, hexagon(0, hc, 0.24), 0.03, glow_in=0.06, glow_out=0.05)
@@ -149,6 +158,7 @@ def wall_window():
     t = mx[2]
     for side in ("+z", "-z"):
         f, hu, hv = box_face(mn, mx, side)
+        ceiling_band(g, f, hu, hv)
         # Hexagonal frame around the opening (the opening itself stays the collider rectangle).
         e = 0.065
         a0, a1 = y0 - hv - e, y1 - hv + e
@@ -316,6 +326,7 @@ def ramp():
     # Tall back face (under the upper floor's edge).
     f, hu, hv = box_face(mn, mx, "+z")
     edge_band(g, f, hu, hv)
+    ceiling_band(g, f, hu, hv)
     ring(g, f, hexagon(0, 0, 0.4), 0.05, glow_in=0.08, glow_out=0.1)
     filled(g, f, hexagon(0, 0, 0.1), glow=0.06)
     return g
@@ -450,6 +461,7 @@ BUILDERS = {
 def main():
     L.reset_scene()
     L.standard_materials()
+    L.material("ceiling_accent", base=(1, 1, 1), rough=0.4, emit=(1, 1, 1), strength=3.0)
     missing = set(P) - set(BUILDERS)
     if missing:
         raise SystemExit("no builder for %s" % sorted(missing))

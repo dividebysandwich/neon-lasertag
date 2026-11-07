@@ -126,7 +126,7 @@ def check_uvs(ck, label, gltf, binary):
 def check_kit(ck):
     dims = json.load(open(os.path.join(HERE, "kit_dims.json")))
     gltf, binary = load_glb(os.path.join(ROOT, "assets/models/kit.glb"))
-    meshes = check_common(ck, "kit", gltf, binary, {"body", "accent", "glow"})
+    meshes = check_common(ck, "kit", gltf, binary, {"body", "accent", "ceiling_accent", "glow"})
     for name, piece in dims["pieces"].items():
         if name not in meshes:
             ck.err("kit: no mesh named %r" % name)

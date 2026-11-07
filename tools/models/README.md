@@ -44,6 +44,8 @@ static 3 cm pulses every 0.1 m of its UV U).
 - **Materials** (replaced by name in the game):
   - `body`: black structure (base 0.02, roughness 0.35).
   - `accent`: neon strips, recoloured per team by the game shader.
+  - `ceiling_accent`: kit walls' bands at the upper floor's underside (y = 2.76-2.8, one per
+    full-height face); the game shows each only where an upper floor tile is above that face.
   - `glow`: halo quads 0.002 m off the face beside accents. UV0: U = metres along the strip,
     V = 0 at the strip edge and 1 at the outer edge (glTF convention; the game fades alpha by V).
   - blaster: `hit_1` (rear, nearest the player), `hit_2`, `hit_3` (front) on the top rib,
