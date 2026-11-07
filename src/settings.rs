@@ -1,5 +1,5 @@
-//! The player's settings: the flat screen's key bindings, mouse sensitivity and inverted mouse
-//! look, and the volumes of the sound effects and the music (in VR too).
+//! The player's settings: the flat screen's key bindings, mouse sensitivity, inverted mouse
+//! look, field of view, crouching (held or toggled) and head bob, and the volumes of the sound effects and the music (in VR too).
 //! Changed in the options screen (src/options.rs) and kept in `settings.ron` in the user's
 //! config directory (`$XDG_CONFIG_HOME/lasertag`, `~/.config/lasertag`, `%APPDATA%\lasertag`).
 
@@ -245,6 +245,12 @@ pub struct Settings {
     /// Mouse look speed, 1 = the default.
     pub sensitivity: f32,
     pub invert_y: bool,
+    /// The flat screen's field of view (degrees, vertical: `FOV_RANGE`).
+    pub fov: f32,
+    /// The crouch key toggles crouching (instead of crouching while held).
+    pub toggle_crouch: bool,
+    /// The view bobs while walking and the blaster sways (flat screen).
+    pub head_bob: bool,
     /// Volumes, 0..=1 (1 the default): the sound effects and the music.
     pub sound_volume: f32,
     pub music_volume: f32,
@@ -256,6 +262,10 @@ pub struct Settings {
     /// The first-match hints shown already (by id).
     pub hints: Vec<String>,
 }
+
+/// The field of view's range and default (degrees).
+pub const FOV_RANGE: (f32, f32) = (60.0, 110.0);
+pub const FOV_DEFAULT: f32 = 80.0;
 
 /// Pickups of a kind whose announcements explain it.
 pub const EXPLAINED: u32 = 3;
@@ -275,6 +285,9 @@ impl Default for Settings {
         Settings {
             sensitivity: 1.0,
             invert_y: false,
+            fov: FOV_DEFAULT,
+            toggle_crouch: false,
+            head_bob: true,
             sound_volume: 1.0,
             music_volume: 1.0,
             bindings: Action::ALL.iter().map(|&a| (a, a.defaults())).collect(),
@@ -404,6 +417,9 @@ impl Settings {
             Ok(saved) => {
                 s.sensitivity = saved.sensitivity.clamp(0.1, 5.0);
                 s.invert_y = saved.invert_y;
+                s.fov = saved.fov.clamp(FOV_RANGE.0, FOV_RANGE.1);
+                s.toggle_crouch = saved.toggle_crouch;
+                s.head_bob = saved.head_bob;
                 s.sound_volume = saved.sound_volume.clamp(0.0, 1.0);
                 s.music_volume = saved.music_volume.clamp(0.0, 1.0);
                 s.taken = saved.taken;
@@ -428,6 +444,9 @@ impl Settings {
         let saved = Saved {
             sensitivity: self.sensitivity,
             invert_y: self.invert_y,
+            fov: self.fov,
+            toggle_crouch: self.toggle_crouch,
+            head_bob: self.head_bob,
             sound_volume: self.sound_volume,
             music_volume: self.music_volume,
             bindings: self
@@ -462,6 +481,9 @@ impl Settings {
 struct Saved {
     sensitivity: f32,
     invert_y: bool,
+    fov: f32,
+    toggle_crouch: bool,
+    head_bob: bool,
     sound_volume: f32,
     music_volume: f32,
     bindings: Vec<(String, Vec<Option<String>>)>,
@@ -474,6 +496,9 @@ impl Default for Saved {
         Saved {
             sensitivity: 1.0,
             invert_y: false,
+            fov: FOV_DEFAULT,
+            toggle_crouch: false,
+            head_bob: true,
             sound_volume: 1.0,
             music_volume: 1.0,
             bindings: Vec::new(),

@@ -159,7 +159,7 @@ while a VR compositor runs (SteamVR's vrcompositor or Monado's service: `--vr`),
 flat screen otherwise (or when the headset can't be used).
 
 **The start menu** (flat screen and VR alike): Botmatch (the bots' number and difficulty, the
-arena's size, the mode), Multiplayer, Options (flat screen) and Quit. Multiplayer offers Internet
+arena's size, the mode), Multiplayer, Options (flat screen: volumes, mouse, field of view, crouch held or toggled, head bob and blaster sway, the keys) and Quit. Multiplayer offers Internet
 (the master server's list of servers, join one, or host an internet game) and LAN (the games
 found on your network, found by their broadcasts on UDP port 27421, join one, or host a LAN
 game); on the flat screen both also join a typed address. Hosting asks for the server's name

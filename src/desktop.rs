@@ -28,6 +28,8 @@ pub struct Look {
     pub follow_sim: bool,
     /// Crouching: 0 standing, 1 all the way down (eased).
     pub crouch: f32,
+    /// Crouching by toggle (`Settings::toggle_crouch`): down until pressed again.
+    pub crouch_on: bool,
 }
 
 /// How far crouching lowers the eyes (m), how long it takes (time constant, s), and how much
@@ -117,7 +119,8 @@ impl Plugin for DesktopPlugin {
             (on_events, place_camera, draw_arc)
                 .chain()
                 .after(PredictSet),
-        );
+        )
+        .add_systems(Update, apply_fov);
     }
 }
 
@@ -137,6 +140,17 @@ pub fn camera_bundle() -> impl Bundle {
         }),
         Msaa::Sample4,
     )
+}
+
+/// The field of view from the settings (`Settings::fov`).
+fn apply_fov(settings: Res<Settings>, mut cams: Query<&mut Projection, With<MainCamera>>) {
+    let want = settings.fov.to_radians();
+    for mut p in &mut cams {
+        let off = matches!(&*p, Projection::Perspective(pp) if (pp.fov - want).abs() > 1e-4);
+        if off && let Projection::Perspective(pp) = &mut *p {
+            pp.fov = want;
+        }
+    }
 }
 
 fn spawn_camera(mut commands: Commands) {
@@ -242,7 +256,11 @@ fn read_input(
         look.yaw -= motion.delta.x * s;
         look.pitch = pitch;
     }
-    let (gun_offset, gun_rot) = sway.update(dt, turned, &mover, game.rules.move_speed);
+    let (mut gun_offset, mut gun_rot) = sway.update(dt, turned, &mover, game.rules.move_speed);
+    if !settings.head_bob {
+        sway.camera = Vec3::ZERO;
+        (gun_offset, gun_rot) = (Vec3::ZERO, Quat::IDENTITY);
+    }
     let fwd = Vec2::new(-look.yaw.sin(), -look.yaw.cos());
     let right = Vec2::new(look.yaw.cos(), -look.yaw.sin());
     let mut stick = Vec2::ZERO;
@@ -258,7 +276,23 @@ fn read_input(
     if on(Action::Left) {
         stick -= right;
     }
-    let crouching = if grabbed && on(Action::Crouch) {
+    let alive = game
+        .me
+        .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
+        .is_some_and(|p| p.respawn.is_none());
+    if settings.toggle_crouch {
+        if grabbed && settings.just_pressed(Action::Crouch, &input) {
+            look.crouch_on = !look.crouch_on;
+        }
+        // (Up again after being tagged out.)
+        if !alive {
+            look.crouch_on = false;
+        }
+    } else {
+        look.crouch_on = false;
+    }
+    let crouching = if grabbed && (on(Action::Crouch) && !settings.toggle_crouch || look.crouch_on)
+    {
         1.0
     } else {
         0.0

@@ -1,5 +1,6 @@
 //! The flat screen's options screen (from the start menu and the in-game menu): sound and music
-//! volume, key bindings, mouse sensitivity and inverted mouse look, saved as soon as they change (src/settings.rs).
+//! volume, key bindings, mouse sensitivity and inverted mouse look, the field of view, holding
+//! or toggling crouch and head bob, saved as soon as they change (src/settings.rs).
 //!
 //! A binding is changed by clicking it and pressing a key or a mouse button; Esc cancels,
 //! Backspace or Delete clears it. Esc otherwise closes the screen.
@@ -19,6 +20,10 @@ enum Opt {
     SensDown,
     SensUp,
     Invert,
+    /// The field of view, narrower (false) or wider (true).
+    Fov(bool),
+    ToggleCrouch,
+    HeadBob,
     /// Sound effects' and music volume, down (false) or up (true).
     Sound(bool),
     Music(bool),
@@ -32,6 +37,9 @@ enum OptText {
     Slot(Action, usize),
     Sens,
     Invert,
+    Fov,
+    ToggleCrouch,
+    HeadBob,
     Sound,
     Music,
 }
@@ -141,6 +149,17 @@ fn show(
                         button(r, Opt::Invert, 204.0, "", Some(OptText::Invert));
                         r.spawn(Node { width: Val::Px(8.0), ..default() });
                     });
+                    stepper(p, "Field of view", Opt::Fov(false), Opt::Fov(true), OptText::Fov);
+                    p.spawn(row()).with_children(|r| {
+                        name(r, "Crouch key");
+                        button(r, Opt::ToggleCrouch, 204.0, "", Some(OptText::ToggleCrouch));
+                        r.spawn(Node { width: Val::Px(8.0), ..default() });
+                    });
+                    p.spawn(row()).with_children(|r| {
+                        name(r, "Head bob and blaster sway");
+                        button(r, Opt::HeadBob, 204.0, "", Some(OptText::HeadBob));
+                        r.spawn(Node { width: Val::Px(8.0), ..default() });
+                    });
                     p.spawn(Node { height: Val::Px(8.0), ..default() });
                     for a in Action::ALL {
                         p.spawn(row()).with_children(|r| {
@@ -219,6 +238,13 @@ fn buttons(
                     ((settings.sensitivity + 0.1) * 10.0).round().min(50.0) / 10.0
             }
             Opt::Invert => settings.invert_y = !settings.invert_y,
+            Opt::Fov(wider) => {
+                let (lo, hi) = crate::settings::FOV_RANGE;
+                let step = if wider { 5.0 } else { -5.0 };
+                settings.fov = (((settings.fov + step) / 5.0).round() * 5.0).clamp(lo, hi);
+            }
+            Opt::ToggleCrouch => settings.toggle_crouch = !settings.toggle_crouch,
+            Opt::HeadBob => settings.head_bob = !settings.head_bob,
             Opt::Sound(up) => {
                 settings.sound_volume = Settings::step_volume(settings.sound_volume, up)
             }
@@ -278,6 +304,14 @@ fn refresh(
         let s = match *t {
             OptText::Sens => format!("{:.1}x", settings.sensitivity),
             OptText::Invert => (if settings.invert_y { "On" } else { "Off" }).to_string(),
+            OptText::Fov => format!("{:.0}°", settings.fov),
+            OptText::ToggleCrouch => (if settings.toggle_crouch {
+                "Toggle"
+            } else {
+                "Hold"
+            })
+            .to_string(),
+            OptText::HeadBob => (if settings.head_bob { "On" } else { "Off" }).to_string(),
             OptText::Sound => format!("{:.0} %", settings.sound_volume * 100.0),
             OptText::Music => format!("{:.0} %", settings.music_volume * 100.0),
             OptText::Slot(a, slot) => {
