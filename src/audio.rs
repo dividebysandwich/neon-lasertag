@@ -23,6 +23,7 @@ struct Sounds {
     /// Blasters firing: Blue's and Red's sound different.
     fire: Handle<AudioSource>,
     fire_red: Handle<AudioSource>,
+    shotgun: Handle<AudioSource>,
     deny: Handle<AudioSource>,
     /// The local player hit, and someone else hit.
     hit: Handle<AudioSource>,
@@ -113,6 +114,7 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
     commands.insert_resource(Sounds {
         fire: s("laser_fire"),
         fire_red: s("laser_fire_red"),
+        shotgun: s("shotgun"),
         deny: s("deny"),
         hit: s("hit_player"),
         other_hit: s("player_hit"),
@@ -365,20 +367,25 @@ fn play_events(
                     .players
                     .iter()
                     .any(|p| p.id == player && p.team == lt_sim::Team::Red);
-                let sound = if red { &sounds.fire_red } else { &sounds.fire };
-                // The shotgun: deeper and louder.
                 let shotgun = game
                     .snap
                     .players
                     .iter()
                     .any(|p| p.id == player && p.shotgun);
+                let sound = if shotgun {
+                    &sounds.shotgun
+                } else if red {
+                    &sounds.fire_red
+                } else {
+                    &sounds.fire
+                };
                 play_capped(
                     &mut commands,
                     gain,
                     sound,
                     (!mine).then_some(pos),
-                    if mine { 0.55 } else { 1.0 } * if shotgun { 1.3 } else { 1.0 },
-                    if shotgun { 0.7 } else { 1.0 },
+                    if mine { 0.55 } else { 1.0 },
+                    1.0,
                     Mix::Fire,
                 );
             }
