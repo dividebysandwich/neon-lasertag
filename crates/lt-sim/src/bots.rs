@@ -2399,7 +2399,8 @@ impl Controller for Bot {
         // A carried gadget: a barrier goes up when hit in a fight, towards the enemy (the bot
         // faces its aim).
         let gadget = match p.gadget_kind() {
-            Some(Gadget::Barrier) => p.cooldown > 0.0 && target.is_some(),
+            // (A mirror too: it turns their bolts back at them.)
+            Some(Gadget::Barrier | Gadget::Mirror) => p.cooldown > 0.0 && target.is_some(),
             None => false,
         };
         self.pose(PlayerCmd {

@@ -2167,6 +2167,11 @@ pub fn pickup_banner(
             key(Action::Gadget, "GRIP OF THE FREE HAND"),
             rules.barrier_time
         ),
+        PickupKind::Mirror => format!(
+            "{}: A MIRROR THAT TURNS BACK EVERY BOLT FOR {:.0} S",
+            key(Action::Gadget, "GRIP OF THE FREE HAND"),
+            rules.mirror_time
+        ),
         PickupKind::Lance => format!(
             "{}A SHOT THAT HITS AT ONCE - A HEAD HIT COUNTS {} ({} SHOTS)",
             match controls {

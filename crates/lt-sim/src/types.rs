@@ -75,13 +75,16 @@ pub enum PickupKind {
     /// whose shot reaches `Rules::lance_range` at once and deals `Rules::lance_head_damage`
     /// hits to the head (for `Rules::lance_cost` shots); taking one also fills it up.
     Lance,
+    /// A gadget: a mirror put up like a barrier (`PlayerCmd::gadget`) for `Rules::mirror_time`,
+    /// turning back every bolt that meets it, anyone's.
+    Mirror,
     /// A gadget, carried until put up (`PlayerCmd::gadget`): a wall of hard light in front of the
     /// player for `Rules::barrier_time`, stopping every bolt but its team's.
     Barrier,
 }
 
 impl PickupKind {
-    pub const ALL: [PickupKind; 10] = [
+    pub const ALL: [PickupKind; 11] = [
         PickupKind::Grenade,
         PickupKind::Rapid,
         PickupKind::Shield,
@@ -92,9 +95,10 @@ impl PickupKind {
         PickupKind::Barrier,
         PickupKind::Ricochet,
         PickupKind::Lance,
+        PickupKind::Mirror,
     ];
     /// The powerups (everything but the grenade).
-    pub const POWERUPS: [PickupKind; 9] = [
+    pub const POWERUPS: [PickupKind; 10] = [
         PickupKind::Rapid,
         PickupKind::Shield,
         PickupKind::Shotgun,
@@ -104,6 +108,7 @@ impl PickupKind {
         PickupKind::Barrier,
         PickupKind::Ricochet,
         PickupKind::Lance,
+        PickupKind::Mirror,
     ];
 
     pub fn name(self) -> &'static str {
@@ -118,6 +123,7 @@ impl PickupKind {
             PickupKind::Barrier => "barrier",
             PickupKind::Ricochet => "ricochet rifle",
             PickupKind::Lance => "prism lance",
+            PickupKind::Mirror => "mirror",
         }
     }
 
@@ -134,6 +140,7 @@ impl PickupKind {
             PickupKind::Barrier => "barrier",
             PickupKind::Ricochet => "ricochet",
             PickupKind::Lance => "lance",
+            PickupKind::Mirror => "mirror",
         }
     }
 
@@ -148,7 +155,7 @@ impl PickupKind {
             PickupKind::Shotgun | PickupKind::Charge | PickupKind::Ricochet | PickupKind::Lance => {
                 Some(Pool::Weapon)
             }
-            PickupKind::Barrier => Some(Pool::Gadget),
+            PickupKind::Barrier | PickupKind::Mirror => Some(Pool::Gadget),
             PickupKind::Rapid | PickupKind::Shield | PickupKind::Cloak | PickupKind::Speed => {
                 Some(Pool::Power)
             }
@@ -170,6 +177,7 @@ impl PickupKind {
     pub fn gadget(self) -> Option<Gadget> {
         match self {
             PickupKind::Barrier => Some(Gadget::Barrier),
+            PickupKind::Mirror => Some(Gadget::Mirror),
             _ => None,
         }
     }
@@ -192,12 +200,14 @@ pub enum Weapon {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Gadget {
     Barrier,
+    Mirror,
 }
 
 impl Gadget {
     pub fn name(self) -> &'static str {
         match self {
             Gadget::Barrier => "barrier",
+            Gadget::Mirror => "mirror",
         }
     }
 }

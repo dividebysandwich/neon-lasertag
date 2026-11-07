@@ -17,6 +17,8 @@ Meshes (game frame, Y up, metres):
   origin at the centre.
 - `lance`: a triangular prism split by a long beam of light (the prism lance), ~0.5 m wide,
   ~0.3 m tall, origin at the centre.
+- `mirror`: a hexagonal hand mirror on a short post, its glass the accent, ~0.34 m wide,
+  ~0.42 m tall, origin at the centre.
 - `shotgun`: the pump shotgun a player holds, in the blaster's frame (barrel along -Z, up +Y,
   origin at the middle of the grip hold), with `hit_1`/`hit_2`/`hit_3` lights on top of the
   receiver (hit_1 nearest the player) and a `muzzle` disc; the empty `shotgun_muzzle` marks the
@@ -255,6 +257,17 @@ def build_lance():
     return g
 
 
+def build_mirror():
+    g = L.Geo()
+    hexa = [(0.17 * math.cos(math.pi / 6 + k * math.pi / 3),
+             0.05 + 0.17 * math.sin(math.pi / 6 + k * math.pi / 3)) for k in range(6)]
+    slab(g, hexa, -0.012, 0.012, "body")
+    slab(g, inset(hexa, 0.025), -0.02, 0.02, "body", front_mat="accent", back_mat="accent")
+    box(g, (-0.025, -0.21, -0.025), (0.025, -0.1, 0.025), mat="body")
+    box(g, (-0.07, -0.22, -0.04), (0.07, -0.19, 0.04), mat="accent")
+    return g
+
+
 def build_shotgun():
     g = L.Geo()
 
@@ -327,7 +340,8 @@ def main():
     for name, build in (("rapid", build_rapid), ("shield", build_shield), ("cloak", build_cloak),
                         ("shotgun", build_shotgun), ("speed", build_speed),
                         ("charge", build_charge), ("barrier", build_barrier),
-                        ("ricochet", build_ricochet), ("lance", build_lance)):
+                        ("ricochet", build_ricochet), ("lance", build_lance),
+                        ("mirror", build_mirror)):
         g = build()
         L.make_object(name, g)
         print("powerup %s %d tris" % (name, g.tris()))

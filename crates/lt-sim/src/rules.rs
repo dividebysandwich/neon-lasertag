@@ -94,6 +94,8 @@ pub struct Rules {
     /// Barriers: seconds one stands, how far in front of the player it goes up (m), and its
     /// width and height (m).
     pub barrier_time: f32,
+    /// Seconds a mirror put up stands (its size is a barrier's).
+    pub mirror_time: f32,
     pub barrier_dist: f32,
     pub barrier_w: f32,
     pub barrier_h: f32,
@@ -199,6 +201,7 @@ impl Default for Rules {
             beam_speed: 400.0,
             beam_range: 60.0,
             beam_damage: 2,
+            mirror_time: 15.0,
             barrier_time: 8.0,
             barrier_dist: 1.5,
             barrier_w: 2.4,

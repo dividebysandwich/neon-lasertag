@@ -438,9 +438,15 @@ fn sync_barriers(
     for b in &game.snap.barriers {
         let v = views.0.entry(b.id).or_insert_with(|| {
             let color = team_color(Some(b.team));
+            // (A mirror's sheet is a pale silver, its frame the team's.)
+            let sheet = if b.mirror {
+                Vec3::new(0.75, 0.9, 1.0)
+            } else {
+                color
+            };
             let sheet_mat = glows.add(GlowMaterial {
                 overlay: false,
-                neon: NeonUniform::fixed(color, 2.0).shield(),
+                neon: NeonUniform::fixed(sheet, 2.0).shield(),
             });
             let posts = accents.add(AccentMaterial {
                 overlay: false,
@@ -452,7 +458,7 @@ fn sync_barriers(
                     ArenaPart,
                     Transform::from_translation(b.centre).with_rotation(rot),
                     Visibility::default(),
-                    Name::new("barrier"),
+                    Name::new(if b.mirror { "mirror" } else { "barrier" }),
                 ))
                 .id();
             // The sheet: uv 0..1 across and up, seen from both sides.
@@ -494,7 +500,12 @@ fn sync_barriers(
         });
         v.3 = (v.3 - dt * 3.0).max(0.0);
         // Going up: swelling in; the last second: flickering out.
-        let rise = ((game.rules.barrier_time - b.left) / 0.25).clamp(0.0, 1.0);
+        let total = if b.mirror {
+            game.rules.mirror_time
+        } else {
+            game.rules.barrier_time
+        };
+        let rise = ((total - b.left) / 0.25).clamp(0.0, 1.0);
         let fade = if b.left < 1.0 {
             if (t * 12.0).fract() < 0.5 {
                 b.left
@@ -520,10 +531,23 @@ fn on_events(
     mut pads: Query<&mut PadView>,
     mut gates: Query<&mut GateView>,
     mut barriers: ResMut<BarrierViews>,
+    game: Option<Res<Game>>,
 ) {
     for GameEvent(e) in events.read() {
         if let SimEvent::BarrierHit { id, .. } = *e
             && let Some(v) = barriers.0.get_mut(&id)
+        {
+            v.3 = 1.0;
+        }
+        // (A bolt turned back by a mirror put up: it flashes as a barrier hit.)
+        if let SimEvent::Reflected { pos, .. } = *e
+            && let Some(b) = game.as_ref().and_then(|g| {
+                g.snap
+                    .barriers
+                    .iter()
+                    .find(|b| b.mirror && b.centre.distance(pos) < 1.5)
+            })
+            && let Some(v) = barriers.0.get_mut(&b.id)
         {
             v.3 = 1.0;
         }

@@ -79,6 +79,7 @@ gadget at a time; a new one replaces the old.
 | Prism lance | Replaces your blaster: a slow marksman rifle whose shot hits instantly; a head hit counts as two. Zoom with Z / mouse button 5 (VR: a laser sight). |
 | Cloak | Nearly invisible for 100 s; you flicker into view when you fire or are hit. |
 | Barrier | Put up a wall of light for 8 s that blocks enemy bolts but lets your team's through. |
+| Mirror | Put up a mirror for 15 s that turns back every bolt, anyone's. |
 | Speed boost | Run 50% faster for 15 s. |
 
 ### Controls

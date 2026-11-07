@@ -388,6 +388,9 @@ pub struct Barrier {
     pub normal: Vec3,
     /// Seconds left standing.
     pub left: f32,
+    /// A mirror (`Gadget::Mirror`): turns back every bolt instead of stopping the enemy's.
+    #[serde(default)]
+    pub mirror: bool,
 }
 
 impl Barrier {
@@ -1315,12 +1318,19 @@ impl Sim {
             // Using the carried gadget (on pressing).
             let press = p.cmd.gadget && !p.prev_gadget;
             p.prev_gadget = p.cmd.gadget;
-            if press && let Some((Gadget::Barrier, _)) = p.gadget {
+            if press && let Some((g @ (Gadget::Barrier | Gadget::Mirror), _)) = p.gadget {
                 p.use_gadget();
                 p.protect = 0.0;
                 let id = self.id();
+                let mirror = g == Gadget::Mirror;
                 let b = Barrier {
                     id,
+                    mirror,
+                    left: if mirror {
+                        rules.mirror_time
+                    } else {
+                        rules.barrier_time
+                    },
                     ..self.barrier_for(i)
                 };
                 self.barriers.push(b);
@@ -1546,7 +1556,9 @@ impl Sim {
         if b.extra.lance {
             let to = match contact {
                 Contact::Clear => b.pos + b.vel * TICK,
-                Contact::Player { at, .. } | Contact::Barrier { at, .. } => at,
+                Contact::Player { at, .. }
+                | Contact::Barrier { at, .. }
+                | Contact::Mirror { at, .. } => at,
                 Contact::Arena { q, .. } => q,
             };
             self.events.push(SimEvent::Streak {
@@ -1557,6 +1569,23 @@ impl Sim {
         }
         match contact {
             Contact::Clear => b.extra.lance,
+            Contact::Mirror { index, at, n } => match crate::shot::bounce_placed(b, at, n) {
+                Some(n) => {
+                    self.events.push(SimEvent::Reflected {
+                        pos: at,
+                        normal: n,
+                        team: b.team,
+                    });
+                    false
+                }
+                None => {
+                    self.events.push(SimEvent::BarrierHit {
+                        id: self.barriers[index].id,
+                        pos: at,
+                    });
+                    true
+                }
+            },
             Contact::Barrier { index, at } => {
                 self.events.push(SimEvent::BarrierHit {
                     id: self.barriers[index].id,
@@ -1710,11 +1739,22 @@ impl Sim {
                 on_path = true;
                 break;
             }
-            // A wall ends the way (a mirror turns it).
-            if let Some((_, q, n)) = self.world.ray(b.pos, to)
-                && crate::shot::bounce(&self.level, &self.rules, &mut b, q, n).is_none()
-            {
-                break;
+            // A wall ends the way (a mirror turns it, and one put up).
+            let wall = self.world.ray(b.pos, to);
+            let placed = crate::shot::placed_mirror(&self.barriers, &self.rules, b.pos, to);
+            match (wall, placed) {
+                (_, Some((t, k))) if wall.is_none_or(|w| t < w.0) => {
+                    let at = b.pos + (to - b.pos) * t;
+                    if crate::shot::bounce_placed(&mut b, at, self.barriers[k].normal).is_none() {
+                        break;
+                    }
+                }
+                (Some((_, q, n)), _) => {
+                    if crate::shot::bounce(&self.level, &self.rules, &mut b, q, n).is_none() {
+                        break;
+                    }
+                }
+                _ => {}
             }
             b.pos += b.vel * TICK;
             b.life -= TICK;
@@ -2114,6 +2154,7 @@ impl Sim {
             centre: Vec3::new(spot.x, floor + self.rules.barrier_h / 2.0, spot.z),
             normal: -ahead,
             left: self.rules.barrier_time,
+            mirror: false,
         }
     }
 
@@ -2122,7 +2163,7 @@ impl Sim {
         let (w, h) = (self.rules.barrier_w, self.rules.barrier_h);
         self.barriers
             .iter()
-            .any(|br| Some(br.team) != team && br.crossed(a, b, w, h).is_some())
+            .any(|br| (br.mirror || Some(br.team) != team) && br.crossed(a, b, w, h).is_some())
     }
 
     /// Laser gates: whoever touches one while it's on takes a hit (unless shielded or still
@@ -3512,6 +3553,78 @@ mod tests {
         );
         assert_eq!(sim.player(b).unwrap().hits, 3);
         assert!(ev.iter().any(|e| matches!(e, SimEvent::TaggedOut { .. })));
+    }
+
+    #[test]
+    fn mirrors_put_up_turn_back_every_bolt() {
+        let (mut sim, a, b) = duel();
+        sim.give(a, PickupKind::Mirror);
+        assert_eq!(sim.player(a).unwrap().gadget, Some((Gadget::Mirror, 1)));
+        // Taking a barrier replaces it.
+        assert!(
+            sim.player(a)
+                .unwrap()
+                .wants(PickupKind::Barrier, &sim.rules)
+        );
+        assert!(!sim.player(a).unwrap().wants(PickupKind::Mirror, &sim.rules));
+        sim.set_cmd(
+            a,
+            PlayerCmd {
+                yaw: 0.0,
+                gadget: true,
+                ..Default::default()
+            },
+        );
+        sim.step();
+        sim.step();
+        assert_eq!(sim.barriers.len(), 1);
+        assert!(sim.barriers[0].mirror);
+        assert!((sim.barriers[0].left - (sim.rules.mirror_time - TICK * 2.0)).abs() < 1e-4);
+        let bolt = |owner, team, from: Vec3, to: Vec3| Bolt {
+            id: 7,
+            owner,
+            owner_team: team,
+            team: Some(team),
+            pos: from,
+            vel: (to - from).normalize() * 40.0,
+            life: 1.0,
+            extra: BoltExtra::default(),
+        };
+        let (ca, cb) = (
+            sim.player(a).unwrap().chest(),
+            sim.player(b).unwrap().chest(),
+        );
+        // b's bolt at a comes back off it (and passes b, its shooter).
+        sim.drain_events();
+        sim.bolts.push(bolt(b, Team::Blue, cb, ca));
+        for _ in 0..5 {
+            sim.step();
+        }
+        let back = sim.bolts.iter().find(|x| x.id == 7).expect("still flying");
+        assert!(back.vel.dot(ca - cb) < 0.0, "turned back");
+        for _ in 0..10 {
+            sim.step();
+        }
+        assert!(
+            sim.drain_events()
+                .iter()
+                .any(|e| matches!(e, SimEvent::Reflected { .. }))
+        );
+        assert_eq!(sim.player(a).unwrap().hits, 0);
+        // a's own bolt at b comes back too.
+        sim.bolts.push(bolt(a, Team::Red, ca, cb));
+        for _ in 0..10 {
+            sim.step();
+        }
+        assert_eq!(sim.player(b).unwrap().hits, 0);
+        assert!(
+            sim.barrier_blocks(ca, cb, Some(Team::Red)),
+            "the bots see it in the way"
+        );
+        for _ in 0..(sim.rules.mirror_time / TICK) as usize {
+            sim.step();
+        }
+        assert!(sim.barriers.is_empty());
     }
 
     #[test]

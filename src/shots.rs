@@ -200,13 +200,32 @@ impl Shots {
                         from: f.bolt.pos,
                         to: match contact {
                             Contact::Clear => f.bolt.pos + f.bolt.vel * TICK,
-                            Contact::Player { at, .. } | Contact::Barrier { at, .. } => at,
+                            Contact::Player { at, .. }
+                            | Contact::Barrier { at, .. }
+                            | Contact::Mirror { at, .. } => at,
                             Contact::Arena { q, .. } => q,
                         },
                     });
                 }
                 match contact {
                     Contact::Clear => gone = f.bolt.extra.lance,
+                    Contact::Mirror { index, at, n } => {
+                        struck.push_back((clock, at));
+                        match shot::bounce_placed(&mut f.bolt, at, n) {
+                            Some(n) => out.push(SimEvent::Reflected {
+                                pos: at,
+                                normal: n,
+                                team: f.bolt.team,
+                            }),
+                            None => {
+                                out.push(SimEvent::BarrierHit {
+                                    id: snap.barriers[index].id,
+                                    pos: at,
+                                });
+                                gone = true;
+                            }
+                        }
+                    }
                     Contact::Barrier { index, at } => {
                         struck.push_back((clock, at));
                         out.push(SimEvent::BarrierHit {

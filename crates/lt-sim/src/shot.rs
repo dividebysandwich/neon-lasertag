@@ -257,6 +257,12 @@ pub enum Contact {
         index: usize,
         at: Vec3,
     },
+    /// A mirror put up (index into the barriers given), at `at` with normal `n`.
+    Mirror {
+        index: usize,
+        at: Vec3,
+        n: Vec3,
+    },
     /// The arena (a wall, a mirror, a target panel...), at `q` with normal `n`.
     Arena {
         q: Vec3,
@@ -283,7 +289,7 @@ pub fn bolt_contact<'a>(
     }
     let mut barrier: Option<usize> = None;
     for (k, br) in barriers.iter().enumerate() {
-        if b.team == Some(br.team) {
+        if b.team == Some(br.team) && !br.mirror {
             continue;
         }
         if let Some(t) = br.crossed(b.pos, to, rules.barrier_w, rules.barrier_h)
@@ -312,7 +318,16 @@ pub fn bolt_contact<'a>(
     if let Some((index, part)) = victim {
         Contact::Player { index, at, part }
     } else if let Some(index) = barrier {
-        Contact::Barrier { index, at }
+        let br = &barriers[index];
+        if br.mirror {
+            Contact::Mirror {
+                index,
+                at,
+                n: br.normal,
+            }
+        } else {
+            Contact::Barrier { index, at }
+        }
     } else if let Some((q, n)) = hit {
         Contact::Arena { q, n }
     } else {
@@ -349,6 +364,38 @@ pub fn bounce(level: &Level, rules: &Rules, b: &mut Bolt, q: Vec3, n: Vec3) -> O
     b.pos = q + n * 0.02 - b.vel * TICK;
     b.extra.bounces += 1;
     Some(n)
+}
+
+/// Bolts a mirror put up turns back: up to this many bounces in all.
+pub const MIRROR_MAX_BOUNCES: u8 = 4;
+
+/// A bolt that met a mirror put up at `at` (normal `n`): off it again unless it has bounced
+/// too often (the normal facing it).
+pub fn bounce_placed(b: &mut Bolt, at: Vec3, n: Vec3) -> Option<Vec3> {
+    if b.extra.bounces >= MIRROR_MAX_BOUNCES {
+        return None;
+    }
+    let n = if b.vel.dot(n) > 0.0 { -n } else { n };
+    b.vel -= 2.0 * b.vel.dot(n) * n;
+    b.pos = at + n * 0.02 - b.vel * TICK;
+    b.extra.bounces += 1;
+    Some(n)
+}
+
+/// The first mirror put up that the segment `a`..`b` crosses (of `barriers`): where along it
+/// (0..1), and its index.
+pub fn placed_mirror(
+    barriers: &[Barrier],
+    rules: &Rules,
+    a: Vec3,
+    b: Vec3,
+) -> Option<(f32, usize)> {
+    barriers
+        .iter()
+        .enumerate()
+        .filter(|(_, br)| br.mirror)
+        .filter_map(|(k, br)| Some((br.crossed(a, b, rules.barrier_w, rules.barrier_h)?, k)))
+        .min_by(|x, y| x.0.total_cmp(&y.0))
 }
 
 /// A remote client's word that one of its bolts hit a player, as it showed them.
