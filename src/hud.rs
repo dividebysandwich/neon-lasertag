@@ -23,6 +23,9 @@ struct DoubleText;
 /// seconds it has left to show.
 #[derive(Component, Default)]
 struct EventBanner(f32);
+/// The line under the banner saying what the event does.
+#[derive(Component)]
+struct EventBannerSub;
 #[derive(Component)]
 struct CenterText;
 /// The bottom left panel (framed in the local player's team colour).
@@ -271,12 +274,15 @@ fn spawn(mut commands: Commands) {
                 position_type: PositionType::Absolute,
                 top: Val::Px(138.0),
                 width: Val::Percent(100.0),
-                justify_content: JustifyContent::Center,
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(4.0),
                 ..default()
             },
         ))
         .with_children(|p| {
             p.spawn((EventBanner::default(), text("", 60.0, Color::NONE, 900)));
+            p.spawn((EventBannerSub, text("", 20.0, Color::NONE, 700)));
         });
     // Top: RED score, clock, BLUE score; the bots' difficulty below.
     commands
@@ -930,42 +936,92 @@ fn powerup_status(game: Res<Game>, mut q: Query<&mut Text, With<PowerText>>) {
     t.0 = me.map(|p| powerup_line(p, &game.rules)).unwrap_or_default();
 }
 
-/// The banner for an arena event (its name and colour), if `e` starts one.
-pub fn event_banner_for(e: &SimEvent) -> Option<(&'static str, Color)> {
+/// An announcement across the middle of the view: what happened, in a word or two, and what
+/// it means for the player (upper case letters, digits and `- . : / ( ) + %` only, so that VR's
+/// stroke font draws it too).
+pub struct Banner {
+    pub title: &'static str,
+    pub sub: String,
+    pub color: Color,
+    /// Seconds it shows.
+    pub time: f32,
+}
+
+/// The banner for an arena event starting or ending, if `e` is one.
+pub fn event_banner_for(e: &SimEvent, rules: &lt_sim::Rules) -> Option<Banner> {
+    let pale = Color::srgb(0.75, 0.78, 0.95);
+    let gold = Color::srgb(1.0, 0.82, 0.25);
+    let banner = |title, sub: String, color| Banner {
+        title,
+        sub,
+        color,
+        time: BANNER_TIME,
+    };
     match *e {
         SimEvent::EventStart {
             kind: lt_sim::ArenaEvent::Blackout,
-        } => Some(("BLACKOUT", Color::srgb(0.75, 0.78, 0.95))),
+        } => Some(banner(
+            "BLACKOUT",
+            format!(
+                "LIGHTS OUT FOR {:.0} S - EVERY SHOT LIGHTS UP THE WALLS",
+                rules.blackout_time
+            ),
+            pale,
+        )),
+        SimEvent::EventEnd {
+            kind: lt_sim::ArenaEvent::Blackout,
+        } => Some(Banner {
+            time: 2.0,
+            ..banner("LIGHTS BACK ON", String::new(), pale)
+        }),
         SimEvent::EventStart {
             kind: lt_sim::ArenaEvent::Overdrive,
-        } => Some(("OVERDRIVE", Color::srgb(1.0, 0.82, 0.25))),
-        SimEvent::DoublePoints => Some(("DOUBLE POINTS", Color::srgb(1.0, 0.82, 0.25))),
+        } => Some(banner(
+            "OVERDRIVE",
+            "EVERY GRENADE AND POWERUP IS BACK IN THE ARENA".to_string(),
+            gold,
+        )),
+        SimEvent::DoublePoints => Some(banner(
+            "DOUBLE POINTS",
+            format!("LAST {:.0} S - EVERY POINT COUNTS TWICE", rules.double_last),
+            gold,
+        )),
         _ => None,
     }
 }
 
 /// Seconds an arena event's banner shows.
-pub const BANNER_TIME: f32 = 3.0;
+pub const BANNER_TIME: f32 = 4.0;
 
+#[allow(clippy::type_complexity)]
 fn event_banner(
     mut events: MessageReader<GameEvent>,
+    game: Res<Game>,
     time: Res<Time>,
-    mut q: Query<(&mut EventBanner, &mut Text, &mut TextColor)>,
+    mut q: Query<(&mut EventBanner, &mut Text, &mut TextColor), Without<EventBannerSub>>,
+    mut sub: Query<(&mut Text, &mut TextColor), With<EventBannerSub>>,
 ) {
     let Ok((mut b, mut text, mut color)) = q.single_mut() else {
         return;
     };
+    let Ok((mut sub_text, mut sub_color)) = sub.single_mut() else {
+        return;
+    };
     for GameEvent(e) in events.read() {
-        if let Some((name, c)) = event_banner_for(e) {
-            b.0 = BANNER_TIME;
-            text.0 = name.to_string();
-            color.0 = c;
+        if let Some(banner) = event_banner_for(e, &game.rules) {
+            b.0 = banner.time;
+            text.0 = banner.title.to_string();
+            sub_text.0 = banner.sub;
+            color.0 = banner.color;
         }
     }
     b.0 = (b.0 - time.delta_secs()).max(0.0);
     // Fading out in the last half second, a little pulse meanwhile.
-    let a = (b.0 / 0.5).min(1.0) * (0.85 + 0.15 * (time.elapsed_secs() * 8.0).sin());
-    color.0.set_alpha(a);
+    let a = (b.0 / 0.5).min(1.0);
+    color
+        .0
+        .set_alpha(a * (0.85 + 0.15 * (time.elapsed_secs() * 8.0).sin()));
+    sub_color.0 = neonui::TEXT.with_alpha(a);
 }
 
 /// What the HUD says about a player's powerups ("" with none).

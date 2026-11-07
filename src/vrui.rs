@@ -1324,13 +1324,14 @@ fn event_banner(
     time: Res<Time>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut transforms: Query<&mut Transform>,
-    mut banner: Local<Option<(Entity, f32)>>,
+    mut banner: Local<Option<(Entity, f32, f32)>>,
+    game: Res<Game>,
 ) {
     for GameEvent(e) in events.read() {
-        let Some((name, _)) = crate::hud::event_banner_for(e) else {
+        let Some(b) = crate::hud::event_banner_for(e, &game.rules) else {
             continue;
         };
-        if let Some((old, _)) = banner.take()
+        if let Some((old, _, _)) = banner.take()
             && let Ok(mut c) = commands.get_entity(old)
         {
             c.despawn();
@@ -1342,7 +1343,9 @@ fn event_banner(
                 Visibility::default(),
             ))
             .id();
-        let mat = if name == "BLACKOUT" {
+        // (Pale blue for the blackout's: white.)
+        let c = b.color.to_srgba();
+        let mat = if c.blue > c.red {
             &mats.white
         } else {
             &mats.gold
@@ -1351,16 +1354,29 @@ fn event_banner(
             &mut commands,
             &mut meshes,
             root,
-            name,
+            b.title,
             0.045,
             Vec3::ZERO,
             Align::Center,
             mat,
             Some(&mats.glow[2]),
         );
-        *banner = Some((root, crate::hud::BANNER_TIME));
+        if !b.sub.is_empty() {
+            segtext::spawn(
+                &mut commands,
+                &mut meshes,
+                root,
+                &b.sub,
+                0.014,
+                Vec3::Y * -0.05,
+                Align::Center,
+                &mats.white,
+                None,
+            );
+        }
+        *banner = Some((root, b.time, b.time));
     }
-    let Some((root, left)) = banner.as_mut() else {
+    let Some((root, left, total)) = banner.as_mut() else {
         return;
     };
     *left -= time.delta_secs();
@@ -1383,7 +1399,7 @@ fn event_banner(
         t.translation = head.translation + fwd * 0.8 + Vec3::Y * 0.12;
         // (Its text faces +Z: turned about the vertical towards the eyes.)
         t.rotation = Quat::from_rotation_y((-fwd.x).atan2(-fwd.z));
-        let age = crate::hud::BANNER_TIME - *left;
+        let age = *total - *left;
         t.scale = Vec3::splat((age / 0.15).min(1.0) * (*left / 0.3).min(1.0));
     }
 }
