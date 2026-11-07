@@ -596,6 +596,7 @@ fn sync_sensors(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 /// Med beams on team mates: a green tether from the healer's gun (or chest) to the chest of
 /// the one it heals, shimmering.
 fn sync_tethers(

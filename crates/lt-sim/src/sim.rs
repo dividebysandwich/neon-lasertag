@@ -2085,12 +2085,18 @@ impl Sim {
                         break;
                     }
                 }
-                (Some((_, q, n)), _) => {
-                    if crate::shot::bounce(&self.level, &self.rules, &mut b, q, n, self.storm())
-                        .is_none()
-                    {
-                        break;
-                    }
+                (Some((_, q, n)), _)
+                    if crate::shot::bounce(
+                        &self.level,
+                        &self.rules,
+                        &mut b,
+                        q,
+                        n,
+                        self.storm(),
+                    )
+                    .is_none() =>
+                {
+                    break;
                 }
                 _ => {}
             }
