@@ -97,7 +97,13 @@ impl Plugin for SoundPlugin {
             .add_systems(Startup, load)
             .add_systems(
                 Update,
-                (play_events, footsteps, ticking, charge_hum).run_if(resource_exists::<Game>),
+                ((play_events, footsteps), cap_mix)
+                    .chain()
+                    .run_if(resource_exists::<Game>),
+            )
+            .add_systems(
+                Update,
+                (ticking, charge_hum).run_if(resource_exists::<Game>),
             );
     }
 }
@@ -145,6 +151,33 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
     });
 }
 
+/// Sounds that pile up when many play at once: all of a group together are held to at most
+/// `CAP` times one at its usual volume.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mix {
+    Steps,
+    Fire,
+}
+
+impl Mix {
+    /// One of the group at its usual volume (another player's, close by).
+    fn usual(self) -> f32 {
+        match self {
+            Mix::Steps => 0.8,
+            Mix::Fire => 1.0,
+        }
+    }
+}
+
+const CAP: f32 = 2.0;
+
+/// A sound of a capped group: its volume before the sound setting and the cap.
+#[derive(Component)]
+struct Capped {
+    mix: Mix,
+    volume: f32,
+}
+
 /// Plays `sound` (`gain`: the settings' sound volume).
 fn play(
     commands: &mut Commands,
@@ -154,6 +187,31 @@ fn play(
     volume: f32,
     speed: f32,
 ) {
+    spawn(commands, gain, sound, at, volume, speed);
+}
+
+/// Plays `sound` as one of `mix`'s group, held down with the rest of it (see `cap_mix`).
+#[allow(clippy::too_many_arguments)]
+fn play_capped(
+    commands: &mut Commands,
+    gain: f32,
+    sound: &Handle<AudioSource>,
+    at: Option<Vec3>,
+    volume: f32,
+    speed: f32,
+    mix: Mix,
+) {
+    spawn(commands, gain, sound, at, volume, speed).insert(Capped { mix, volume });
+}
+
+fn spawn<'a>(
+    commands: &'a mut Commands,
+    gain: f32,
+    sound: &Handle<AudioSource>,
+    at: Option<Vec3>,
+    volume: f32,
+    speed: f32,
+) -> EntityCommands<'a> {
     let settings = PlaybackSettings {
         mode: PlaybackMode::Despawn,
         volume: Volume::Linear(volume * gain),
@@ -165,7 +223,58 @@ fn play(
         AudioPlayer(sound.clone()),
         settings,
         Transform::from_translation(at.unwrap_or_default()),
-    ));
+    ))
+}
+
+type CappedSound = (
+    &'static Capped,
+    &'static mut PlaybackSettings,
+    // (Not the global one: that's still at the origin for those spawned this frame. They have
+    // no parent.)
+    &'static Transform,
+    Option<&'static mut AudioSink>,
+    Option<&'static mut SpatialAudioSink>,
+);
+
+/// Holds each capped group (steps, blaster fire) to `CAP` times one of it at its usual volume:
+/// sums how loud each of its sounds is heard (spatial ones fading with distance as rodio fades
+/// them) and turns all of them down alike when the sum is over. Sounds just spawned start at the
+/// capped volume; playing ones follow as others start and end.
+fn cap_mix(
+    settings: Option<Res<Settings>>,
+    listener: Query<&GlobalTransform, With<SpatialListener>>,
+    mut sounds: Query<CappedSound>,
+) {
+    let gain = settings.map_or(1.0, |s| s.sound_volume);
+    let ear = listener.iter().next().map(|t| t.translation());
+    let heard = |spatial: bool, at: Vec3| match (spatial, ear) {
+        (true, Some(ear)) => {
+            let d = ear.distance(at) * SPATIAL_SCALE;
+            (1.0 / (d * d)).min(1.0)
+        }
+        _ => 1.0,
+    };
+    for mix in [Mix::Steps, Mix::Fire] {
+        let sum: f32 = sounds
+            .iter()
+            .filter(|(c, ..)| c.mix == mix)
+            .map(|(c, s, t, ..)| c.volume * heard(s.spatial, t.translation))
+            .sum();
+        let k = (CAP * mix.usual() / sum.max(f32::EPSILON)).min(1.0);
+        for (c, mut s, _, sink, spatial_sink) in &mut sounds {
+            if c.mix != mix {
+                continue;
+            }
+            let v = Volume::Linear(c.volume * gain * k);
+            if let Some(mut sink) = sink {
+                sink.set_volume(v);
+            } else if let Some(mut sink) = spatial_sink {
+                sink.set_volume(v);
+            } else {
+                s.volume = v;
+            }
+        }
+    }
 }
 
 /// The local player's charge gun charging: a whine rising as it charges.
@@ -263,13 +372,14 @@ fn play_events(
                     .players
                     .iter()
                     .any(|p| p.id == player && p.shotgun);
-                play(
+                play_capped(
                     &mut commands,
                     gain,
                     sound,
                     (!mine).then_some(pos),
                     if mine { 0.55 } else { 1.0 } * if shotgun { 1.3 } else { 1.0 },
                     if shotgun { 0.7 } else { 1.0 },
+                    Mix::Fire,
                 );
             }
             SimEvent::Denied { player } if Some(player) == me => {
@@ -567,13 +677,14 @@ fn footsteps(
             walked.n += 1;
             let mine = Some(p.id) == game.me;
             let pitch = 0.9 + (walked.n * 37 % 20) as f32 / 100.0;
-            play(
+            play_capped(
                 &mut commands,
                 gain,
                 &sounds.steps[walked.n % 3],
                 (!mine).then_some(p.feet),
                 if mine { 0.35 } else { 0.8 },
                 pitch,
+                Mix::Steps,
             );
         }
     }
