@@ -1320,6 +1320,9 @@ fn pickup_note(
         {
             *refill_from = Some(now);
         }
+        if let Some(b) = expiry_banner(e, &game) {
+            queue.push(b);
+        }
         if let Some(b) = resupply_banner(e, &game) {
             let healed = b.title == "HEALED";
             if healed || refill_from.take().is_some_and(|t| now - t > 1.0) {
@@ -1335,6 +1338,33 @@ fn pickup_note(
     let a = (queue.left / 0.4).min(1.0);
     color.0.set_alpha(a);
     sub_color.0 = neonui::TEXT.with_alpha(a);
+}
+
+/// A short note when one of the local player's running powerups has run out.
+pub fn expiry_banner(e: &SimEvent, game: &Game) -> Option<Banner> {
+    let me = game.me?;
+    let (kind, title, sub) = match *e {
+        SimEvent::ShieldDown { player } if player == me => {
+            (PickupKind::Shield, "SHIELD OFF", "BOLTS HURT YOU AGAIN")
+        }
+        SimEvent::Uncloaked { player } if player == me => (
+            PickupKind::Cloak,
+            "CLOAK GONE",
+            "EVERYONE CAN SEE YOU AGAIN",
+        ),
+        SimEvent::SpeedDown { player } if player == me => {
+            (PickupKind::Speed, "SPEED BOOST OVER", "")
+        }
+        _ => return None,
+    };
+    Some(Banner {
+        title,
+        sub: sub.to_string(),
+        color: powerup_color(kind),
+        time: 2.0,
+        pickup: Some(kind),
+        small: true,
+    })
 }
 
 /// A short note when the local player's blaster is full again or their hits are healed.

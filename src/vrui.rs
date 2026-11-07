@@ -1334,6 +1334,7 @@ fn event_banner(
     for GameEvent(e) in events.read() {
         if let Some(b) = crate::hud::event_banner_for(e, &game.rules)
             .or_else(|| crate::hud::mega_banner_for(e, &game))
+            .or_else(|| crate::hud::expiry_banner(e, &game))
         {
             queue.push(b);
         }

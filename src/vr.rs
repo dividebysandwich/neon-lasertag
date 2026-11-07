@@ -1320,6 +1320,15 @@ fn haptics(
                 rumble.play(gun, 0.0, 0.06, 0.9);
                 rumble.play(gun, 0.12, 0.04, 0.6);
             }
+            // A running powerup over: a double tick on the wrist's hand.
+            SimEvent::ShieldDown { player }
+            | SimEvent::Uncloaked { player }
+            | SimEvent::SpeedDown { player }
+                if player == me =>
+            {
+                rumble.play(1 - gun, 0.0, 0.03, 0.45);
+                rumble.play(1 - gun, 0.1, 0.03, 0.45);
+            }
             // Healed: two soft pulses in both hands.
             SimEvent::Healed { player } if player == me => {
                 rumble.both(0.0, 0.08, 0.25);
