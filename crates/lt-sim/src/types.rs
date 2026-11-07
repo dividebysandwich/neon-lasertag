@@ -127,6 +127,17 @@ impl PickupKind {
     }
 }
 
+/// Where a match is: warming up (seconds left; nothing counts and the clock stands, see
+/// `Sim::end_warmup`), counting down to the start (seconds left; nobody can fire), or under
+/// way.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum MatchPhase {
+    Warmup(f32),
+    Countdown(f32),
+    #[default]
+    Live,
+}
+
 /// Something that happens to the whole arena for a while during a match.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ArenaEvent {
@@ -338,6 +349,12 @@ pub enum SimEvent {
         player: PlayerId,
         pos: Vec3,
     },
+    /// The countdown to a match's start: `n` seconds to go.
+    Countdown {
+        n: u8,
+    },
+    /// The match starts (the countdown is over).
+    Go,
     /// A player jumped (`PlayerCmd::jumps`).
     Jumped {
         player: PlayerId,

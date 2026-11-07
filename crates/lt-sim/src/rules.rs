@@ -48,6 +48,10 @@ pub struct Rules {
     pub dash_speed: f32,
     pub dash_time: f32,
     pub dash_cooldown: f32,
+    /// Seconds of the countdown before a match (`Sim::begin`; nobody can fire meanwhile), and
+    /// of the warmup before it (0: none; free play that doesn't count, the clock standing).
+    pub countdown: f32,
+    pub warmup: f32,
     /// Crouching players' share of `move_speed`.
     pub crouch_factor: f32,
     /// Most physical (room-scale) walking accepted per second.
@@ -155,6 +159,8 @@ impl Default for Rules {
             mirror_bounces: 1,
             move_speed: 4.0,
             crouch_factor: 0.5,
+            countdown: 3.0,
+            warmup: 0.0,
             dash_speed: 12.0,
             dash_time: 0.25,
             dash_cooldown: 2.0,

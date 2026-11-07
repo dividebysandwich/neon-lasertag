@@ -434,6 +434,8 @@ pub struct Snapshot {
     /// The arena event going on (seconds left), and whether points count double.
     pub event: Option<(ArenaEvent, f32)>,
     pub double: bool,
+    #[serde(default)]
+    pub phase: MatchPhase,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -553,6 +555,8 @@ pub struct Sim {
     pub time_left: f32,
     pub tick: u64,
     pub over: bool,
+    /// Warming up, counting down or under way (`begin`).
+    pub phase: MatchPhase,
     /// Per target (by id): the tick and shooter of its last hit (the bots' alarm; events are
     /// drained by the caller, so bots can't see them).
     pub last_target_hit: Vec<Option<(u64, PlayerId)>>,
@@ -615,6 +619,7 @@ impl Sim {
             slots,
             scores: [0; 2],
             tick: 0,
+            phase: MatchPhase::Live,
             over: false,
             last_target_hit: vec![None; level.targets.len()],
             turrets: level.mega.as_ref().map_or(Vec::new(), |m| {
@@ -767,12 +772,102 @@ impl Sim {
         self.next_id
     }
 
+    /// Starts the match off: with the warmup (`Rules::warmup`) or the countdown
+    /// (`Rules::countdown`), if any (a new sim is under way at once).
+    pub fn begin(&mut self) {
+        if self.rules.warmup > 0.0 {
+            self.phase = MatchPhase::Warmup(self.rules.warmup);
+        } else {
+            self.start_countdown();
+        }
+    }
+
+    fn start_countdown(&mut self) {
+        if self.rules.countdown > 0.0 {
+            self.phase = MatchPhase::Countdown(self.rules.countdown);
+            self.events.push(SimEvent::Countdown {
+                n: self.rules.countdown.ceil() as u8,
+            });
+        } else {
+            self.phase = MatchPhase::Live;
+            self.events.push(SimEvent::Go);
+        }
+    }
+
+    /// Ends the warmup (its time up, or everyone's here): whatever happened in it is forgotten,
+    /// everyone starts over at their base, and the countdown begins.
+    pub fn end_warmup(&mut self) {
+        if !matches!(self.phase, MatchPhase::Warmup(_)) {
+            return;
+        }
+        self.scores = [0; 2];
+        self.bolts.clear();
+        self.grenades.clear();
+        self.barriers.clear();
+        self.event = None;
+        self.double = false;
+        self.time_left = self.rules.match_time;
+        for i in 0..self.players.len() {
+            let p = &mut self.players[i];
+            p.score = 0;
+            p.tags = 0;
+            p.tagged = 0;
+            p.shots = 0;
+            p.landed = 0;
+            p.target_hits = 0;
+            p.assists = 0;
+            p.defends = 0;
+            p.grenade_tags = 0;
+            p.cloak_tags = 0;
+            p.hit_by.clear();
+            p.respawn = None;
+            p.grenades = 0;
+            p.lose_powerups();
+            self.send_home(i);
+        }
+        for t in &mut self.last_target_hit {
+            *t = None;
+        }
+        self.start_countdown();
+    }
+
     pub fn step(&mut self) {
         self.tick += 1;
         if self.over {
             return;
         }
-        self.time_left -= TICK;
+        match self.phase {
+            MatchPhase::Warmup(t) => {
+                if t - TICK <= 0.0 {
+                    self.end_warmup();
+                } else {
+                    self.phase = MatchPhase::Warmup(t - TICK);
+                }
+            }
+            MatchPhase::Countdown(t) => {
+                let t = t - TICK;
+                if t <= 0.0 {
+                    self.phase = MatchPhase::Live;
+                    self.events.push(SimEvent::Go);
+                } else {
+                    if t.ceil() < (t + TICK).ceil() {
+                        self.events.push(SimEvent::Countdown { n: t.ceil() as u8 });
+                    }
+                    self.phase = MatchPhase::Countdown(t);
+                    // Moving about, nothing else.
+                    self.step_movers();
+                    self.step_players();
+                    self.record();
+                    return;
+                }
+            }
+            MatchPhase::Live => {}
+        }
+        if matches!(self.phase, MatchPhase::Warmup(_)) {
+            // (The clock stands.)
+        } else {
+            self.time_left -= TICK;
+        }
         if self.time_left <= 0.0 {
             self.time_left = 0.0;
             self.over = true;
@@ -985,7 +1080,15 @@ impl Sim {
 
     fn step_players(&mut self) {
         let rules = self.rules.clone();
+        let hold = matches!(self.phase, MatchPhase::Countdown(_));
         for i in 0..self.players.len() {
+            if hold {
+                let c = &mut self.players[i].cmd;
+                c.fire = false;
+                c.throw = None;
+                c.shield = false;
+                c.barrier = false;
+            }
             // Timers.
             let respawn_now = {
                 let p = &mut self.players[i];
@@ -2360,6 +2463,7 @@ impl Sim {
             barriers: self.barriers.clone(),
             event: self.event,
             double: self.double,
+            phase: self.phase,
         }
     }
 }
@@ -2790,6 +2894,58 @@ mod tests {
                 .0
                 .is_none()
         );
+    }
+
+    #[test]
+    fn the_countdown_holds_the_clock_and_the_triggers() {
+        let (mut sim, a, _) = duel();
+        sim.begin();
+        assert!(matches!(sim.phase, MatchPhase::Countdown(_)));
+        let left = sim.time_left;
+        sim.set_cmd(
+            a,
+            PlayerCmd {
+                gun_hand: Some(Hand::Right),
+                fire: true,
+                ..Default::default()
+            },
+        );
+        let mut counts = Vec::new();
+        for _ in 0..(sim.rules.countdown / TICK) as usize - 2 {
+            sim.step();
+            for e in sim.drain_events() {
+                match e {
+                    SimEvent::Countdown { n } => counts.push(n),
+                    SimEvent::Fired { .. } => panic!("fired in the countdown"),
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(sim.time_left, left);
+        assert!(sim.bolts.is_empty());
+        assert_eq!(counts, vec![3, 2, 1]);
+        for _ in 0..4 {
+            sim.step();
+        }
+        assert_eq!(sim.phase, MatchPhase::Live);
+        assert!(sim.time_left < left);
+    }
+
+    #[test]
+    fn a_warmup_doesnt_count() {
+        let (mut sim, a, _) = duel();
+        sim.rules.warmup = 5.0;
+        sim.begin();
+        sim.players[0].score = 300;
+        sim.players[0].tags = 3;
+        sim.scores = [300, 0];
+        sim.step();
+        assert_eq!(sim.time_left, sim.rules.match_time);
+        sim.end_warmup();
+        assert_eq!(sim.scores, [0, 0]);
+        let p = sim.player(a).unwrap();
+        assert_eq!((p.score, p.tags), (0, 0));
+        assert!(matches!(sim.phase, MatchPhase::Countdown(_)));
     }
 
     #[test]

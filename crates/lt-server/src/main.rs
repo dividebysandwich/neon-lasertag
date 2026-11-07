@@ -77,30 +77,46 @@ fn args() -> Args {
     a
 }
 
+/// Seconds of free play before a server's first match (cut short once `WARMUP_PLAYERS` people
+/// are in).
+const WARMUP: f32 = 30.0;
+const WARMUP_PLAYERS: usize = 2;
+
+/// A match; the first one (`warmup`) begins with a warmup, the next ones with a countdown.
 fn new_match(
     seed: u64,
     bots: usize,
     difficulty: Difficulty,
     arena: SizeChoice,
     mode: GameMode,
+    warmup: bool,
 ) -> (Sim, Bots) {
     let mut sim = Sim::new(
         seed,
         Rules {
             arena: arena.pick(rand::random()),
             mode,
+            warmup: if warmup { WARMUP } else { 0.0 },
             ..Rules::default()
         },
     );
     let mut b = Bots::default();
     b.fill(&mut sim, bots, difficulty.skill());
+    sim.begin();
     (sim, b)
 }
 
 fn main() {
     let args = args();
     let mut seed = args.seed.unwrap_or_else(rand::random);
-    let (mut sim, mut bots) = new_match(seed, args.bots, args.difficulty, args.arena, args.mode);
+    let (mut sim, mut bots) = new_match(
+        seed,
+        args.bots,
+        args.difficulty,
+        args.arena,
+        args.mode,
+        true,
+    );
     let mut server = match Server::listen(args.port, &args.name, seed) {
         Ok(s) => s,
         Err(e) => {
@@ -127,6 +143,9 @@ fn main() {
         let humans = server.humans();
         server.before_step(&mut sim, &mut bots);
         // Bots only play while someone watches.
+        if server.humans() >= WARMUP_PLAYERS {
+            sim.end_warmup();
+        }
         if humans > 0 || server.humans() > 0 {
             bots.think(&mut sim);
             sim.step();
@@ -141,8 +160,14 @@ fn main() {
             if since.elapsed() > Duration::from_secs(10) {
                 println!("match over {:?}; next arena", sim.scores);
                 seed = rand::random();
-                let (mut next_sim, mut next_bots) =
-                    new_match(seed, args.bots, args.difficulty, args.arena, args.mode);
+                let (mut next_sim, mut next_bots) = new_match(
+                    seed,
+                    args.bots,
+                    args.difficulty,
+                    args.arena,
+                    args.mode,
+                    false,
+                );
                 server.move_to(&mut next_sim, &mut next_bots, &sim);
                 sim = next_sim;
                 bots = next_bots;

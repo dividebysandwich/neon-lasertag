@@ -52,7 +52,9 @@ draining. Your hits on enemies mark the crosshair (VR: a tick in the gun hand), 
 score rise beside it (VR: over the wrist), and the blaster warns when it runs low. A turret
 switched off shows a bar draining under its target.
 
-Matches last 10 minutes. Then the results show (each player's
+Matches last 10 minutes, after a 3-2-1 countdown (you can move but not fire). A dedicated
+server's first match begins with a 30 s warmup (WARMUP under the clock) that doesn't count; it
+ends early once two people are in. Then the results show (each player's
 score, tags, times tagged out, assists, accuracy and target hits, and up to four awards:
 Sharpshooter for the best accuracy, Team player for the most assists, Defender, Grenadier and
 Ghost for the most defends, grenade tag-outs and tag-outs while cloaked, Target hunter for the

@@ -318,6 +318,7 @@ impl Game {
         let me = sim.add_player(name, None, false);
         let mut b = Bots::default();
         b.fill(&mut sim, bots, skill);
+        sim.begin();
         let server = host
             .as_ref()
             .and_then(|h| match Server::listen(h.port, &h.name, seed) {
@@ -475,6 +476,10 @@ fn step_game(
     }
     if std::mem::take(&mut local.dev_barrier) {
         cmd.barrier = true;
+    }
+    // (Nobody fires in the countdown: no bolt shown that the sim won't fire.)
+    if matches!(game.snap.phase, lt_sim::MatchPhase::Countdown(_)) {
+        cmd.fire = false;
     }
     // A throw is sent once.
     local.cmd.throw = None;
@@ -736,6 +741,7 @@ impl Game {
         let me = next.add_player(&name, None, false);
         let mut next_bots = Bots::default();
         next_bots.fill(&mut next, bots, skill);
+        next.begin();
         if let Some(server) = server {
             server.move_to(&mut next, &mut next_bots, sim);
         }

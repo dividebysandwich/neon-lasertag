@@ -457,6 +457,8 @@ fn play_events(
             SimEvent::EventEnd {
                 kind: lt_sim::ArenaEvent::Blackout,
             } => play(&mut commands, gain, &sounds.power_up, None, 0.7, 0.8),
+            SimEvent::Countdown { .. } => play(&mut commands, gain, &sounds.bleep, None, 1.0, 0.8),
+            SimEvent::Go => play(&mut commands, gain, &sounds.bleep_tag, None, 1.0, 1.2),
             SimEvent::DoublePoints => {
                 play(&mut commands, gain, &sounds.event_double, None, 1.0, 1.0)
             }

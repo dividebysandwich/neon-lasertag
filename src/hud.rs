@@ -1003,6 +1003,9 @@ fn update(
 fn clock_events(snap: &lt_sim::sim::Snapshot) -> (String, Color) {
     let mut parts = Vec::new();
     let mut color = neonui::AMBER;
+    if let lt_sim::MatchPhase::Warmup(left) = snap.phase {
+        parts.push(format!("WARMUP {:.0}", left.ceil()));
+    }
     if let Some((lt_sim::ArenaEvent::Blackout, left)) = snap.event {
         parts.push(format!("BLACKOUT {:.0}", left.ceil()));
         color = Color::srgb(0.75, 0.78, 0.95);
@@ -1904,6 +1907,24 @@ pub fn event_banner_for(e: &SimEvent, rules: &lt_sim::Rules) -> Option<Banner> {
             "EVERY GRENADE AND POWERUP RESPAWNED".to_string(),
             gold,
         )),
+        SimEvent::Countdown { n } => Some(Banner {
+            time: 0.95,
+            ..banner(
+                match n {
+                    1 => "1",
+                    2 => "2",
+                    3 => "3",
+                    4 => "4",
+                    _ => "5",
+                },
+                "GET READY".to_string(),
+                gold,
+            )
+        }),
+        SimEvent::Go => Some(Banner {
+            time: 1.2,
+            ..banner("GO!", String::new(), Color::srgb(0.35, 1.0, 0.6))
+        }),
         SimEvent::DoublePoints => Some(banner(
             "DOUBLE POINTS",
             format!("LAST {:.0} S - EVERY POINT COUNTS TWICE", rules.double_last),
