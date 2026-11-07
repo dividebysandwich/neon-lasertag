@@ -1326,6 +1326,7 @@ fn event_banner(
     mut transforms: Query<&mut Transform>,
     mut banner: Local<Option<Entity>>,
     mut queue: Local<crate::hud::BannerQueue>,
+    mut was_near: Local<bool>,
     game: Res<Game>,
     mut settings: ResMut<crate::settings::Settings>,
     palette: Res<Palette>,
@@ -1350,6 +1351,22 @@ fn event_banner(
             ));
         }
     }
+    // Megatarget mode: a warning on coming up to a forcefield without a pass.
+    let near = game
+        .me
+        .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
+        .is_some_and(|p| crate::hud::near_forcefield(&game, p));
+    if near && !*was_near {
+        queue.push(crate::hud::Banner {
+            title: "FORCEFIELD",
+            sub: "IT TAGS YOU OUT - HIT BOTH SECONDARY TARGETS TO GET THROUGH".to_string(),
+            color: crate::neonui::PINK,
+            time: 3.0,
+            pickup: None,
+            small: true,
+        });
+    }
+    *was_near = near;
     if let Some(b) = queue.tick(time.delta_secs()) {
         if let Some(old) = banner.take()
             && let Ok(mut c) = commands.get_entity(old)

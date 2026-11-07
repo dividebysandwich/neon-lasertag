@@ -947,6 +947,11 @@ fn update(
                 "OUT OF AMMO\nrefill at your base or a white station".to_string(),
                 neonui::AMBER,
             ),
+            Some(p) if near_forcefield(&game, p) => (
+                "FORCEFIELD! it tags you out\nhit both secondary targets to get through"
+                    .to_string(),
+                neonui::PINK,
+            ),
             Some(p) if p.power.is_some() => {
                 let left = p.power.unwrap_or(0.0).ceil();
                 let inside = game.level.mega.as_ref().is_some_and(|m| m.in_room(p.feet));
@@ -983,6 +988,20 @@ fn clock_events(snap: &lt_sim::sim::Snapshot) -> (String, Color) {
         parts.push("2X POINTS".to_string());
     }
     (parts.join("  "), color)
+}
+
+/// Megatarget mode: whether `p` stands close to a forcefield it may not pass, outside the room.
+pub fn near_forcefield(game: &Game, p: &lt_sim::sim::PlayerSnap) -> bool {
+    let Some(m) = game.level.mega.as_ref() else {
+        return false;
+    };
+    p.power.is_none()
+        && p.respawn.is_none()
+        && !m.in_room(p.feet)
+        && m.shields.iter().any(|s| {
+            let c = (s.min + s.max) / 2.0;
+            Vec2::new(c.x - p.feet.x, c.z - p.feet.z).length() < 3.5
+        })
 }
 
 /// Whether `e` is the local player's bolt hitting an enemy: `Some(true)` for a tag-out.
