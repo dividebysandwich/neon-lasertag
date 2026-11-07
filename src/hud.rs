@@ -1346,7 +1346,7 @@ pub fn expiry_banner(e: &SimEvent, game: &Game) -> Option<Banner> {
     let me = game.me?;
     let (kind, title, sub) = match *e {
         SimEvent::ShieldDown { player } if player == me => {
-            (PickupKind::Shield, "SHIELD OFF", "BOLTS HURT YOU AGAIN")
+            (PickupKind::Shield, "SHIELD OFF", "")
         }
         SimEvent::Uncloaked { player } if player == me => (
             PickupKind::Cloak,
@@ -1631,7 +1631,7 @@ pub fn event_banner_for(e: &SimEvent, rules: &lt_sim::Rules) -> Option<Banner> {
         } => Some(banner(
             "BLACKOUT",
             format!(
-                "LIGHTS OUT FOR {:.0} S - EVERY SHOT LIGHTS UP THE WALLS",
+                "LIGHTS OUT FOR {:.0} S",
                 rules.blackout_time
             ),
             pale,
@@ -1646,7 +1646,7 @@ pub fn event_banner_for(e: &SimEvent, rules: &lt_sim::Rules) -> Option<Banner> {
             kind: lt_sim::ArenaEvent::Overdrive,
         } => Some(banner(
             "OVERDRIVE",
-            "EVERY GRENADE AND POWERUP IS BACK IN THE ARENA".to_string(),
+            "EVERY GRENADE AND POWERUP RESPAWNED".to_string(),
             gold,
         )),
         SimEvent::DoublePoints => Some(banner(
@@ -1676,7 +1676,7 @@ pub fn mega_banner_for(e: &SimEvent, game: &Game) -> Option<Banner> {
         } if by == me => Some(banner(
             "ROOM OPEN",
             format!(
-                "THE FORCEFIELDS LET YOU THROUGH FOR {:.0} S - SHOOT THE MEGATARGET",
+                "ENTER ROOM WITHIN {:.0} S - SHOOT THE MEGATARGET",
                 r.power_time
             ),
             neonui::GREEN,
@@ -1702,7 +1702,7 @@ pub fn mega_banner_for(e: &SimEvent, game: &Game) -> Option<Banner> {
         )),
         SimEvent::MegaHit { by, .. } if by == me => Some(banner(
             "MEGATARGET HIT",
-            "BACK TO YOUR BASE WITH FULL HEALTH AND AMMO".to_string(),
+            "".to_string(),
             neonui::GREEN,
             false,
         )),
