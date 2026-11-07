@@ -23,7 +23,6 @@ P = DIMS["pieces"]
 C = DIMS["constants"]
 
 W = 0.04  # standard strip width
-G = 0.09  # standard glow width
 
 
 def bounds(name):
@@ -46,25 +45,24 @@ def edge_grid(geo, f, hu, hv, half_w=0.02, glow_in=0.08, marks=True, mark_w=0.02
                                (su * hu * b, sv * hv * a)], mark_w, glow=(mark_glow, mark_glow))
 
 
-def end_line(geo, f, hu, hv, inset=0.08, w=0.03):
-    """A centred line along the long axis of a narrow face (wall tops and ends)."""
-    if hu >= hv:
-        g = min(G, hv - w / 2 - 0.01)
-        line(geo, f, (-hu + inset, 0), (hu - inset, 0), w, glow=g)
-    else:
-        g = min(G, hu - w / 2 - 0.01)
-        line(geo, f, (0, -hv + inset), (0, hv - inset), w, glow=g)
+def edge_band(geo, f, hu, hv, w=W):
+    """A neon band right on the edges of a face: square corners, its outer side flush with the
+    face's edges, no halo. Bands on neighbouring faces meet at the corner, so the edge itself
+    is lit."""
+    ring(geo, f, L.rect(-hu + w / 2, -hv + w / 2, hu - w / 2, hv - w / 2), w, glow_in=0,
+         glow_out=0)
 
 
-def wall_border(geo, f, hu, hv, y0, y1, c=0.12, inset=0.08):
-    """Chamfered border ring on a wall face; y0/y1 are the face-local v limits of the strip."""
-    ring(geo, f, chamfer_rect(-hu + inset, y0, hu - inset, y1, c), W, glow_in=0.10,
-         glow_out=inset - W / 2 - 0.01)
+def edge_bands(geo, mn, mx, sides=("+x", "-x", "+y", "+z", "-z"), w=W):
+    """Edge bands on the given faces of a box."""
+    for side in sides:
+        f, hu, hv = box_face(mn, mx, side)
+        edge_band(geo, f, hu, hv, w)
 
 
-def corner_lines(geo, hx, hz, c, y0, y1, w=0.022, g=0.07):
-    """Light lines along the chamfered vertical corners of a post-like prism, with glow quads
-    lying on the two neighbouring faces."""
+def corner_lines(geo, hx, hz, c, y0, y1, w=0.022):
+    """Light lines along the chamfered vertical corners of a post-like prism (no halo: they are
+    its edges)."""
     for sx in (-1, 1):
         for sz in (-1, 1):
             a = (sx * hx, sz * (hz - c))
@@ -75,15 +73,6 @@ def corner_lines(geo, hx, hz, c, y0, y1, w=0.022, g=0.07):
             f = Frame(mid, U, L.Y)
             hl = (y1 - y0) / 2
             strip(geo, f, [(0, -hl), (0, hl)], w, glow=(0, 0))
-            # Glow on the X face, from the chamfer edge towards the face centre.
-            x = sx * (hx + L.GLOW_H)
-            z0, z1 = sz * (hz - c), sz * (hz - c - g)
-            geo.face([(x, y0, z0), (x, y1, z0), (x, y1, z1), (x, y0, z1)], "glow",
-                     [(y0, 0), (y1, 0), (y1, 1), (y0, 1)], want=(sx, 0, 0))
-            zz = sz * (hz + L.GLOW_H)
-            x0, x1 = sx * (hx - c), sx * (hx - c - g)
-            geo.face([(x0, y0, zz), (x0, y1, zz), (x1, y1, zz), (x1, y0, zz)], "glow",
-                     [(y0, 0), (y1, 0), (y1, 1), (y0, 1)], want=(0, 0, sz))
 
 
 def bands(geo, hx, hz, c, ys, w=0.03, g=0.06, top=None):
@@ -131,22 +120,13 @@ def upper_tile():
     return g
 
 
-def wall_common(g, mn, mx):
-    f, hu, hv = box_face(mn, mx, "+y")
-    end_line(g, f, hu, hv)
-    for side in ("+x", "-x"):
-        f, hu, hv = box_face(mn, mx, side)
-        end_line(g, f, hu, hv, inset=0.1)
-
-
 def wall_full():
     g = L.Geo()
     mn, mx = bounds("wall_full")
     box(g, mn, mx, skip=("-y",))
-    wall_common(g, mn, mx)
+    edge_bands(g, mn, mx)
     for side in ("+z", "-z"):
         f, hu, hv = box_face(mn, mx, side)  # v = y - 1.5
-        wall_border(g, f, hu, hv, 0.08 - hv, 2.72 - hv)
         hc = 1.75 - hv
         ring(g, f, hexagon(0, hc, 0.42), 0.05, glow_in=0.09, glow_out=0.10)
         ring(g, f, hexagon(0, hc, 0.24), 0.03, glow_in=0.06, glow_out=0.05)
@@ -165,11 +145,10 @@ def wall_window():
     w2 = C["WINDOW_W"] / 2
     y0, y1 = C["WINDOW_Y0"], C["WINDOW_Y1"]
     L.slab_with_hole(g, mn, mx, ((-w2, y0), (w2, y1)), skip=("-y",))
-    wall_common(g, mn, mx)
+    edge_bands(g, mn, mx)
     t = mx[2]
     for side in ("+z", "-z"):
         f, hu, hv = box_face(mn, mx, side)
-        wall_border(g, f, hu, hv, 0.08 - hv, 2.72 - hv)
         # Hexagonal frame around the opening (the opening itself stays the collider rectangle).
         e = 0.065
         a0, a1 = y0 - hv - e, y1 - hv + e
@@ -205,10 +184,9 @@ def wall_half():
     g = L.Geo()
     mn, mx = bounds("wall_half")
     box(g, mn, mx, skip=("-y",))
-    wall_common(g, mn, mx)
+    edge_bands(g, mn, mx)
     for side in ("+z", "-z"):
         f, hu, hv = box_face(mn, mx, side)  # v = y - 0.6
-        wall_border(g, f, hu, hv, 0.08 - hv, hv - 0.08, c=0.1)
         ring(g, f, diamond(0, 0, 0.3, 0.3), W, glow_in=0.07, glow_out=0.08)
         filled(g, f, diamond(0, 0, 0.1), glow=0.06)
         for s in (-1, 1):  # chevrons pointing in at the diamond
@@ -251,7 +229,7 @@ def post(name, bands_at):
     hx, hz, top = mx[0], mx[2], mx[1]
     c = 0.035
     L.prism_y(g, L.octagon_xz(hx, hz, c), 0, top)
-    corner_lines(g, hx, hz, c, 0.06, min(top - 0.06, 2.74), g=0.06)
+    corner_lines(g, hx, hz, c, 0.06, min(top - 0.06, 2.74))
     bands(g, hx, hz, c, bands_at, w=0.025, g=0.05, top=top)
     top_cap(g, hx, hz, top, 0.06)
     return g
@@ -263,7 +241,7 @@ def pillar():
     hx, hz, top = mx[0], mx[2], mx[1]
     c = 0.06
     L.prism_y(g, L.octagon_xz(hx, hz, c), 0, top)
-    corner_lines(g, hx, hz, c, 0.08, 2.72, w=0.03, g=0.08)
+    corner_lines(g, hx, hz, c, 0.08, 2.72, w=0.03)
     bands(g, hx, hz, c, (0.16, 2.62), w=0.035, g=0.07, top=top)
     for side in ("+x", "-x", "+z", "-z"):
         f, hu, hv = box_face((-hx, 0, -hz), (hx, top, hz), side)  # v = y - 1.5
@@ -281,7 +259,7 @@ def block():
     hx, hz, top = mx[0], mx[2], mx[1]
     c = 0.06
     L.prism_y(g, L.octagon_xz(hx, hz, c), 0, top)
-    corner_lines(g, hx, hz, c, 0.06, top - 0.06, w=0.03, g=0.08)
+    corner_lines(g, hx, hz, c, 0.06, top - 0.06, w=0.03)
     for side in ("+x", "-x", "+z", "-z"):
         f, hu, hv = box_face((-hx, 0, -hz), (hx, top, hz), side)  # v = y - 0.6
         ring(g, f, diamond(0, 0, 0.27), 0.045, glow_in=0.07, glow_out=0.08)
@@ -337,7 +315,7 @@ def ramp():
         ring(g, fs, inner, 0.03, glow_in=0.06, glow_out=0.07)
     # Tall back face (under the upper floor's edge).
     f, hu, hv = box_face(mn, mx, "+z")
-    wall_border(g, f, hu, hv, 0.08 - hv, 2.72 - hv)
+    edge_band(g, f, hu, hv)
     ring(g, f, hexagon(0, 0, 0.4), 0.05, glow_in=0.08, glow_out=0.1)
     filled(g, f, hexagon(0, 0, 0.1), glow=0.06)
     return g
@@ -369,8 +347,7 @@ def target_alcove():
     pr = L.rect(pmn[0], pmn[1] - fb.o[1], pmx[0], pmx[1] - fb.o[1])
     L.glow_band(g, fb, L.ccw(pr), True, 0.0, -0.14)
     # Back wall inside: border, chevrons pointing at the target.
-    ring(g, fb, chamfer_rect(-hu + 0.07, 0.08 - hv, hu - 0.07, 2.62 - hv, 0.1), 0.035,
-         glow_in=0.08, glow_out=0.035)
+    edge_band(g, fb, hu, hv)
     for y in (0.45, 0.7):
         strip(g, fb, chevron(0, y - hv, 0.3, 0.16), 0.045, glow=(0.07, 0.07))
     strip(g, fb, chevron(0, 2.2 - hv, 0.3, 0.16, up=False), 0.045, glow=(0.07, 0.07))
@@ -400,13 +377,13 @@ def target_alcove():
     edge_grid(g, f, hu, hv)
     # Outside faces.
     f, hu, hv = box_face(mn, mx, "-z")
-    wall_border(g, f, hu, hv, 0.08 - hv, 2.72 - hv)
+    edge_band(g, f, hu, hv)
     ring(g, f, hexagon(0, 0.2, 0.45), 0.05, glow_in=0.09, glow_out=0.1)
     ring(g, f, hexagon(0, 0.2, 0.25), 0.035, glow_in=0.06, glow_out=0.06)
     line(g, f, (-0.86, 0.9 - hv), (0.86, 0.9 - hv), W, glow=0.08)
     for side in ("+x", "-x"):
         f, hu, hv = box_face(mn, mx, side)
-        wall_border(g, f, hu, hv, 0.08 - hv, 2.72 - hv)
+        edge_band(g, f, hu, hv)
         line(g, f, (-0.86, 0.9 - hv), (0.86, 0.9 - hv), W, glow=0.08)
         ring(g, f, diamond(0, 1.9 - hv, 0.3), 0.04, glow_in=0.07, glow_out=0.08)
     return g
@@ -427,37 +404,27 @@ def spawn_pad():
 
 
 def border_wall():
+    """The arena's edge: nothing but the neon on its edges."""
     g = L.Geo()
     mn, mx = bounds("border_wall")
     box(g, mn, mx, skip=("-y",))
-    wall_common(g, mn, mx)
-    for side in ("+z", "-z"):
-        f, hu, hv = box_face(mn, mx, side)  # v = y - 3
-        ring(g, f, chamfer_rect(-hu + 0.1, 0.1 - hv, hu - 0.1, hv - 0.1, 0.22), 0.05,
-             glow_in=0.12, glow_out=0.04)
-        for y in (1.2, 4.8):
-            line(g, f, (-0.85, y - hv), (0.85, y - hv), 0.06, glow=0.12)
-        ring(g, f, hexagon(0, 0, 0.78), 0.06, glow_in=0.1, glow_out=0.13)
-        ring(g, f, hexagon(0, 0, 0.5), 0.04, glow_in=0.08, glow_out=0.08)
-        filled(g, f, hexagon(0, 0, 0.18), glow=0.08)
-        for s in (-1, 1):
-            line(g, f, (s * 0.62, 1.45 - hv), (s * 0.62, 2.1 - hv), 0.035, glow=0.07)
-            line(g, f, (s * 0.62, 3.9 - hv), (s * 0.62, 4.55 - hv), 0.035, glow=0.07)
+    edge_bands(g, mn, mx, w=0.05)
     return g
 
 
 def border_post():
+    """The arena's corners: lit corners and a band round the top edge, nothing else."""
     g = L.Geo()
     mn, mx = bounds("border_post")
     hx, hz, top = mx[0], mx[2], mx[1]
     c = 0.04
     L.prism_y(g, L.octagon_xz(hx, hz, c), 0, top)
-    corner_lines(g, hx, hz, c, 0.1, top - 0.1, w=0.025, g=0.07)
-    bands(g, hx, hz, c, (1.2, 4.8), w=0.06, g=0.08, top=top)
-    for side in ("+x", "-x", "+z", "-z"):
-        f, hu, hv = box_face((-hx, 0, -hz), (hx, top, hz), side)
-        filled(g, f, hexagon(0, 0, 0.09), glow=0.06)
-    top_cap(g, hx, hz, top, 0.07)
+    corner_lines(g, hx, hz, c, 0, top, w=0.025)
+    w = 0.05
+    f = Frame((0, top, 0), L.X, L.NZ)
+    d = w / 2
+    ring(g, f, chamfer_rect(-hx + d, -hz + d, hx - d, hz - d, c - d * (2 ** 0.5 - 1)), w,
+         glow_in=0, glow_out=0)
     return g
 
 
