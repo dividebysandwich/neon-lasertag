@@ -1084,6 +1084,42 @@ fn edge_glow(
     ];
 }
 
+/// The rules in short, for the in-game menus (capitals, digits and `- : ' ( )` only, for VR's
+/// stroke font).
+pub fn rules_lines(rules: &lt_sim::Rules, mega: bool) -> Vec<String> {
+    let mut out = vec![
+        format!(
+            "{} HITS TAG YOU OUT - AFTER A HIT YOU CAN'T SHOOT OR BE HIT FOR {:.0} S",
+            rules.hits_to_tag, rules.hit_cooldown
+        ),
+        format!(
+            "TAG OUT AN ENEMY: {} - ASSIST: {} - DEFEND YOUR {}: +{}",
+            rules.tag_points,
+            rules.assist_points,
+            if mega { "DOORWAY" } else { "TARGETS" },
+            rules.defend_points
+        ),
+    ];
+    if mega {
+        out.push(format!(
+            "HIT BOTH SECONDARY TARGETS ({} EACH) TO PASS THE FORCEFIELDS FOR {:.0} S",
+            rules.secondary_points, rules.power_time
+        ));
+        out.push(format!(
+            "THEN THE MEGATARGET IN THE MIDDLE ROOM: {}",
+            rules.megatarget_points
+        ));
+    } else {
+        out.push(format!(
+            "ENEMY TARGETS: {} A HIT - SHOOT THEM FROM BEHIND OR BELOW",
+            rules.target_points
+        ));
+    }
+    out.push("YOUR SPAWN PADS HEAL YOU - THEY AND THE WHITE STATIONS REFILL YOUR BLASTER".into());
+    out.push(format!("THE LAST {:.0} S COUNT DOUBLE", rules.double_last));
+    out
+}
+
 /// Megatarget mode: whether `p` stands close to a forcefield it may not pass, outside the room.
 pub fn near_forcefield(game: &Game, p: &lt_sim::sim::PlayerSnap) -> bool {
     let Some(m) = game.level.mega.as_ref() else {

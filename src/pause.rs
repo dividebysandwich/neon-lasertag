@@ -9,6 +9,7 @@ use crate::desktop::{Overlays, set_grab};
 use crate::game::Game;
 use crate::neonui::{self, NeonButton};
 use crate::session::SessionCmd;
+use crate::settings::{Action, Settings};
 
 #[derive(Component)]
 struct PauseRoot;
@@ -92,6 +93,7 @@ fn show(
     overlays: Res<Overlays>,
     root: Query<Entity, With<PauseRoot>>,
     game: Option<Res<Game>>,
+    settings: Res<Settings>,
 ) {
     let open = overlays.menu && game.is_some();
     match (open, root.single()) {
@@ -100,24 +102,29 @@ fn show(
                 .spawn((PauseRoot, neonui::backdrop(neonui::BACKDROP_DEEP, 20)))
                 .with_children(|p| {
                     neonui::title(p, "MENU", 52.0, neonui::PINK);
-                    p.spawn(neonui::panel(neonui::MAGENTA, None))
-                        .with_children(|p| {
-                            for (text, b, color) in [
-                                ("RESUME", PauseButton::Resume, neonui::CYAN),
-                                ("OPTIONS", PauseButton::Options, neonui::VIOLET),
-                                ("LEAVE TO MAIN MENU", PauseButton::Leave, neonui::MAGENTA),
-                                ("QUIT GAME", PauseButton::Quit, neonui::PINK),
-                            ] {
-                                neonui::button(
-                                    p,
-                                    text,
-                                    b,
-                                    NeonButton::new(color),
-                                    Some(360.0),
-                                    22.0,
-                                );
-                            }
-                        });
+                    p.spawn(neonui::row(24.0)).with_children(|p| {
+                        p.spawn(neonui::panel(neonui::MAGENTA, None))
+                            .with_children(|p| {
+                                for (text, b, color) in [
+                                    ("RESUME", PauseButton::Resume, neonui::CYAN),
+                                    ("OPTIONS", PauseButton::Options, neonui::VIOLET),
+                                    ("LEAVE TO MAIN MENU", PauseButton::Leave, neonui::MAGENTA),
+                                    ("QUIT GAME", PauseButton::Quit, neonui::PINK),
+                                ] {
+                                    neonui::button(
+                                        p,
+                                        text,
+                                        b,
+                                        NeonButton::new(color),
+                                        Some(360.0),
+                                        22.0,
+                                    );
+                                }
+                            });
+                        if let Some(game) = game.as_deref() {
+                            help(p, &settings, game);
+                        }
+                    });
                     if let Some(status) = game.as_ref().and_then(|g| g.hosting()) {
                         p.spawn(neonui::text(status, 15.0, neonui::CYAN));
                     }
@@ -129,4 +136,55 @@ fn show(
         }
         _ => {}
     }
+}
+
+/// Beside the buttons: the controls as bound now, and the rules in short, side by side.
+fn help(p: &mut ChildSpawnerCommands, settings: &Settings, game: &Game) {
+    let column = |w: f32| Node {
+        width: Val::Px(w),
+        flex_direction: FlexDirection::Column,
+        row_gap: Val::Px(4.0),
+        ..default()
+    };
+    p.spawn(neonui::panel(neonui::VIOLET, None))
+        .insert(Node {
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::FlexStart,
+            column_gap: Val::Px(28.0),
+            padding: UiRect::axes(Val::Px(24.0), Val::Px(18.0)),
+            border: UiRect::all(Val::Px(2.0)),
+            border_radius: BorderRadius::all(Val::Px(10.0)),
+            max_width: Val::Percent(60.0),
+            ..default()
+        })
+        .with_children(|p| {
+            p.spawn(column(270.0)).with_children(|p| {
+                p.spawn(neonui::text_w("CONTROLS", 17.0, neonui::VIOLET, 800));
+                let mut lines: Vec<(String, String)> = vec![("Look".into(), "Mouse".into())];
+                lines.extend(
+                    Action::ALL
+                        .iter()
+                        .map(|&a| (a.name().to_string(), settings.describe(a))),
+                );
+                lines.push(("Menu".into(), "Esc".into()));
+                for (what, keys) in lines {
+                    p.spawn(Node {
+                        justify_content: JustifyContent::SpaceBetween,
+                        column_gap: Val::Px(12.0),
+                        ..default()
+                    })
+                    .with_children(|r| {
+                        r.spawn(neonui::text(what, 13.0, neonui::DIM));
+                        r.spawn(neonui::text(keys, 13.0, neonui::TEXT));
+                    });
+                }
+            });
+            p.spawn(column(300.0)).with_children(|p| {
+                p.spawn(neonui::text_w("RULES", 17.0, neonui::VIOLET, 800));
+                for line in crate::hud::rules_lines(&game.rules, game.level.mega.is_some()) {
+                    p.spawn(neonui::text(line, 12.0, neonui::TEXT));
+                    p.spawn(neonui::gap(2.0));
+                }
+            });
+        });
 }
