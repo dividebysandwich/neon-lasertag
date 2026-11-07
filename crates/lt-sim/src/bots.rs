@@ -71,7 +71,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::collide::{BODY_RADIUS, GRAVITY, World};
 use crate::level::{self, Dims, Level, MoverKind};
-use crate::sim::{EYE, PICKUP_HEIGHT, Player, Sim, TICK, look_rot, yaw_of};
+use crate::sim::{EYE, PICKUP_HEIGHT, Player, Sim, TICK, eye_on_neck, look_rot, yaw_of};
 use crate::types::*;
 
 pub trait Controller: Send + Sync {
@@ -2417,7 +2417,7 @@ impl Bot {
         let look = look_rot(self.aim);
         cmd.yaw = yaw;
         cmd.head = Pose {
-            pos: Vec3::Y * EYE,
+            pos: eye_on_neck(Vec3::Y * EYE, look),
             rot: look,
         };
         cmd.gun_hand = Some(Hand::Right);

@@ -2314,6 +2314,17 @@ pub fn yaw_of(dir: Vec3) -> f32 {
     (-dir.x).atan2(-dir.z)
 }
 
+/// Where the eyes are from the neck, looking straight ahead: behind and below them.
+const NECK_TO_EYE: Vec3 = Vec3::new(0.0, 0.1, -0.08);
+
+/// The eyes of a head turned to `rot` on its neck, `level` where they are looking straight
+/// ahead: a head pitches about the neck, so looking down brings the eyes forward and down
+/// (pitched about the eyes, the skull would swing back). Tracked heads move so by themselves.
+pub fn eye_on_neck(level: Vec3, rot: Quat) -> Vec3 {
+    let (yaw, pitch, _) = rot.to_euler(glam::EulerRot::YXZ);
+    level + Quat::from_rotation_y(yaw) * (Quat::from_rotation_x(pitch) * NECK_TO_EYE - NECK_TO_EYE)
+}
+
 /// The rotation looking along `dir`.
 pub fn look_rot(dir: Vec3) -> Quat {
     let d = dir.normalize_or(Vec3::NEG_Z);

@@ -9,7 +9,7 @@ use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
-use lt_sim::sim::{EYE, look_rot};
+use lt_sim::sim::{EYE, eye_on_neck, look_rot};
 use lt_sim::{Hand, Pose, SimEvent};
 
 use crate::assets::Models;
@@ -270,7 +270,7 @@ fn read_input(
         stick *= 0.5;
     }
     let view = Quat::from_rotation_y(look.yaw) * Quat::from_rotation_x(look.pitch);
-    let head = Vec3::Y * look.eye_height();
+    let head = eye_on_neck(Vec3::Y * look.eye_height(), view);
     let shotgun = game
         .me
         .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
