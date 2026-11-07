@@ -129,10 +129,10 @@ it. You lose them all when you're tagged out.
 
 | | VR | Flat screen |
 |---|---|---|
-| move | left stick (where you look), or walk in your room | WASD (Shift: slower) |
+| move | left stick (where you look, or where your left hand points: an option), or walk in your room | WASD (Shift: slower) |
 | dash | click the left stick (not on the Steam Frame yet) | Left Alt or mouse button 4 |
 | jump | A or X (a hop of about 0.8 m; it still works just after you walk off an edge, and a press just before landing jumps on landing) | Space |
-| crouch | crouch (slower: you move at half speed) | Left Ctrl or C (hold; lowers you behind half walls, half speed) |
+| crouch | crouch, or pull the right stick down (again: stand up); you move at half speed | Left Ctrl or C (hold; lowers you behind half walls, half speed) |
 | turn / look | right stick (smooth turn), your head | mouse |
 | blaster | grip it at the holster on your right hip (one hand at a time); let go to holster it | always in hand |
 | fire | trigger | left mouse button |
@@ -159,7 +159,7 @@ while a VR compositor runs (SteamVR's vrcompositor or Monado's service: `--vr`),
 flat screen otherwise (or when the headset can't be used).
 
 **The start menu** (flat screen and VR alike): Botmatch (the bots' number and difficulty, the
-arena's size, the mode), Multiplayer, Options (flat screen: volumes, mouse, field of view, crouch held or toggled, head bob and blaster sway, the keys) and Quit. Multiplayer offers Internet
+arena's size, the mode), Multiplayer, Options (VR: volumes, the blaster's tilt, the holster's height and side, vibration, whether the stick moves you where you look or where your left hand points, and Calibrate height: sit or stand upright and press it to play at full height, e.g. seated; also in the in-game menu; flat screen: volumes, mouse, field of view, crouch held or toggled, head bob and blaster sway, the keys) and Quit. Multiplayer offers Internet
 (the master server's list of servers, join one, or host an internet game) and LAN (the games
 found on your network, found by their broadcasts on UDP port 27421, join one, or host a LAN
 game); on the flat screen both also join a typed address. Hosting asks for the server's name
@@ -175,7 +175,7 @@ router), `--server-name NAME` (the hosted game's name), `--connect HOST[:PORT]`,
 (the arenas' size in local and hosted games, also in the start menu; random picks one for every
 match), `--mode classic|megatarget` (what local and hosted games are played for, megatarget unless chosen, also in the start
 menu), `--left-handed` (VR: the
-holster on the left hip; or `LT_LEFT_HANDED=1`), `--autopilot` (a bot plays you, for testing),
+holster on the left hip, as the option; or `LT_LEFT_HANDED=1`), `--autopilot` (a bot plays you, for testing),
 `--match-time S` (local games), `--screenshot FILE --after 5,10`, `--quit-after S`.
 Testing: `LT_DEV="6:menu,8:leave,10:play-hard,14:hit,20:next"` scripts menu actions and hits (`options`
 opens the options screen, `arc` shows the throw arc, `target` hits a team target, `hit-them` and `tag-them` show and sound as if you hit or tagged out the nearest enemy;
@@ -187,8 +187,8 @@ the nearest jump pad, `warp-gate` before the nearest laser gate; `yaw=DEG` and `
 `LT_MENU=top|botmatch|multiplayer|internet|lan|host-lan|host-internet` opens the start menu at
 that level, `LT_MASTER=URL` asks another master server, `LT_VR_MENU=1` opens the VR menu, `LT_SCORES=1` shows the flat screen's scores as if Tab were held, `LT_VR_FAKE_HANDS=1` fakes controllers (`wrist`: the free hand held up, showing its wrist display), `LT_HOLSTER=x,y,z`
 moves the holster (from the eyes; default `0.23,-0.58,-0.07`). `LT_GUN_TILT=DEG` turns the
-blaster nose down in the hand by that much from the controller's aim (default 15), for a more
-upright handle.
+blaster nose down in the hand by that much from the controller's aim (instead of the option,
+default 30), for a more upright handle. `LT_VR_MENU=options` opens the VR options.
 
 
 ## Testing

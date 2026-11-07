@@ -251,6 +251,17 @@ pub struct Settings {
     pub toggle_crouch: bool,
     /// The view bobs while walking and the blaster sways (flat screen).
     pub head_bob: bool,
+    /// VR: the holster on the left hip (`--left-handed` too); the blaster turned nose down in
+    /// the hand (degrees, `GUN_TILT_RANGE`); the holster raised (m, `HOLSTER_RANGE`); the
+    /// vibration's strength (0..=1); the stick moving where the left hand points (else where
+    /// the head looks); and how much higher the eyes are than tracked (m: "calibrate height",
+    /// for playing seated or a floor tracked wrong).
+    pub left_handed: bool,
+    pub gun_tilt: f32,
+    pub holster_dy: f32,
+    pub haptics: f32,
+    pub steer_hand: bool,
+    pub eye_offset: f32,
     /// Volumes, 0..=1 (1 the default): the sound effects and the music.
     pub sound_volume: f32,
     pub music_volume: f32,
@@ -266,6 +277,13 @@ pub struct Settings {
 /// The field of view's range and default (degrees).
 pub const FOV_RANGE: (f32, f32) = (60.0, 110.0);
 pub const FOV_DEFAULT: f32 = 80.0;
+
+/// VR: the gun tilt's range and default (degrees), the holster's raise range (m), and the
+/// height offset's range (m).
+pub const GUN_TILT_RANGE: (f32, f32) = (0.0, 45.0);
+pub const GUN_TILT_DEFAULT: f32 = 30.0;
+pub const HOLSTER_RANGE: (f32, f32) = (-0.15, 0.15);
+pub const EYE_OFFSET_RANGE: (f32, f32) = (-0.5, 1.2);
 
 /// Pickups of a kind whose announcements explain it.
 pub const EXPLAINED: u32 = 3;
@@ -288,6 +306,12 @@ impl Default for Settings {
             fov: FOV_DEFAULT,
             toggle_crouch: false,
             head_bob: true,
+            left_handed: false,
+            gun_tilt: GUN_TILT_DEFAULT,
+            holster_dy: 0.0,
+            haptics: 1.0,
+            steer_hand: false,
+            eye_offset: 0.0,
             sound_volume: 1.0,
             music_volume: 1.0,
             bindings: Action::ALL.iter().map(|&a| (a, a.defaults())).collect(),
@@ -420,6 +444,14 @@ impl Settings {
                 s.fov = saved.fov.clamp(FOV_RANGE.0, FOV_RANGE.1);
                 s.toggle_crouch = saved.toggle_crouch;
                 s.head_bob = saved.head_bob;
+                s.left_handed = saved.left_handed;
+                s.gun_tilt = saved.gun_tilt.clamp(GUN_TILT_RANGE.0, GUN_TILT_RANGE.1);
+                s.holster_dy = saved.holster_dy.clamp(HOLSTER_RANGE.0, HOLSTER_RANGE.1);
+                s.haptics = saved.haptics.clamp(0.0, 1.0);
+                s.steer_hand = saved.steer_hand;
+                s.eye_offset = saved
+                    .eye_offset
+                    .clamp(EYE_OFFSET_RANGE.0, EYE_OFFSET_RANGE.1);
                 s.sound_volume = saved.sound_volume.clamp(0.0, 1.0);
                 s.music_volume = saved.music_volume.clamp(0.0, 1.0);
                 s.taken = saved.taken;
@@ -447,6 +479,12 @@ impl Settings {
             fov: self.fov,
             toggle_crouch: self.toggle_crouch,
             head_bob: self.head_bob,
+            left_handed: self.left_handed,
+            gun_tilt: self.gun_tilt,
+            holster_dy: self.holster_dy,
+            haptics: self.haptics,
+            steer_hand: self.steer_hand,
+            eye_offset: self.eye_offset,
             sound_volume: self.sound_volume,
             music_volume: self.music_volume,
             bindings: self
@@ -484,6 +522,12 @@ struct Saved {
     fov: f32,
     toggle_crouch: bool,
     head_bob: bool,
+    left_handed: bool,
+    gun_tilt: f32,
+    holster_dy: f32,
+    haptics: f32,
+    steer_hand: bool,
+    eye_offset: f32,
     sound_volume: f32,
     music_volume: f32,
     bindings: Vec<(String, Vec<Option<String>>)>,
@@ -499,6 +543,12 @@ impl Default for Saved {
             fov: FOV_DEFAULT,
             toggle_crouch: false,
             head_bob: true,
+            left_handed: false,
+            gun_tilt: GUN_TILT_DEFAULT,
+            holster_dy: 0.0,
+            haptics: 1.0,
+            steer_hand: false,
+            eye_offset: 0.0,
             sound_volume: 1.0,
             music_volume: 1.0,
             bindings: Vec::new(),

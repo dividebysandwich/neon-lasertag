@@ -29,6 +29,7 @@ use crate::assets::Models;
 use crate::game::{Game, GameEvent, InputSet, LocalCmd, Mover, PredictSet};
 use crate::materials::{AccentMaterial, NeonUniform, Palette, team_color};
 use crate::segtext::{self, Align};
+use crate::settings::Settings;
 use crate::sevenseg::{Digit, show, spawn_digits};
 
 /// The holster, from the eyes (along the body's facing; x to the gun side). `LT_HOLSTER=x,y,z`
@@ -51,13 +52,27 @@ fn holster_offset() -> Vec3 {
     })
 }
 /// How far the blaster is turned nose down from the controller's aim, so its handle sits more
-/// upright in the hand (degrees in `LT_GUN_TILT`, default 15).
-static GUN_TILT: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+/// upright in the hand (degrees): `LT_GUN_TILT`, else the setting (`Settings::gun_tilt`,
+/// default 30).
+fn gun_tilt(settings: &Settings) -> f32 {
+    static ENV: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    ENV.get_or_init(|| {
+        std::env::var("LT_GUN_TILT")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok())
+    })
+    .unwrap_or(settings.gun_tilt)
+    .to_radians()
+}
 
-/// A hand this close to the holster draws the blaster when it grips.
 /// Eyes lower than this (m above the feet) count as crouching (`PlayerCmd::crouch`).
 const CROUCH_EYE: f32 = 0.75 * lt_sim::sim::EYE;
+/// Crouching with the right stick (pulled down: on, again: off) lowers the eyes this much (m),
+/// easing with this time constant (s).
+const STICK_CROUCH: f32 = 0.6;
+const STICK_CROUCH_TIME: f32 = 0.08;
 
+/// A hand this close to the holster draws the blaster when it grips.
 const HOLSTER_REACH: f32 = 0.2;
 /// Holding B / Y this long (without taking a grenade) opens the menu.
 const MENU_HOLD: f32 = 0.9;
@@ -129,6 +144,11 @@ pub struct VrState {
     /// A / X held (last frame): pressing jumps; the left stick clicked: dashes.
     primary_held: [bool; 2],
     stick_held: bool,
+    /// Crouching with the right stick: on, the stick held down (last frame), and how far down
+    /// the eyes are (0..1, eased).
+    stick_crouch: bool,
+    stick_down: bool,
+    pub crouch: f32,
     /// Times the menu was asked for (src/vrui.rs takes them).
     pub menu_requests: u32,
     /// Recentering was asked for this frame (the left menu button).
@@ -199,6 +219,20 @@ impl Plugin for VrPlugin {
                     left: args.left_handed,
                 });
             })
+            // (`--left-handed`, or the setting.)
+            .add_systems(
+                Update,
+                |args: Res<crate::Args>,
+                 settings: Option<Res<Settings>>,
+                 hand: Option<ResMut<Handedness>>| {
+                    let want = args.left_handed || settings.is_some_and(|s| s.left_handed);
+                    if let Some(mut h) = hand
+                        && h.left != want
+                    {
+                        h.left = want;
+                    }
+                },
+            )
             .add_systems(
                 Update,
                 (fake_hands, read_controls)
@@ -368,6 +402,7 @@ fn read_controls(
     mut faced: Local<Option<u64>>,
     mut rumble: ResMut<Rumble>,
     handedness: Option<Res<Handedness>>,
+    settings: Res<Settings>,
 ) {
     let dt = time.delta_secs();
     // Face the centre of the arena on entering it and after respawning.
@@ -397,8 +432,12 @@ fn read_controls(
         }
         vr.last_head = Some(h.translation);
     }
-    // Left stick: walk where the head looks.
-    let head_yaw = vr.yaw + input.head.map_or(0.0, |h| flat_yaw(h.rotation));
+    // Left stick: walk where the head looks (or the left hand points).
+    let steer = match input.hands[0].aim {
+        Some(a) if settings.steer_hand => Some(a.rotation),
+        _ => input.head.map(|h| h.rotation),
+    };
+    let head_yaw = vr.yaw + steer.map_or(0.0, flat_yaw);
     let s = input.hands[0].stick;
     let s = if s.length() < 0.15 { Vec2::ZERO } else { s };
     let fwd = Vec2::new(-head_yaw.sin(), -head_yaw.cos());
@@ -410,6 +449,21 @@ fn read_controls(
     if t.abs() > 0.2 {
         vr.yaw -= t.signum() * (t.abs() - 0.2) / 0.8 * 2.4 * dt;
     }
+    // Right stick pulled down: crouch, or stand up again (not while turning hard).
+    let down = input.hands[1].stick.y < -0.7 && t.abs() < 0.5;
+    if down && !vr.stick_down && !vr.ui {
+        vr.stick_crouch = !vr.stick_crouch;
+    }
+    vr.stick_down = down;
+    let alive = game
+        .me
+        .and_then(|me| game.snap.players.iter().find(|p| p.id == me))
+        .is_some_and(|p| p.respawn.is_none());
+    if !alive {
+        vr.stick_crouch = false;
+    }
+    let want = if vr.stick_crouch { 1.0 } else { 0.0 };
+    vr.crouch += (want - vr.crouch) * (1.0 - (-dt / STICK_CROUCH_TIME).exp());
     local.cmd.yaw = vr.yaw + input.head.map_or(0.0, |h| flat_yaw(h.rotation));
     // A or X: jump.
     for i in 0..2 {
@@ -435,7 +489,7 @@ fn read_controls(
         });
         vr.body_yaw = Some(body);
         let side = if left_handed { -1.0 } else { 1.0 };
-        let at = holster_offset();
+        let at = holster_offset() + Vec3::Y * settings.holster_dy;
         let offset = Quat::from_rotation_y(body) * Vec3::new(at.x * side, 0.0, at.z);
         vr.holster = Some(h.translation + offset + Vec3::Y * at.y);
     }
@@ -575,6 +629,7 @@ fn place_rig(
     rig: Option<Res<XrRig>>,
     mut transforms: Query<&mut Transform>,
     time: Res<Time>,
+    settings: Res<Settings>,
 ) {
     // Feet: the prediction, or where the simulation has us (waiting to respawn).
     let me = game
@@ -590,8 +645,10 @@ fn place_rig(
         .head
         .unwrap_or(Transform::from_xyz(0.0, lt_sim::sim::EYE, 0.0));
     let h = head.translation;
+    // (Raised by the height setting, lowered by crouching with the stick.)
+    let lift = settings.eye_offset - STICK_CROUCH * vr.crouch;
     vr.rig = Transform {
-        translation: feet - rot * Vec3::new(h.x, 0.0, h.z),
+        translation: feet - rot * Vec3::new(h.x, 0.0, h.z) + Vec3::Y * lift,
         rotation: rot,
         ..default()
     };
@@ -629,13 +686,7 @@ fn place_rig(
     if let Some(gh) = vr.gun {
         // The blaster held with its handle more upright in the hand: turned nose down about the
         // grip from the controller's aim (it fires along its barrel).
-        let tilt = *GUN_TILT.get_or_init(|| {
-            std::env::var("LT_GUN_TILT")
-                .ok()
-                .and_then(|v| v.parse::<f32>().ok())
-                .unwrap_or(30.0)
-                .to_radians()
-        });
+        let tilt = gun_tilt(&settings);
         let hand = &mut local.cmd.hands[gh.index()];
         hand.rot *= Quat::from_rotation_x(-tilt);
         let p = *hand;
@@ -1403,7 +1454,13 @@ fn haptics(
 }
 
 /// This frame's amplitude per hand: the strongest pulse playing.
-fn play_rumble(mut rumble: ResMut<Rumble>, mut input: ResMut<XrInput>, time: Res<Time>) {
+fn play_rumble(
+    mut rumble: ResMut<Rumble>,
+    mut input: ResMut<XrInput>,
+    time: Res<Time>,
+    settings: Option<Res<Settings>>,
+) {
+    let strength = settings.map_or(1.0, |s| s.haptics);
     let dt = time.delta_secs();
     let mut amp = [0.0f32; 2];
     for (hand, wait, secs, a, fade, played) in rumble.pulses.iter_mut() {
@@ -1421,6 +1478,6 @@ fn play_rumble(mut rumble: ResMut<Rumble>, mut input: ResMut<XrInput>, time: Res
     }
     rumble.pulses.retain(|p| p.1 > 0.0 || p.5 < p.2);
     for (h, a) in input.haptic.iter_mut().zip(amp) {
-        *h = h.max(a.min(1.0));
+        *h = h.max((a * strength).min(1.0));
     }
 }

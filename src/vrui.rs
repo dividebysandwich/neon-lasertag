@@ -5,7 +5,10 @@
 //!   levels of src/menu.rs (botmatch, internet and LAN server lists, hosting), with their
 //!   choices lit; no typing in VR.
 //! - The menu (the right menu button, or B / Y held; see src/vr.rs): Resume, New match (local
-//!   games: the next match on a new arena), Main menu and Quit, floating in front of the player.
+//!   games: the next match on a new arena), Options, Main menu and Quit, floating in front of
+//!   the player.
+//! - The options (from the start menu or the menu): volumes, the blaster's tilt, the holster's
+//!   height and side, vibration, where the stick moves, and the height calibration.
 //! - A panel stays where it was placed (in front of the eyes when it opened; the start menu keeps
 //!   its place as its levels change) until the left menu button recenters it.
 //! - The end of a match: the winner, the scores and each team's players with their score,
@@ -16,7 +19,7 @@
 //! - Hits: a red glow at the edge of the view on the side the shot came from (ahead: top,
 //!   behind: bottom), fading.
 //!
-//! `LT_VR_MENU=1` opens the menu at the start (testing).
+//! `LT_VR_MENU=1` opens the menu at the start, `LT_VR_MENU=options` the options (testing).
 
 use bevy::prelude::*;
 use lt_sim::bots::Difficulty;
@@ -74,6 +77,8 @@ enum Kind {
     Lobby,
     Menu,
     End,
+    /// The VR options (from the start menu or the menu).
+    Options,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -85,6 +90,28 @@ enum Act {
     Quit,
     /// The start menu's (src/menu.rs).
     Menu(MenuAct),
+    /// Open the options.
+    Options,
+    /// Change an option.
+    Opt(VrOpt),
+}
+
+/// The VR options' buttons (`build_options`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum VrOpt {
+    /// Sound and music volume, the gun tilt and the holster's height: down (false) or up.
+    Sound(bool),
+    Music(bool),
+    Tilt(bool),
+    Holster(bool),
+    LeftHanded,
+    /// Full, low, off.
+    Haptics,
+    SteerHand,
+    /// The tracked height now taken as standing height; back to as tracked.
+    Calibrate,
+    ResetHeight,
+    Back,
 }
 
 /// What the start menu panel shows: its level, the choices and the lists' revision (it is
@@ -121,6 +148,8 @@ struct Panel {
 #[derive(Resource, Default)]
 struct VrUi {
     menu: bool,
+    /// The options are up (over the start menu or the menu).
+    options: bool,
     panel: Option<Panel>,
     lasers: Option<[Entity; 2]>,
     /// Per hand: the trigger held, the button pointed at.
@@ -498,7 +527,7 @@ fn build_menu(b: &mut Builder, game: &Game) -> Vec<Button> {
     // The buttons, and under them the scores as they stand.
     let rows = standings(game);
     let n = rows[0].len() + rows[1].len();
-    let buttons_h = if local { 0.88 } else { 0.72 };
+    let buttons_h = if local { 1.04 } else { 0.88 };
     let scores_h = 2.0 * (0.12 + 0.02) + n as f32 * ROW + 0.04;
     let size = Vec2::new(1.0, buttons_h + scores_h);
     b.backing(size, Hue::Magenta);
@@ -527,6 +556,7 @@ fn build_menu(b: &mut Builder, game: &Game) -> Vec<Button> {
     if local {
         acts.push(("NEW MATCH", Act::NewMatch, Hue::Amber));
     }
+    acts.push(("OPTIONS", Act::Options, Hue::Violet));
     acts.push(("MAIN MENU", Act::Leave, Hue::Magenta));
     acts.push(("QUIT", Act::Quit, Hue::Pink));
     acts.iter()
@@ -548,9 +578,12 @@ fn build_menu(b: &mut Builder, game: &Game) -> Vec<Button> {
 const HELP_W: f32 = 0.9;
 
 /// The VR controls.
-const VR_CONTROLS: [&str; 9] = [
+const VR_CONTROLS: [&str; 12] = [
     "Move: left stick, or walk",
     "Turn: right stick",
+    "Jump: A or X",
+    "Dash: click the left stick",
+    "Crouch: right stick down (or crouch)",
     "Blaster: grip it at your hip",
     "Fire: trigger",
     "Grenade: hold B or Y, throw, let go",
@@ -824,6 +857,7 @@ fn build_lobby(b: &mut Builder, m: &MenuModel) -> Vec<Button> {
                     MenuAct::Go(Screen::Multiplayer),
                     Hue::Magenta,
                 ),
+                ("OPTIONS", MenuAct::Options, Hue::Violet),
                 ("QUIT", MenuAct::Quit, Hue::Pink),
             ],
         ),
@@ -1082,6 +1116,204 @@ fn build_end(b: &mut Builder, game: &Game) -> (Vec<Button>, Vec3) {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// The VR options panel (`Settings`): volumes, handedness, the blaster's tilt, the holster's
+/// height, vibration, which way the stick moves, and the height calibration.
+fn build_options(b: &mut Builder, s: &crate::settings::Settings) -> Vec<Button> {
+    let size = Vec2::new(1.1, 1.12);
+    b.backing(size, Hue::Violet);
+    let top = size.y / 2.0;
+    b.title("OPTIONS", 0.058, top - 0.085);
+    let (white, dim) = (b.mats.white.clone(), b.mats.dim.clone());
+    let mut buttons = Vec::new();
+    let row_y = |k: usize| top - 0.24 - k as f32 * 0.092;
+    let label = |b: &mut Builder, k: usize, s: &str| {
+        b.text_w(
+            s,
+            0.026,
+            BOLD,
+            Vec2::new(-0.48, row_y(k)),
+            Align::Left,
+            &white,
+            None,
+        );
+    };
+    let (vx, bw) = (0.27, Vec2::new(0.09, 0.07));
+    let mut stepper = |b: &mut Builder, k: usize, name: &str, value: String, down, up| {
+        label(b, k, name);
+        let y = row_y(k);
+        buttons.push(b.button(
+            "-",
+            Act::Opt(down),
+            Vec2::new(vx - 0.17, y),
+            bw,
+            Hue::Violet,
+            false,
+        ));
+        b.text(&value, 0.026, Vec2::new(vx, y), Align::Center, &white, None);
+        buttons.push(b.button(
+            "+",
+            Act::Opt(up),
+            Vec2::new(vx + 0.17, y),
+            bw,
+            Hue::Violet,
+            false,
+        ));
+    };
+    stepper(
+        b,
+        0,
+        "SOUND",
+        format!("{:.0} %", s.sound_volume * 100.0),
+        VrOpt::Sound(false),
+        VrOpt::Sound(true),
+    );
+    stepper(
+        b,
+        1,
+        "MUSIC",
+        format!("{:.0} %", s.music_volume * 100.0),
+        VrOpt::Music(false),
+        VrOpt::Music(true),
+    );
+    stepper(
+        b,
+        2,
+        "BLASTER TILT",
+        format!("{:.0}°", s.gun_tilt),
+        VrOpt::Tilt(false),
+        VrOpt::Tilt(true),
+    );
+    stepper(
+        b,
+        3,
+        "HOLSTER HEIGHT",
+        format!("{:+.0} CM", s.holster_dy * 100.0),
+        VrOpt::Holster(false),
+        VrOpt::Holster(true),
+    );
+    let toggle =
+        |b: &mut Builder, buttons: &mut Vec<Button>, k: usize, name: &str, value: &str, o| {
+            label(b, k, name);
+            buttons.push(b.button(
+                value,
+                Act::Opt(o),
+                Vec2::new(vx, row_y(k)),
+                Vec2::new(0.43, 0.07),
+                Hue::Cyan,
+                false,
+            ));
+        };
+    toggle(
+        b,
+        &mut buttons,
+        4,
+        "HOLSTER ON",
+        if s.left_handed {
+            "LEFT HIP"
+        } else {
+            "RIGHT HIP"
+        },
+        VrOpt::LeftHanded,
+    );
+    let haptics = if s.haptics >= 0.99 {
+        "FULL"
+    } else if s.haptics > 0.0 {
+        "LOW"
+    } else {
+        "OFF"
+    };
+    toggle(b, &mut buttons, 5, "VIBRATION", haptics, VrOpt::Haptics);
+    toggle(
+        b,
+        &mut buttons,
+        6,
+        "STICK MOVES",
+        if s.steer_hand {
+            "WHERE HAND POINTS"
+        } else {
+            "WHERE YOU LOOK"
+        },
+        VrOpt::SteerHand,
+    );
+    // Height: calibrate (stand, or sit, upright and press) or as tracked.
+    label(b, 7, "HEIGHT");
+    let y = row_y(7);
+    buttons.push(b.button(
+        "CALIBRATE",
+        Act::Opt(VrOpt::Calibrate),
+        Vec2::new(vx - 0.11, y),
+        Vec2::new(0.21, 0.07),
+        Hue::Amber,
+        false,
+    ));
+    buttons.push(b.button(
+        "RESET",
+        Act::Opt(VrOpt::ResetHeight),
+        Vec2::new(vx + 0.11, y),
+        Vec2::new(0.21, 0.07),
+        Hue::Amber,
+        false,
+    ));
+    let note = if s.eye_offset.abs() < 0.005 {
+        "AS TRACKED - SEATED? SIT UPRIGHT, CALIBRATE".to_string()
+    } else {
+        format!("EYES {:+.2} M OVER TRACKED", s.eye_offset)
+    };
+    b.text(
+        &note,
+        0.016,
+        Vec2::new(0.0, row_y(8) + 0.02),
+        Align::Center,
+        &dim,
+        None,
+    );
+    buttons.push(b.button(
+        "BACK",
+        Act::Opt(VrOpt::Back),
+        Vec2::new(0.0, top - 1.03),
+        Vec2::new(0.46, 0.09),
+        Hue::Violet,
+        false,
+    ));
+    buttons
+}
+
+/// Changes an option (`head`: the tracked head's height, for calibrating).
+fn apply_option(s: &mut crate::settings::Settings, o: VrOpt, head: Option<f32>) {
+    use crate::settings::{EYE_OFFSET_RANGE, GUN_TILT_RANGE, HOLSTER_RANGE, Settings};
+    let step = |up: bool, by: f32| if up { by } else { -by };
+    match o {
+        VrOpt::Sound(up) => s.sound_volume = Settings::step_volume(s.sound_volume, up),
+        VrOpt::Music(up) => s.music_volume = Settings::step_volume(s.music_volume, up),
+        VrOpt::Tilt(up) => {
+            s.gun_tilt = (((s.gun_tilt + step(up, 5.0)) / 5.0).round() * 5.0)
+                .clamp(GUN_TILT_RANGE.0, GUN_TILT_RANGE.1)
+        }
+        VrOpt::Holster(up) => {
+            s.holster_dy = (((s.holster_dy + step(up, 0.03)) / 0.03).round() * 0.03)
+                .clamp(HOLSTER_RANGE.0, HOLSTER_RANGE.1)
+        }
+        VrOpt::LeftHanded => s.left_handed = !s.left_handed,
+        VrOpt::Haptics => {
+            s.haptics = if s.haptics >= 0.99 {
+                0.4
+            } else if s.haptics > 0.0 {
+                0.0
+            } else {
+                1.0
+            }
+        }
+        VrOpt::SteerHand => s.steer_hand = !s.steer_hand,
+        VrOpt::Calibrate => {
+            if let Some(y) = head {
+                s.eye_offset = (lt_sim::sim::EYE - y).clamp(EYE_OFFSET_RANGE.0, EYE_OFFSET_RANGE.1);
+            }
+        }
+        VrOpt::ResetHeight => s.eye_offset = 0.0,
+        VrOpt::Back => {}
+    }
+}
+
 fn panels(
     mut commands: Commands,
     mut ui: ResMut<VrUi>,
@@ -1093,19 +1325,32 @@ fn panels(
     model: Res<MenuModel>,
     session: Res<Session>,
     mats: Res<UiMats>,
+    settings: Res<crate::settings::Settings>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut transforms: Query<&mut Transform>,
 ) {
     if !ui.started {
         ui.started = true;
-        ui.menu = std::env::var("LT_VR_MENU").is_ok_and(|v| v == "1");
+        let v = std::env::var("LT_VR_MENU").unwrap_or_default();
+        ui.menu = v == "1" || v == "options";
+        ui.options = v == "options";
     }
     if vr.menu_requests > 0 {
         vr.menu_requests = 0;
-        ui.menu = !ui.menu;
+        // (The menu button closes the options too.)
+        if ui.options {
+            ui.options = false;
+        } else {
+            ui.menu = !ui.menu;
+        }
     }
     let lobby = game.is_none() && starting.is_none() && connecting.is_none();
+    // (Only over the start menu or the menu.)
+    if !(lobby || ui.menu) {
+        ui.options = false;
+    }
     let want = match game.as_deref() {
+        _ if ui.options => Some(Kind::Options),
         _ if lobby => Some(Kind::Lobby),
         None => None,
         Some(_) if ui.menu => Some(Kind::Menu),
@@ -1115,10 +1360,12 @@ fn panels(
     if lobby {
         ui.menu = false;
     }
-    // The start menu is built anew when its choices change, or once the head is tracked.
+    // The start menu is built anew when its choices change, or once the head is tracked; the
+    // options when they change.
     let stale = ui.panel.as_ref().is_some_and(|p| {
         p.kind == Kind::Lobby
             && (p.shows != Some(lobby_key(&model)) || p.headless && input.head.is_some())
+            || p.kind == Kind::Options && settings.is_changed()
     });
     // In front of the eyes, level, a little below them.
     let in_front = || {
@@ -1157,6 +1404,7 @@ fn panels(
                 (Kind::Lobby, _) => (build_lobby(&mut b, &model), Vec3::ZERO),
                 (Kind::Menu, Some(g)) => (build_menu(&mut b, g), Vec3::ZERO),
                 (Kind::End, Some(g)) => build_end(&mut b, g),
+                (Kind::Options, _) => (build_options(&mut b, &settings), Vec3::ZERO),
                 _ => (Vec::new(), Vec3::ZERO),
             };
             ui.panel = Some(Panel {
@@ -1229,6 +1477,7 @@ fn pointer(
     mut rumble: ResMut<Rumble>,
     mut cmds: MessageWriter<SessionCmd>,
     mut model: ResMut<MenuModel>,
+    mut settings: ResMut<crate::settings::Settings>,
     mut transforms: Query<&mut Transform>,
     mut vis: Query<&mut Visibility>,
     mut laser_mats: Query<&mut MeshMaterial3d<AccentMaterial>>,
@@ -1366,8 +1615,16 @@ fn pointer(
             Outcome::Quit => {
                 cmds.write(SessionCmd::Quit);
             }
-            Outcome::Stay | Outcome::Options => {}
+            Outcome::Options => ui.options = true,
+            Outcome::Stay => {}
         },
+        Act::Options => ui.options = true,
+        Act::Opt(VrOpt::Back) => ui.options = false,
+        Act::Opt(o) => {
+            let head = input.head.map(|h| h.translation.y);
+            apply_option(&mut settings, o, head);
+            settings.save();
+        }
     }
 }
 
