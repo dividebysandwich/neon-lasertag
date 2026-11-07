@@ -510,6 +510,22 @@ fn build_menu(b: &mut Builder, game: &Game) -> Vec<Button> {
     let [r, bl] = game.snap.scores;
     let y = team_block(b, Team::Red, r, &rows[0], top - buttons_h, size.x);
     team_block(b, Team::Blue, bl, &rows[1], y, size.x);
+    // To its right, a panel of its own: the controls and the rules in short.
+    let help = b
+        .commands
+        .spawn((
+            Transform::from_xyz(size.x / 2.0 + 0.05 + HELP_W / 2.0, 0.0, 0.0),
+            Visibility::default(),
+            ChildOf(b.root),
+        ))
+        .id();
+    let mut h = Builder {
+        commands: &mut *b.commands,
+        meshes: &mut *b.meshes,
+        mats: b.mats,
+        root: help,
+    };
+    build_help(&mut h, game, size.y);
     let mut acts = vec![("RESUME", Act::Resume, Hue::Cyan)];
     if local {
         acts.push(("NEW MATCH", Act::NewMatch, Hue::Amber));
@@ -529,6 +545,81 @@ fn build_menu(b: &mut Builder, game: &Game) -> Vec<Button> {
             )
         })
         .collect()
+}
+
+/// The help panel's width (m).
+const HELP_W: f32 = 0.9;
+
+/// The VR controls.
+const VR_CONTROLS: [&str; 9] = [
+    "Move: left stick, or walk",
+    "Turn: right stick",
+    "Blaster: grip it at your hip",
+    "Fire: trigger",
+    "Grenade: hold B or Y, throw, let go",
+    "Shield: trigger of the free hand",
+    "Barrier: grip of the free hand",
+    "Menu: right menu button",
+    "Recenter: left menu button",
+];
+
+/// `s` broken into lines at most `w` wide (in text `h` high).
+fn wrap(s: &str, h: f32, w: f32) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for word in s.split(' ') {
+        match lines.last_mut() {
+            Some(l) if vfont::width(&format!("{l} {word}"), h, TEXT) <= w => {
+                l.push(' ');
+                l.push_str(word);
+            }
+            _ => lines.push(word.to_string()),
+        }
+    }
+    lines
+}
+
+/// The help panel, `height` high: the controls and the rules in short.
+fn build_help(b: &mut Builder, game: &Game, height: f32) {
+    b.backing(Vec2::new(HELP_W, height), Hue::Violet);
+    let violet = b.tint(Hue::Violet).text.clone();
+    let white = b.mats.white.clone();
+    let dim = b.mats.dim.clone();
+    let left = -HELP_W / 2.0 + 0.05;
+    let width = HELP_W - 0.1;
+    let (th, lh) = (0.034, 0.023);
+    let mut y = height / 2.0 - 0.07;
+    b.text(
+        "CONTROLS",
+        th,
+        Vec2::new(left, y),
+        Align::Left,
+        &violet,
+        None,
+    );
+    y -= 0.05;
+    for line in VR_CONTROLS {
+        let (what, how) = line.split_once(": ").unwrap_or((line, ""));
+        b.text(what, lh, Vec2::new(left, y), Align::Left, &dim, None);
+        b.text(
+            how,
+            lh,
+            Vec2::new(left + 0.24, y),
+            Align::Left,
+            &white,
+            None,
+        );
+        y -= lh * 1.9;
+    }
+    y -= 0.03;
+    b.text("RULES", th, Vec2::new(left, y), Align::Left, &violet, None);
+    y -= 0.05;
+    for rule in crate::hud::rules_lines(&game.rules, game.level.mega.is_some()) {
+        for line in wrap(&rule, lh, width) {
+            b.text(&line, lh, Vec2::new(left, y), Align::Left, &white, None);
+            y -= lh * 1.5;
+        }
+        y -= lh * 0.6;
+    }
 }
 
 /// A row of buttons `w` wide, centred at `y` (the chosen ones lit).
