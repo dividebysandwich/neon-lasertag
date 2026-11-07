@@ -687,11 +687,12 @@ fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMu
     // (Twice as many in the last minute.)
     let pts = |n: u32| if game.snap.double { n * 2 } else { n };
     for GameEvent(e) in events.read() {
-        if let Some(tag) = hit_confirm(e, &game) {
-            if tag || !feed.tag_mark || feed.hit_mark <= 0.0 {
-                feed.hit_mark = if tag { TAG_MARK } else { HIT_MARK };
-                feed.tag_mark = tag;
-            }
+        // (A hit doesn't cut a tag-out's marker short.)
+        if let Some(tag) = hit_confirm(e, &game)
+            && (tag || !feed.tag_mark || feed.hit_mark <= 0.0)
+        {
+            feed.hit_mark = if tag { TAG_MARK } else { HIT_MARK };
+            feed.tag_mark = tag;
         }
         if let Some((what, points)) = my_points(e, &game) {
             let x2 = if game.snap.double { "  X2" } else { "" };
@@ -1283,7 +1284,7 @@ fn hit_arcs(
 }
 
 /// Announces the pickups the local player takes (saying what they do the first few times).
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn pickup_note(
     mut events: MessageReader<GameEvent>,
     game: Res<Game>,
