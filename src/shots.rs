@@ -32,6 +32,8 @@ struct Flying {
 
 #[derive(Default)]
 pub struct Shots {
+    /// Infection under way (`Snapshot::infected`): a phantom's bolts are short and deadly.
+    pub infected: bool,
     gun: Gun,
     /// Dual pistols' second.
     gun2: Gun,
@@ -179,10 +181,9 @@ impl Shots {
             return;
         }
         let seed = shot::shot_seed(id, self.seq);
-        for (k, (vel, life, extra)) in shot::shot_bolts(shot, dir, rules, seed)
-            .into_iter()
-            .enumerate()
-        {
+        let bolts = shot::shot_bolts(shot, dir, rules, seed);
+        let bolts = shot::as_phantom(bolts, rules, me.team, self.infected);
+        for (k, (vel, life, extra)) in bolts.into_iter().enumerate() {
             self.next_id = self.next_id.wrapping_add(1);
             self.bolts.push(Flying {
                 bolt: Bolt {

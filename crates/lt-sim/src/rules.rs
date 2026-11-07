@@ -159,6 +159,15 @@ pub struct Rules {
     pub prism_return: f32,
     pub prism_reach: f32,
     pub prism_catch: f32,
+    /// Infection: the share of players who start as phantoms (at least one), how far
+    /// phantoms' bolts fly (m), and the points each survivor scores every `survive_every`
+    /// seconds.
+    pub infect_share: f32,
+    pub phantom_range: f32,
+    pub survive_points: u32,
+    pub survive_every: f32,
+    /// Infection: the phantoms' points for infecting every survivor.
+    pub infect_all_points: u32,
     pub double_last: f32,
     /// The arena's size (with the seed and the mode, all a client needs to build the same
     /// arena).
@@ -277,6 +286,11 @@ impl Default for Rules {
             prism_return: 20.0,
             prism_reach: 1.6,
             prism_catch: 2.0,
+            infect_share: 0.25,
+            phantom_range: 14.0,
+            survive_points: 25,
+            survive_every: 10.0,
+            infect_all_points: 1000,
             blackout_time: 20.0,
             double_last: 60.0,
             arena: ArenaSize::Small,

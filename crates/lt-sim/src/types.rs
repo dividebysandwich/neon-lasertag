@@ -603,6 +603,10 @@ pub enum SimEvent {
         by: PlayerId,
         pos: Vec3,
     },
+    /// Infection: `player` is a phantom now (at the start, or tagged out as a survivor).
+    Infected {
+        player: PlayerId,
+    },
     /// A bounty on `player` (`Sim::bounty`), claimed by `by` tagging them out, or lasted out.
     BountyOn {
         player: PlayerId,

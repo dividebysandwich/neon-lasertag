@@ -62,6 +62,13 @@ spot while yours is there: 1000 points. You can't fire while carrying it, but yo
 (the grenade input) for a team mate to catch. Tagged out, you drop it; it goes home when its own
 team touches it or after 20 s on the floor.
 
+### Infection
+
+`--mode infection`: the classic arena without targets. A quarter of the players start as Red
+phantoms: always cloaked, they can't take pickups, and their bolts fly only 14 m but tag out at
+once. Every Blue survivor they tag out comes back as a phantom. Survivors score 25 every 10 s
+they're in the game; infecting everyone ends the match and gives the phantoms 1000.
+
 ### Arena features
 
 - **Mirrors** bounce a bolt once, so you can bank shots around corners.

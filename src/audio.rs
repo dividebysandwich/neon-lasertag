@@ -449,6 +449,9 @@ fn play_events(
                     .flatten();
                 play(&mut commands, gain, &sounds.charge_full, at, 0.8, 1.0)
             }
+            SimEvent::Infected { player } if Some(player) == me => {
+                play(&mut commands, gain, &sounds.tagged, None, 0.8, 0.6)
+            }
             SimEvent::PrismTaken { pos, .. } | SimEvent::PrismCaught { pos, .. } => {
                 play(&mut commands, gain, &sounds.pickup, Some(pos), 1.0, 0.8)
             }

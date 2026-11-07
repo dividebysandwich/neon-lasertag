@@ -2529,6 +2529,19 @@ pub fn mega_banner_for(e: &SimEvent, game: &Game) -> Option<Banner> {
         small,
     };
     match *e {
+        // Infection: one's own fate.
+        SimEvent::Infected { player } if player == me => Some(banner(
+            "YOU ARE A PHANTOM",
+            "CLOAKED - YOUR BOLTS TAG OUT AT ONCE BUT FLY SHORT - HUNT THE SURVIVORS".to_string(),
+            crate::endscreen::team_ui_color(Some(Team::Red)),
+            false,
+        )),
+        SimEvent::Go if game.level.mode == lt_sim::level::GameMode::Infection => Some(banner(
+            "INFECTION",
+            "PHANTOMS ARE CLOAKED - SURVIVORS SCORE FOR STAYING UNTAGGED".to_string(),
+            neonui::GREEN,
+            true,
+        )),
         SimEvent::SecondaryHit {
             by, charged: true, ..
         } if by == me => Some(banner(

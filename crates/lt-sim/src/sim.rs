@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::collide::{BODY_HEIGHT, BODY_RADIUS, GRAVITY, World};
 use crate::hitbox::first_hit;
-use crate::level::{Ground, Level, MoverKind, Panel};
+use crate::level::{GameMode, Ground, Level, MoverKind, Panel};
 use crate::rules::Rules;
 use crate::shot::{BoltTarget, Contact, Gun, HitClaim, Shot, Trigger, bolt_contact, on_box};
 use crate::types::*;
@@ -599,6 +599,9 @@ pub struct Snapshot {
     /// `Sim::bounty`.
     #[serde(default)]
     pub bounty: Option<PlayerId>,
+    /// `Sim::infected`.
+    #[serde(default)]
+    pub infected: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -759,6 +762,9 @@ pub struct Sim {
     last_event: Option<ArenaEvent>,
     /// The player with a bounty on them (`ArenaEvent::Bounty`).
     pub bounty: Option<PlayerId>,
+    /// Infection: the phantoms have been picked, and seconds to the survivors' next points.
+    pub infected: bool,
+    survive_t: f32,
     /// Every player's hit-relevant state at the end of each of the last `HISTORY` ticks.
     history: std::collections::VecDeque<(u64, Vec<Ghost>)>,
     events: Vec<SimEvent>,
@@ -836,6 +842,8 @@ impl Sim {
             double: false,
             last_event: None,
             bounty: None,
+            infected: false,
+            survive_t: 0.0,
             history: std::collections::VecDeque::with_capacity(HISTORY + 1),
             events: Vec::new(),
             rng: ChaCha8Rng::seed_from_u64(level.seed ^ 0x5EED),
@@ -867,6 +875,8 @@ impl Sim {
             let blue = self.players.len() - red;
             if red <= blue { Team::Red } else { Team::Blue }
         });
+        // (Infection under way: late comers are phantoms.)
+        let team = if self.infected { Team::Red } else { team };
         let mut p = Player {
             id,
             name: name.chars().take(24).collect(),
@@ -1074,6 +1084,10 @@ impl Sim {
         } else {
             self.time_left -= TICK;
         }
+        self.step_infection();
+        if self.over {
+            return;
+        }
         if self.time_left <= 0.0 {
             self.time_left = 0.0;
             self.over = true;
@@ -1260,8 +1274,10 @@ impl Sim {
             match self.slots[i].pickup {
                 Some(pk) => {
                     let rules = &self.rules;
+                    let phantoms = self.level.mode == GameMode::Infection;
                     let taker = self.players.iter_mut().find(|p| {
                         p.alive()
+                            && !(phantoms && p.team == Team::Red)
                             && p.wants(pk.kind, rules)
                             && Vec2::new(p.feet.x - pk.pos.x, p.feet.z - pk.pos.z).length()
                                 < PICKUP_REACH
@@ -1747,10 +1763,9 @@ impl Sim {
             return;
         }
         let mut pellets = Vec::new();
-        for (k, (vel, life, extra)) in crate::shot::shot_bolts(shot, dir, rules, seed)
-            .into_iter()
-            .enumerate()
-        {
+        let bolts = crate::shot::shot_bolts(shot, dir, rules, seed);
+        let bolts = crate::shot::as_phantom(bolts, rules, team, self.infected);
+        for (k, (vel, life, extra)) in bolts.into_iter().enumerate() {
             let extra = BoltExtra {
                 client,
                 shot: seq,
@@ -2218,6 +2233,11 @@ impl Sim {
                 respawn_in: wait,
                 how,
             });
+            // Infection: a survivor tagged out comes back a phantom.
+            if self.infected && team == Team::Blue {
+                self.players[pi].team = Team::Red;
+                self.events.push(SimEvent::Infected { player: id });
+            }
             let hit_by = std::mem::take(&mut self.players[pi].hit_by);
             if b.owner_team != team && b.owner != HAZARD {
                 // (A bounty's worth more.)
@@ -2644,6 +2664,74 @@ impl Sim {
                     hits: o.hits,
                 });
             }
+        }
+    }
+
+    /// Infection: whether it's on (`Rules::mode`).
+    pub fn infection(&self) -> bool {
+        self.level.mode == GameMode::Infection
+    }
+
+    /// Infection: the phantoms picked once the match is under way (a share of the players, at
+    /// least one, at random; the rest survivors), phantoms kept cloaked, survivors scoring
+    /// while they last, and the match over once none are left.
+    fn step_infection(&mut self) {
+        if !self.infection() || self.phase != MatchPhase::Live {
+            return;
+        }
+        if !self.infected {
+            let n = self.players.len();
+            if n < 2 {
+                return;
+            }
+            self.infected = true;
+            self.survive_t = self.rules.survive_every;
+            let k = ((n as f32 * self.rules.infect_share).round() as usize).clamp(1, n - 1);
+            let mut order: Vec<usize> = (0..n).collect();
+            for i in (1..n).rev() {
+                let j = self.rng.random_range(0..=i);
+                order.swap(i, j);
+            }
+            for (rank, &i) in order.iter().enumerate() {
+                let team = if rank < k { Team::Red } else { Team::Blue };
+                if self.players[i].team != team {
+                    self.players[i].team = team;
+                    let s = self.pick_spawn(team);
+                    let p = &mut self.players[i];
+                    p.feet = s.pos;
+                    p.cmd.yaw = s.yaw;
+                    p.claim_block = 30;
+                }
+                if team == Team::Red {
+                    let id = self.players[i].id;
+                    self.events.push(SimEvent::Infected { player: id });
+                }
+            }
+        }
+        for p in &mut self.players {
+            if p.team == Team::Red {
+                p.cloak = p.cloak.max(1.0);
+            }
+        }
+        self.survive_t -= TICK;
+        if self.survive_t <= 0.0 {
+            self.survive_t = self.rules.survive_every;
+            let alive: Vec<PlayerId> = self
+                .players
+                .iter()
+                .filter(|p| p.team == Team::Blue && p.alive())
+                .map(|p| p.id)
+                .collect();
+            for id in alive {
+                self.award(Team::Blue, Some(id), self.rules.survive_points);
+            }
+        }
+        if !self.players.iter().any(|p| p.team == Team::Blue) {
+            self.award(Team::Red, None, self.rules.infect_all_points);
+            self.over = true;
+            self.events.push(SimEvent::MatchOver {
+                scores: self.scores,
+            });
         }
     }
 
@@ -3409,6 +3497,7 @@ impl Sim {
             double: self.double,
             phase: self.phase,
             bounty: self.bounty,
+            infected: self.infected,
         }
     }
 }
@@ -4884,6 +4973,80 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, SimEvent::PrismCaptured { by, .. } if *by == a))
         );
+    }
+
+    #[test]
+    fn infection_turns_survivors_into_phantoms_until_none_are_left() {
+        let rules = Rules {
+            mode: crate::level::GameMode::Infection,
+            ..Rules::default()
+        };
+        let mut sim = Sim::new(4, rules);
+        assert!(sim.level.targets.is_empty());
+        let ids: Vec<PlayerId> = (0..8)
+            .map(|k| sim.add_player(&format!("p{k}"), None, false).unwrap())
+            .collect();
+        sim.step();
+        assert!(sim.infected);
+        let red = |sim: &Sim| sim.players.iter().filter(|p| p.team == Team::Red).count();
+        assert_eq!(red(&sim), 2, "a quarter start as phantoms");
+        assert!(sim.snapshot().infected);
+        let phantom = sim.players.iter().find(|p| p.team == Team::Red).unwrap().id;
+        assert!(sim.player(phantom).unwrap().cloaked());
+        // A late comer is a phantom.
+        let late = sim.add_player("late", Some(Team::Blue), false).unwrap();
+        assert_eq!(sim.player(late).unwrap().team, Team::Red);
+        // A phantom's bolt: short, and a tag-out at once.
+        let bolts = crate::shot::as_phantom(
+            crate::shot::shot_bolts(Shot::Bolt, Vec3::NEG_Z, &sim.rules, 0),
+            &sim.rules,
+            Team::Red,
+            true,
+        );
+        assert_eq!(bolts[0].2.damage, sim.rules.hits_to_tag);
+        assert!(bolts[0].0.length() * bolts[0].1 <= sim.rules.phantom_range + 0.01);
+        // Survivors score while they last.
+        let before = sim.scores[Team::Blue.index()];
+        for _ in 0..(sim.rules.survive_every / TICK) as usize + 1 {
+            sim.step();
+        }
+        assert!(sim.scores[Team::Blue.index()] > before);
+        // Every survivor tagged out: all phantoms, and it's over.
+        let survivors: Vec<PlayerId> = sim
+            .players
+            .iter()
+            .filter(|p| p.team == Team::Blue)
+            .map(|p| p.id)
+            .collect();
+        for id in survivors {
+            let i = sim.players.iter().position(|p| p.id == id).unwrap();
+            sim.players[i].protect = 0.0;
+            sim.players[i].cooldown = 0.0;
+            let b = Bolt {
+                id: 99,
+                owner: phantom,
+                owner_team: Team::Red,
+                team: Some(Team::Red),
+                pos: Vec3::ZERO,
+                vel: Vec3::X,
+                life: 1.0,
+                extra: BoltExtra {
+                    damage: sim.rules.hits_to_tag,
+                    ..BoltExtra::default()
+                },
+            };
+            let at = sim.players[i].chest();
+            sim.hit_player(i, &b, at);
+            assert_eq!(sim.players[i].team, Team::Red, "infected");
+        }
+        assert!(
+            sim.drain_events()
+                .iter()
+                .any(|e| matches!(e, SimEvent::Infected { .. }))
+        );
+        sim.step();
+        assert!(sim.over);
+        let _ = ids;
     }
 
     #[test]

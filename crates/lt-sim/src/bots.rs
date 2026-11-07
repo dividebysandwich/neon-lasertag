@@ -3158,6 +3158,40 @@ mod tests {
     }
 
     #[test]
+    fn phantom_bots_infect_survivors() {
+        let mut sim = Sim::new(
+            6,
+            Rules {
+                mode: level::GameMode::Infection,
+                match_time: 240.0,
+                ..Rules::default()
+            },
+        );
+        let mut bots = Bots::default();
+        bots.fill(&mut sim, 8, 0.6);
+        let mut infected = 0;
+        for _ in 0..(240.0 / TICK) as usize {
+            bots.think(&mut sim);
+            sim.step();
+            infected += sim
+                .drain_events()
+                .iter()
+                .filter(|e| matches!(e, SimEvent::Infected { .. }))
+                .count();
+            if sim.over {
+                break;
+            }
+        }
+        let red = sim.players.iter().filter(|p| p.team == Team::Red).count();
+        println!(
+            "infected {infected}, phantoms at the end {red}, scores {:?}",
+            sim.scores
+        );
+        // (Two to start with, and more since.)
+        assert!(infected >= 4, "infected {infected}");
+    }
+
+    #[test]
     fn bots_go_for_the_megatarget() {
         let mut totals = [0usize; 6];
         for seed in [3u64, 8] {

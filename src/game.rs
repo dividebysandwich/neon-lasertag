@@ -542,6 +542,7 @@ fn step_game(
                 // (As the server last told: `game.snap` has the prediction's ammo.)
                 let p = game.interp.newest(me);
                 let feet = cmd.feet.or(p.map(|p| p.feet)).unwrap_or_default();
+                game.shots.infected = game.snap.infected;
                 game.shots
                     .trigger(&mut cmd, p, feet, &game.world, &game.rules, me, &mut own);
             }
