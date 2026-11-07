@@ -1331,7 +1331,9 @@ fn event_banner(
     palette: Res<Palette>,
 ) {
     for GameEvent(e) in events.read() {
-        if let Some(b) = crate::hud::event_banner_for(e, &game.rules) {
+        if let Some(b) = crate::hud::event_banner_for(e, &game.rules)
+            .or_else(|| crate::hud::mega_banner_for(e, &game))
+        {
             queue.push(b);
         }
         // The local player's pickups, saying what they do the first few times.
@@ -1365,15 +1367,13 @@ fn event_banner(
         let c = b.color.to_srgba();
         let mat = match b.pickup.and_then(|k| palette.pickup.get(&k)) {
             Some(m) => &m.0,
+            None if b.color == crate::neonui::GREEN => &mats.tints[Hue::Green as usize].text,
+            None if b.color == crate::neonui::PINK => &mats.tints[Hue::Pink as usize].text,
             None if c.blue > c.red => &mats.white,
             None => &mats.gold,
         };
-        // (A pickup's smaller, under where an event's shows.)
-        let (h, y) = if b.pickup.is_some() {
-            (0.025, -0.1)
-        } else {
-            (0.045, 0.0)
-        };
+        // (The player's own doings smaller, under where an event's shows.)
+        let (h, y) = if b.small { (0.025, -0.1) } else { (0.045, 0.0) };
         segtext::spawn(
             &mut commands,
             &mut meshes,

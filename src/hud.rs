@@ -1399,8 +1399,10 @@ pub struct Banner {
     pub color: Color,
     /// Seconds it shows.
     pub time: f32,
-    /// The pickup it announces (shown smaller, in its colour).
+    /// The pickup it announces (in its colour).
     pub pickup: Option<PickupKind>,
+    /// About the player's own doings (a pickup, a secondary target): shown smaller.
+    pub small: bool,
 }
 
 /// How a pickup's announcement names the controls.
@@ -1473,6 +1475,7 @@ pub fn pickup_banner(
         },
         time: if explain { 4.0 } else { 1.5 },
         pickup: Some(kind),
+        small: true,
     }
 }
 
@@ -1486,6 +1489,7 @@ pub fn event_banner_for(e: &SimEvent, rules: &lt_sim::Rules) -> Option<Banner> {
         color,
         time: BANNER_TIME,
         pickup: None,
+        small: false,
     };
     match *e {
         SimEvent::EventStart {
@@ -1515,6 +1519,58 @@ pub fn event_banner_for(e: &SimEvent, rules: &lt_sim::Rules) -> Option<Banner> {
             "DOUBLE POINTS",
             format!("LAST {:.0} S - EVERY POINT COUNTS TWICE", rules.double_last),
             gold,
+        )),
+        _ => None,
+    }
+}
+
+/// Megatarget mode: the banner for what `e` means to the local player, if anything.
+pub fn mega_banner_for(e: &SimEvent, game: &Game) -> Option<Banner> {
+    let me = game.me?;
+    let r = &game.rules;
+    let banner = |title, sub: String, color, small| Banner {
+        title,
+        sub,
+        color,
+        time: if small { 2.5 } else { BANNER_TIME },
+        pickup: None,
+        small,
+    };
+    match *e {
+        SimEvent::SecondaryHit {
+            by, charged: true, ..
+        } if by == me => Some(banner(
+            "ROOM OPEN",
+            format!(
+                "THE FORCEFIELDS LET YOU THROUGH FOR {:.0} S - SHOOT THE MEGATARGET",
+                r.power_time
+            ),
+            neonui::GREEN,
+            false,
+        )),
+        SimEvent::SecondaryHit { by, .. } if by == me => Some(banner(
+            "SECONDARY TARGET 1 OF 2",
+            "NOW HIT THE OTHER ONE".to_string(),
+            neonui::AMBER,
+            true,
+        )),
+        SimEvent::PowerLost { player } if player == me => Some(banner(
+            "POWER LOST",
+            "HIT BOTH SECONDARY TARGETS AGAIN".to_string(),
+            neonui::PINK,
+            false,
+        )),
+        SimEvent::TurretOff { by, .. } if by == me => Some(banner(
+            "TURRET OFF",
+            format!("FOR {:.0} S", r.turret_off),
+            neonui::AMBER,
+            true,
+        )),
+        SimEvent::MegaHit { by, .. } if by == me => Some(banner(
+            "MEGATARGET HIT",
+            "BACK TO YOUR BASE WITH FULL HEALTH AND AMMO".to_string(),
+            neonui::GREEN,
+            false,
         )),
         _ => None,
     }
@@ -1564,17 +1620,21 @@ fn event_banner(
     game: Res<Game>,
     time: Res<Time>,
     mut queue: Local<BannerQueue>,
-    mut q: Query<(&mut Text, &mut TextColor), (With<EventBanner>, Without<EventBannerSub>)>,
+    mut q: Query<
+        (&mut Text, &mut TextColor, &mut TextFont),
+        (With<EventBanner>, Without<EventBannerSub>),
+    >,
     mut sub: Query<(&mut Text, &mut TextColor), With<EventBannerSub>>,
 ) {
-    let Ok((mut text, mut color)) = q.single_mut() else {
+    let Ok((mut text, mut color, mut font)) = q.single_mut() else {
         return;
     };
     let Ok((mut sub_text, mut sub_color)) = sub.single_mut() else {
         return;
     };
     for GameEvent(e) in events.read() {
-        if let Some(banner) = event_banner_for(e, &game.rules) {
+        if let Some(banner) = event_banner_for(e, &game.rules).or_else(|| mega_banner_for(e, &game))
+        {
             queue.push(banner);
         }
     }
@@ -1582,6 +1642,7 @@ fn event_banner(
         text.0 = banner.title.to_uppercase();
         sub_text.0 = banner.sub;
         color.0 = banner.color;
+        font.font_size = bevy::text::FontSize::Px(if banner.small { 34.0 } else { 60.0 });
     }
     // Fading out in the last half second, a little pulse meanwhile.
     let a = (queue.left / 0.5).min(1.0);
