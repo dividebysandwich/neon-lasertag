@@ -118,6 +118,8 @@ struct Feed {
     tag_mark: bool,
     /// The points just scored: text and seconds left.
     points: Vec<(String, f32)>,
+    /// Who last tagged the local player out ("" for a hazard or themself).
+    tagged_by: String,
 }
 
 /// Seconds the hit marker shows (a tag-out's, longer), and a points line.
@@ -703,6 +705,13 @@ fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMu
                 } else {
                     color_of(&game, by)
                 };
+                if Some(player) == game.me {
+                    feed.tagged_by = if by == lt_sim::HAZARD || by == player {
+                        String::new()
+                    } else {
+                        game.name_of(by).to_string()
+                    };
+                }
                 let line = if by == lt_sim::HAZARD {
                     format!("{} got zapped", game.name_of(player))
                 } else if player == by {
@@ -916,12 +925,19 @@ fn update(
         let (want, color) = match me {
             _ if !game.status.is_empty() => (game.status.clone(), neonui::TEXT),
             _ if game.snap.over => (String::new(), neonui::TEXT),
-            Some(p) if p.respawn.is_some() => (
-                format!("TAGGED OUT\nback in {:.0}", p.respawn.unwrap().ceil()),
-                neonui::PINK,
-            ),
+            Some(p) if p.respawn.is_some() => {
+                let by = if feed.tagged_by.is_empty() {
+                    String::new()
+                } else {
+                    format!(" BY {}", feed.tagged_by.to_uppercase())
+                };
+                (
+                    format!("TAGGED OUT{by}\nback in {:.0}", p.respawn.unwrap().ceil()),
+                    neonui::PINK,
+                )
+            }
             Some(p) if p.cooldown > 0.0 => (
-                format!("HIT! blaster down {:.1}", p.cooldown),
+                format!("HIT!  you can't shoot or be hit for {:.1} s", p.cooldown),
                 neonui::AMBER,
             ),
             Some(p) if p.ammo == 0 => (
