@@ -76,6 +76,9 @@ struct Spark {
     max: f32,
     size: f32,
     gravity: bool,
+    /// Its proportions (a shard's flat and long), and how it tumbles (rad/s about each axis).
+    shape: Vec3,
+    spin: Vec3,
 }
 
 /// A hit's flash: a glowing ball swelling and fading (`size` m across at most), or, with
@@ -854,6 +857,8 @@ fn speed_trails(
                     max: 0.35,
                     size: 0.045,
                     gravity: false,
+                    shape: Vec3::ONE,
+                    spin: Vec3::ZERO,
                 },
                 Mesh3d(meshes.spark.clone()),
                 MeshMaterial3d(mat.clone()),
@@ -1047,6 +1052,8 @@ fn sync_grenades(
                     max: life,
                     size: 0.022,
                     gravity: false,
+                    shape: Vec3::ONE,
+                    spin: Vec3::ZERO,
                 },
                 Mesh3d(meshes.spark.clone()),
                 MeshMaterial3d(palette.bolt_for(None)),
@@ -1131,6 +1138,8 @@ fn spray(
                 max: life,
                 size,
                 gravity: rnd() > 0.0,
+                shape: Vec3::ONE,
+                spin: Vec3::ZERO,
             },
             Mesh3d(meshes.spark.clone()),
             MeshMaterial3d(mat.clone()),
@@ -1166,10 +1175,61 @@ fn burst(
                 max: life,
                 size,
                 gravity: true,
+                shape: Vec3::ONE,
+                spin: Vec3::ZERO,
             },
             Mesh3d(meshes.spark.clone()),
             MeshMaterial3d(mat.clone()),
             Transform::from_translation(at).with_scale(Vec3::splat(size)),
+        ));
+    }
+}
+
+/// Shards of light over a body from `feet` to `eye`, flying away from `hit` and tumbling.
+fn shatter(
+    commands: &mut Commands,
+    meshes: &ActorMeshes,
+    mat: Handle<AccentMaterial>,
+    feet: Vec3,
+    eye: Vec3,
+    hit: Vec3,
+    seed: u32,
+) {
+    let mut s = seed.wrapping_mul(2246822519).max(1);
+    let mut rnd = move || {
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        s as f32 / u32::MAX as f32
+    };
+    let (lo, hi) = (feet.y + 0.5, eye.y + 0.15);
+    for _ in 0..28 {
+        let at = Vec3::new(
+            eye.x + (rnd() - 0.5) * 0.45,
+            lo + (hi - lo) * rnd(),
+            eye.z + (rnd() - 0.5) * 0.45,
+        );
+        let away = (at - hit).with_y(0.0).normalize_or(Vec3::X);
+        let up = Vec3::Y * (0.5 + 1.5 * rnd());
+        let life = 0.7 + 0.6 * rnd();
+        commands.spawn((
+            Spark {
+                vel: away * (1.5 + 3.0 * rnd()) + up,
+                life,
+                max: life,
+                size: 0.11 + 0.08 * rnd(),
+                gravity: true,
+                shape: Vec3::new(1.0, 0.55, 0.06),
+                spin: Vec3::new(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5) * 18.0,
+            },
+            Mesh3d(meshes.spark.clone()),
+            MeshMaterial3d(mat.clone()),
+            Transform::from_translation(at).with_rotation(Quat::from_euler(
+                EulerRot::XYZ,
+                rnd() * 6.3,
+                rnd() * 6.3,
+                rnd() * 6.3,
+            )),
         ));
     }
 }
@@ -1501,6 +1561,18 @@ fn effects(
             }
             SimEvent::TaggedOut { pos, player, .. } => {
                 let team = team_of(player);
+                // The body shatters: flat shards of light over its height, flying apart.
+                if let Some(p) = game.prev.players.iter().find(|p| p.id == player) {
+                    shatter(
+                        &mut commands,
+                        &meshes,
+                        palette.bolt_for(team),
+                        p.feet,
+                        p.feet + p.head.pos,
+                        pos,
+                        seed,
+                    );
+                }
                 burst(
                     &mut commands,
                     &meshes,
@@ -1649,7 +1721,10 @@ fn animate_sparks(
         }
         s.vel *= 1.0 - 2.0 * dt;
         t.translation += s.vel * dt;
-        t.scale = Vec3::splat(s.size * (s.life / s.max));
+        t.scale = s.shape * (s.size * (s.life / s.max));
+        if s.spin != Vec3::ZERO {
+            t.rotation = Quat::from_scaled_axis(s.spin * dt) * t.rotation;
+        }
     }
     for (e, mut r, mut t) in &mut rings {
         r.life -= dt;

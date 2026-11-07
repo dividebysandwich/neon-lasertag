@@ -925,6 +925,14 @@ fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMu
                 feed.points.remove(0);
             }
         }
+        if let SimEvent::Headshot { by, .. } = *e
+            && Some(by) == game.me
+        {
+            feed.points.push(("HEADSHOT".to_string(), POINTS_LIFE));
+            if feed.points.len() > POINTS_LINES {
+                feed.points.remove(0);
+            }
+        }
         feed.lines.extend(feed_entries(e, &game));
         match *e {
             SimEvent::Hit {
@@ -1367,6 +1375,11 @@ pub fn my_points(e: &SimEvent, game: &Game) -> Option<(&'static str, u32)> {
         SimEvent::TargetHit { by, .. } if by == me => ("TARGET", r.target_points),
         SimEvent::SecondaryHit { by, .. } if by == me => ("SECONDARY", r.secondary_points),
         SimEvent::MegaHit { by, .. } if by == me => ("MEGATARGET", r.megatarget_points),
+        // (On top of the tag's.)
+        SimEvent::BountyClaimed { by, .. } if by == me => {
+            ("BOUNTY", r.bounty_points.saturating_sub(r.tag_points))
+        }
+        SimEvent::BountySurvived { player } if player == me => ("BOUNTY", r.bounty_points),
         _ => return None,
     };
     Some((what, if game.snap.double { points * 2 } else { points }))

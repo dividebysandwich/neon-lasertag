@@ -1622,6 +1622,43 @@ fn haptics(
                 rumble.play(gun, 0.08, 0.01, 0.3);
             }
             SimEvent::Denied { player } if player == me => rumble.play(gun, 0.0, 0.015, 0.2),
+            // The prism lance: a long, heavy kick; a head hit, a crisp double tap.
+            SimEvent::Streak { player, .. } if player == me => {
+                rumble.fade(gun, 0.0, 0.18, 0.9);
+            }
+            SimEvent::Headshot { by, .. } if by == me => {
+                rumble.play(gun, 0.05, 0.02, 0.9);
+                rumble.play(gun, 0.12, 0.02, 0.9);
+            }
+            // Gadgets: a soft push in the free hand.
+            SimEvent::BarrierUp { player, .. }
+            | SimEvent::SensorThrown { player, .. }
+            | SimEvent::DecoyOut { player, .. }
+                if player == me =>
+            {
+                rumble.fade(1 - gun, 0.0, 0.1, 0.4);
+            }
+            // One's pulse sensor finding enemies: a faint tick.
+            SimEvent::Pulse { team, seen, .. }
+                if seen != 0
+                    && game
+                        .snap
+                        .players
+                        .iter()
+                        .any(|p| p.id == me && p.team == team) =>
+            {
+                rumble.both(0.0, 0.02, 0.15);
+            }
+            // Mending a team mate: a pulse in the beam's hand.
+            SimEvent::Mended { by, .. } if by == me => rumble.play(1 - gun, 0.0, 0.05, 0.35),
+            // A decoy of one's own popped.
+            SimEvent::DecoyPopped { id, .. }
+                if game.prev.decoys.iter().any(|d| d.id == id && d.owner == me) =>
+            {
+                rumble.play(1 - gun, 0.0, 0.03, 0.5);
+            }
+            // A bounty on oneself: a long warning swell.
+            SimEvent::BountyOn { player } if player == me => rumble.both(0.0, 0.4, 0.5),
             SimEvent::PickedUp { player, .. } if player == me => {
                 rumble.both(0.0, 0.05, 0.3);
                 rumble.both(0.12, 0.05, 0.3);
