@@ -125,8 +125,6 @@ struct Feed {
     tag_mark: bool,
     /// The points just scored: text and seconds left.
     points: Vec<(String, f32)>,
-    /// Who last tagged the local player out ("" for a hazard or themself).
-    tagged_by: String,
 }
 
 /// Little enough of a full blaster to warn about.
@@ -696,6 +694,51 @@ fn team_color(team: Team) -> Color {
 }
 
 /// The colour of `id`'s team (for the feed).
+/// What tagged the local player out, for while they wait: the headline (`TAGGED OUT BY NAME`),
+/// its colour (the tagger's team's), and a line on how (the weapon, and the tagger's hits
+/// left).
+pub fn recap_text(game: &Game, r: &crate::game::Recap) -> (String, Color, String) {
+    use lt_sim::TagHow;
+    let me = game.me;
+    let what = match r.how {
+        TagHow::Blaster => "WITH THE BLASTER",
+        TagHow::Shotgun => "WITH THE SHOTGUN",
+        TagHow::Beam => "WITH THE CHARGE BEAM",
+        TagHow::Grenade => "WITH A GRENADE",
+        TagHow::Turret => "BY A TURRET",
+        TagHow::Gate => "BY A LASER GATE",
+        TagHow::Field => "BY THE FORCEFIELD",
+        TagHow::Pad => "ON THE ENEMY'S SPAWN PADS",
+    };
+    match r.by {
+        Some(by) if Some(by) == me => (
+            "TAGGED OUT".to_string(),
+            neonui::PINK,
+            "BY YOUR OWN GRENADE".to_string(),
+        ),
+        Some(by) => {
+            let them = game.snap.players.iter().find(|p| p.id == by);
+            let left = match them {
+                Some(p) if p.respawn.is_some() => "  -  THEY'RE OUT TOO".to_string(),
+                Some(p) => {
+                    let n = game.rules.hits_to_tag.saturating_sub(p.hits);
+                    format!(
+                        "  -  THEY HAD {n} HIT{} LEFT",
+                        if n == 1 { "" } else { "S" }
+                    )
+                }
+                None => String::new(),
+            };
+            (
+                format!("TAGGED OUT BY {}", game.name_of(by).to_uppercase()),
+                color_of(game, by),
+                format!("{what}{left}"),
+            )
+        }
+        None => ("TAGGED OUT".to_string(), neonui::PINK, what.to_string()),
+    }
+}
+
 fn color_of(game: &Game, id: PlayerId) -> Color {
     game.snap
         .players
@@ -730,13 +773,6 @@ fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMu
                 } else {
                     color_of(&game, by)
                 };
-                if Some(player) == game.me {
-                    feed.tagged_by = if by == lt_sim::HAZARD || by == player {
-                        String::new()
-                    } else {
-                        game.name_of(by).to_string()
-                    };
-                }
                 let line = if by == lt_sim::HAZARD {
                     format!("{} got zapped", game.name_of(player))
                 } else if player == by {
@@ -872,6 +908,7 @@ fn update(
     game: Res<Game>,
     time: Res<Time>,
     mut feed: ResMut<Feed>,
+    recap: Res<crate::game::Recap>,
     mut scores: Query<(&ScoreText, &mut Text), (Without<ClockText>, Without<CenterText>)>,
     mut clock: Query<
         (&mut Text, &mut TextColor),
@@ -951,14 +988,14 @@ fn update(
             _ if !game.status.is_empty() => (game.status.clone(), neonui::TEXT),
             _ if game.snap.over => (String::new(), neonui::TEXT),
             Some(p) if p.respawn.is_some() => {
-                let by = if feed.tagged_by.is_empty() {
-                    String::new()
-                } else {
-                    format!(" BY {}", feed.tagged_by.to_uppercase())
-                };
+                let (title, color, how) = recap_text(&game, &recap);
                 (
-                    format!("TAGGED OUT{by}\nback in {:.0}", p.respawn.unwrap().ceil()),
-                    neonui::PINK,
+                    format!(
+                        "{title}\n{}\nback in {:.0}",
+                        how.to_lowercase(),
+                        p.respawn.unwrap().ceil()
+                    ),
+                    color,
                 )
             }
             Some(p) if p.protect > 0.0 => ("PROTECTED  until you fire".to_string(), neonui::TEXT),

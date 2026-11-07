@@ -48,7 +48,7 @@ and how to use it (the first three times of each kind), what your Megatarget pro
 when a powerup runs out; a forcefield you may not pass yet warns you when you come close. Under
 the clock (VR: on the wrist) a blackout counts down and 2x shows. Your powerups sit as chips in
 their colours above your status panel (VR: icons on the wrist), the timed ones with a bar
-draining. Your hits on enemies mark the crosshair (VR: a tick in the gun hand), the points you
+draining. Tagged out, you see who did it (in their team's colour), with what and how many hits they had left; the flat screen's view turns to them and follows them, and in VR an arrow points to them with how far away they are. Your hits on enemies mark the crosshair (VR: a tick in the gun hand), the points you
 score rise beside it (VR: over the wrist), and the blaster warns when it runs low. A turret
 switched off shows a bar draining under its target.
 
@@ -178,7 +178,7 @@ menu), `--left-handed` (VR: the
 holster on the left hip, as the option; or `LT_LEFT_HANDED=1`), `--autopilot` (a bot plays you, for testing),
 `--match-time S` (local games), `--screenshot FILE --after 5,10`, `--quit-after S`.
 Testing: `LT_DEV="6:menu,8:leave,10:play-hard,14:hit,20:next"` scripts menu actions and hits (`options`
-opens the options screen, `arc` shows the throw arc, `target` hits a team target, `hit-them` and `tag-them` show and sound as if you hit or tagged out the nearest enemy;
+opens the options screen, `arc` shows the throw arc, `target` hits a team target, `hit-them` and `tag-them` show and sound as if you hit or tagged out the nearest enemy, `tag-me` has the nearest enemy tag you out (local games);
 `give-KIND` gives you a pickup's contents (`give-all-KIND` everyone, `take-KIND` as if you walked over one, announced) and `drop-KIND` lays one in front of you, KIND
 `grenade`, `rapid`, `shield`, `shotgun`, `cloak`, `speed`, `charge`, `barrier`; `fire=S` holds the trigger down for S s, `barrier` puts up a carried barrier; `blackout` and `overdrive` start those arena events, `double` jumps to the last minute's double points; `shields-up` switches everyone's shield on, `summon` (or `summon=M`) puts the
 nearest other player 4 m (M m) in front of you; Megatarget mode: `power` hits both secondary targets, `turret-off` switches the first turret off, `warp-door`, `warp-room`, `warp-turret` and `warp-pocket` move

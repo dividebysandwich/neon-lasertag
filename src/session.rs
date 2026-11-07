@@ -208,6 +208,30 @@ fn dev_script(
             };
             events.write(crate::game::GameEvent(event));
         }
+        // Local games: the nearest enemy tags the player out (`tag-me`).
+        "tag-me" => {
+            commands.queue(move |w: &mut World| {
+                let Some(mut game) = w.get_resource_mut::<Game>() else {
+                    return;
+                };
+                let Some(me) = game.me else { return };
+                let Source::Local { sim, .. } = &mut game.source else {
+                    return;
+                };
+                let Some(p) = sim.player(me).cloned() else {
+                    return;
+                };
+                let by = sim
+                    .players
+                    .iter()
+                    .filter(|o| o.team != p.team && o.alive())
+                    .min_by(|a, b| a.feet.distance(p.feet).total_cmp(&b.feet.distance(p.feet)))
+                    .map(|o| o.id);
+                if let Some(by) = by {
+                    sim.tag_out(me, by);
+                }
+            });
+        }
         // Megatarget mode, local games: hit both secondary targets at once, switch the first
         // turret off, or go to Red's doorway, into the room, before the first turret or into the
         // first pocket.

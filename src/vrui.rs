@@ -62,6 +62,7 @@ impl Plugin for VrUiPlugin {
                     hit_flash.run_if(resource_exists::<Game>),
                     view_tint.run_if(resource_exists::<Game>),
                     event_banner.run_if(resource_exists::<Game>),
+                    tag_recap.run_if(resource_exists::<Game>),
                 )
                     .chain()
                     .after(PoseSet)
@@ -1812,6 +1813,160 @@ fn event_banner(
         // (Its text faces +Z: turned about the vertical towards the eyes.)
         t.rotation = Quat::from_rotation_y((-fwd.x).atan2(-fwd.z));
         t.scale = Vec3::splat((queue.shown / 0.15).min(1.0) * (left / 0.3).min(1.0));
+    }
+}
+
+/// Tagged out: floating in front of the eyes (under the banners) who did it and how
+/// (`hud::recap_text`), with an arrow pointing to them and how far away they are.
+#[derive(Default)]
+struct RecapView {
+    root: Option<Entity>,
+    /// What it shows (rebuilt when that changes): the text, and the distance (m).
+    shows: (String, String, i32),
+    arrow: Option<Entity>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn tag_recap(
+    mut commands: Commands,
+    game: Res<Game>,
+    recap: Res<crate::game::Recap>,
+    vr: Res<VrState>,
+    input: Res<XrInput>,
+    mats: Res<UiMats>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut transforms: Query<&mut Transform>,
+    mut view: Local<RecapView>,
+) {
+    let me = game
+        .me
+        .and_then(|id| game.snap.players.iter().find(|p| p.id == id));
+    let out = recap.out && me.is_some_and(|p| p.respawn.is_some());
+    let head = vr.rig
+        * input
+            .head
+            .unwrap_or(Transform::from_xyz(0.0, lt_sim::sim::EYE, 0.0));
+    // Whoever did it, still in the game.
+    let them = recap
+        .by
+        .filter(|&by| Some(by) != game.me)
+        .and_then(|by| game.snap.players.iter().find(|p| p.id == by))
+        .filter(|p| p.respawn.is_none());
+    let (title, _, how) = crate::hud::recap_text(&game, &recap);
+    let dist = them.map_or(-1, |k| {
+        (k.feet + k.head.pos).distance(head.translation).round() as i32
+    });
+    let shows = (title.clone(), how.clone(), dist);
+    if !out || view.shows != shows {
+        if let Some(r) = view.root.take()
+            && let Ok(mut c) = commands.get_entity(r)
+        {
+            c.despawn();
+        }
+        view.arrow = None;
+        view.shows = Default::default();
+    }
+    if !out {
+        return;
+    }
+    let root = match view.root {
+        Some(r) => r,
+        None => {
+            let root = commands
+                .spawn((
+                    Name::new("tag recap"),
+                    Transform::IDENTITY,
+                    Visibility::default(),
+                ))
+                .id();
+            let mat = match recap
+                .by
+                .and_then(|by| game.snap.players.iter().find(|p| p.id == by))
+            {
+                Some(p) if Some(p.id) != game.me => mats.team[team_index(Some(p.team))].clone(),
+                _ => mats.tints[Hue::Pink as usize].text.clone(),
+            };
+            segtext::spawn(
+                &mut commands,
+                &mut meshes,
+                root,
+                &title,
+                0.028,
+                Vec3::ZERO,
+                Align::Center,
+                &mat,
+                Some(&mats.glow[2]),
+            );
+            segtext::spawn(
+                &mut commands,
+                &mut meshes,
+                root,
+                &how,
+                0.013,
+                Vec3::Y * -0.042,
+                Align::Center,
+                &mats.white,
+                None,
+            );
+            if dist >= 0 {
+                segtext::spawn(
+                    &mut commands,
+                    &mut meshes,
+                    root,
+                    &format!("{dist} M"),
+                    0.013,
+                    Vec3::new(0.0, -0.15, 0.0),
+                    Align::Center,
+                    &mat,
+                    None,
+                );
+                // An arrowhead, pointing up before it's turned.
+                let mut m = crate::assets::MeshData::default();
+                for (x, y) in [(0.0, 0.03), (-0.025, -0.012), (0.0, 0.0), (0.025, -0.012)] {
+                    m.pos.push([x, y, 0.0]);
+                    m.nrm.push([0.0, 0.0, 1.0]);
+                    m.uv.push([0.0, 0.0]);
+                }
+                m.idx.extend([0, 1, 2, 0, 2, 3]);
+                let arrow = commands
+                    .spawn((
+                        Mesh3d(meshes.add(m.to_mesh())),
+                        MeshMaterial3d(mat),
+                        Transform::from_xyz(0.0, -0.1, 0.0),
+                        ChildOf(root),
+                    ))
+                    .id();
+                view.arrow = Some(arrow);
+            }
+            view.root = Some(root);
+            view.shows = shows;
+            root
+        }
+    };
+    // In front of the eyes, a little below, level, turned to them.
+    let fwd = head.rotation * Vec3::NEG_Z;
+    let fwd = Vec3::new(fwd.x, 0.0, fwd.z).normalize_or(Vec3::NEG_Z);
+    let rot = Quat::from_rotation_y((-fwd.x).atan2(-fwd.z));
+    if let Ok(mut t) = transforms.get_mut(root) {
+        t.translation = head.translation + fwd * 0.8 - Vec3::Y * 0.08;
+        t.rotation = rot;
+    }
+    // The arrow: towards them as seen from the eyes, in the panel's plane (behind: down).
+    if let (Some(a), Some(k)) = (view.arrow, them)
+        && let Ok(mut t) = transforms.get_mut(a)
+    {
+        let d = rot.inverse() * (k.feet + k.head.pos - head.translation);
+        let flat = Vec2::new(d.x, d.y);
+        let ahead = -d.z > 0.0 && flat.length() < -d.z * 0.15;
+        let angle = if ahead {
+            std::f32::consts::PI
+        } else if -d.z < 0.0 && flat.length() < d.z * 0.3 {
+            // (Right behind: turn round.)
+            std::f32::consts::PI
+        } else {
+            -flat.x.atan2(flat.y)
+        };
+        t.rotation = Quat::from_rotation_z(angle);
     }
 }
 

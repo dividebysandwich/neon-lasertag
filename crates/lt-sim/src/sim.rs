@@ -2210,6 +2210,33 @@ impl Sim {
     }
 
     /// Gives a player a pickup's contents at once (testing).
+    /// Tags player `victim` out at once, as a blaster bolt of `by`'s would (testing).
+    pub fn tag_out(&mut self, victim: PlayerId, by: PlayerId) {
+        let (Some(vi), Some(s)) = (
+            self.players.iter().position(|p| p.id == victim),
+            self.player(by),
+        ) else {
+            return;
+        };
+        let bolt = Bolt {
+            id: 0,
+            owner: by,
+            owner_team: s.team,
+            team: Some(s.team),
+            pos: s.eye(),
+            vel: Vec3::X,
+            life: 1.0,
+            extra: BoltExtra::default(),
+        };
+        let p = &mut self.players[vi];
+        p.hits = self.rules.hits_to_tag.saturating_sub(1);
+        p.cooldown = 0.0;
+        p.protect = 0.0;
+        p.shield = 0.0;
+        let at = p.chest();
+        self.hit_player(vi, &bolt, at);
+    }
+
     pub fn give(&mut self, id: PlayerId, kind: PickupKind) {
         let rules = self.rules.clone();
         if let Some(p) = self.player_mut(id)

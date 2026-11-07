@@ -521,11 +521,35 @@ fn on_events(
     game: Option<Res<Game>>,
     mut look: ResMut<Look>,
     mut faced: Local<Option<u64>>,
+    recap: Res<crate::game::Recap>,
+    time: Res<Time>,
 ) {
     let Some(game) = game else { return };
     let me = game
         .me
         .and_then(|me| game.snap.players.iter().find(|p| p.id == me));
+    // Tagged out: the view turns to whoever did it, and follows them.
+    if let Some(p) = me
+        && p.respawn.is_some()
+        && recap.out
+        && !look.follow_sim
+        && let Some(k) = recap
+            .by
+            .filter(|&by| by != p.id)
+            .and_then(|by| game.snap.players.iter().find(|q| q.id == by))
+        && k.respawn.is_none()
+    {
+        let d = k.feet + k.head.pos - (p.feet + Vec3::Y * look.eye_height());
+        if d.length() > 0.5 {
+            let yaw = lt_sim::sim::yaw_of(d);
+            let pitch = (d.y / d.length()).asin().clamp(-1.2, 1.2);
+            let k = 1.0 - (-time.delta_secs() / FACE_KILLER).exp();
+            let dy = (yaw - look.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+                - std::f32::consts::PI;
+            look.yaw += dy * k;
+            look.pitch += (pitch - look.pitch) * k;
+        }
+    }
     // Facing the middle of the arena on entering it and after respawning.
     if *faced != Some(game.level.seed)
         && let Some(p) = me
@@ -546,6 +570,9 @@ fn on_events(
         }
     }
 }
+
+/// How quickly the view turns to the one who tagged the player out (time constant, s).
+const FACE_KILLER: f32 = 0.25;
 
 /// The start menu's view: its turning speed (rad/s) and upward tilt (rad).
 const LOBBY_TURN: f32 = 0.05;

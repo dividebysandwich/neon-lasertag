@@ -445,13 +445,16 @@ impl Plugin for GamePlugin {
         app.insert_resource(Time::<Fixed>::from_seconds(lt_sim::TICK as f64))
             .init_resource::<LocalCmd>()
             .init_resource::<Mover>()
+            .init_resource::<Recap>()
             .configure_sets(
                 Update,
                 (PredictSet.after(InputSet), DrawSet.after(PredictSet)),
             )
             .add_systems(
                 Update,
-                predict.in_set(PredictSet).run_if(resource_exists::<Game>),
+                (predict, track_recap)
+                    .in_set(PredictSet)
+                    .run_if(resource_exists::<Game>),
             )
             .add_message::<GameEvent>()
             .add_systems(FixedUpdate, step_game.run_if(resource_exists::<Game>));
@@ -611,6 +614,43 @@ fn step_game(
     if !game.level.movers.is_empty() {
         let colliders = game.level.mover_colliders(game.snap.tick);
         Arc::make_mut(&mut game.world).set_dynamic(colliders);
+    }
+}
+
+/// How the local player was last tagged out (until respawning): by whom (`None`: nobody, e.g.
+/// a forcefield) and with what.
+#[derive(Resource, Default, Clone, Copy)]
+pub struct Recap {
+    pub out: bool,
+    pub by: Option<PlayerId>,
+    pub how: lt_sim::TagHow,
+}
+
+fn track_recap(game: Res<Game>, mut recap: ResMut<Recap>, mut events: MessageReader<GameEvent>) {
+    for GameEvent(e) in events.read() {
+        match *e {
+            SimEvent::TaggedOut {
+                player, by, how, ..
+            } if Some(player) == game.me => {
+                *recap = Recap {
+                    out: true,
+                    by: (by != lt_sim::HAZARD).then_some(by),
+                    how,
+                };
+            }
+            SimEvent::Respawned { player, .. } if Some(player) == game.me => recap.out = false,
+            _ => {}
+        }
+    }
+    if game.is_changed()
+        && game.me.is_some_and(|me| {
+            game.snap
+                .players
+                .iter()
+                .any(|p| p.id == me && p.respawn.is_none())
+        })
+    {
+        recap.out = false;
     }
 }
 
