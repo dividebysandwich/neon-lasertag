@@ -781,7 +781,13 @@ fn predict(
         None => mover.vel * dt * lt_sim::sim::air_control(mover.air),
     } + mover.air * dt
         + walk;
-    let (feet, mut vy) = game.world.move_body(mover.feet, delta, vy, dt);
+    // (Low gravity, as the sim has it: not on a jump pad's flight.)
+    let g = if mover.air == Vec2::ZERO {
+        lt_sim::sim::gravity_for(game.snap.event, &game.rules)
+    } else {
+        lt_sim::collide::GRAVITY
+    };
+    let (feet, mut vy) = game.world.move_body_g(mover.feet, delta, vy, dt, g);
     let flying = mover.air != Vec2::ZERO;
     let mut air = mover.air;
     if let Some((up, throw)) = lt_sim::sim::pad_step(&game.level, feet, vy, &mut air) {

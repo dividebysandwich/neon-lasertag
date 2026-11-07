@@ -687,6 +687,18 @@ def event_storm():
     return echoes(out + whoosh, [0.12, 0.27], [0.35, 0.18], 7000)
 
 
+def event_lowgrav():
+    T = 2.4
+    x = seconds(T)
+    # A slow, wobbling rise: two detuned tones gliding up an octave, a soft airy swell.
+    f = 110 * 2 ** np.clip(x / 1.6, 0, 1)
+    wob = 1 + 0.03 * np.sin(2 * np.pi * 3.0 * x)
+    tones = (np.sin(2 * np.pi * phase(f * wob)) + 0.6 * np.sin(2 * np.pi * phase(f * 1.503))) \
+        * env(T, 0.3, 0.6, hold=1.1) * 0.5
+    air = sweep_noise(T, 300, 3000) * env(T, 0.6, 0.5, hold=0.8) * 0.2
+    return echoes(tones + air, [0.2, 0.4], [0.3, 0.15], 4000)
+
+
 def headshot():
     T = 0.5
     x = seconds(T)
@@ -802,6 +814,7 @@ SOUNDS = {
     "event_overdrive": (event_overdrive, -16.0, 341),
     "event_double": (event_double, -16.0, 351),
     "event_storm": (event_storm, -16.0, 361),
+    "event_lowgrav": (event_lowgrav, -17.0, 371),
 }
 
 # Sounds played as loops.

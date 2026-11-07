@@ -501,6 +501,7 @@ fn draw_arc(
             &game.rules,
             *from,
             *vel,
+            lt_sim::sim::gravity_for(game.snap.event, &game.rules),
         )),
         _ => None,
     };

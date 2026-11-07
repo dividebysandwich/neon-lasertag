@@ -144,6 +144,9 @@ pub struct Rules {
     pub blackout_time: f32,
     /// Seconds a mirror storm lasts.
     pub storm_time: f32,
+    /// Seconds low gravity lasts, and how much of the gravity is left.
+    pub lowgrav_time: f32,
+    pub lowgrav_factor: f32,
     pub double_last: f32,
     /// The arena's size (with the seed and the mode, all a client needs to build the same
     /// arena).
@@ -253,6 +256,8 @@ impl Default for Rules {
             event_every: (120.0, 180.0),
             event_quiet: 75.0,
             storm_time: 20.0,
+            lowgrav_time: 20.0,
+            lowgrav_factor: 0.35,
             blackout_time: 20.0,
             double_last: 60.0,
             arena: ArenaSize::Small,

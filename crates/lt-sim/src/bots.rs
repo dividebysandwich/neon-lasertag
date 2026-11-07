@@ -69,7 +69,7 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 
-use crate::collide::{BODY_RADIUS, GRAVITY, World};
+use crate::collide::{BODY_RADIUS, World};
 use crate::level::{self, Dims, Level, MoverKind};
 use crate::sim::{EYE, PICKUP_HEIGHT, Player, Sim, TICK, eye_on_neck, look_rot, yaw_of};
 use crate::types::*;
@@ -1468,11 +1468,11 @@ fn apply_error(dir: Vec3, (angle, phi): (f32, f32)) -> Vec3 {
 }
 
 /// Where a grenade thrown from `from` with `vel` first hits the arena (as the sim flies it).
-fn first_impact(world: &World, from: Vec3, vel: Vec3) -> Option<Vec3> {
+fn first_impact(world: &World, from: Vec3, vel: Vec3, g: f32) -> Option<Vec3> {
     let mut pos = from;
     let mut vel = vel;
     for _ in 0..(3.5 / TICK) as usize {
-        vel.y -= GRAVITY * TICK;
+        vel.y -= g * TICK;
         let to = pos + vel * TICK;
         if let Some((_, q, _)) = world.ray(pos, to) {
             return Some(q);
@@ -1487,8 +1487,14 @@ fn first_impact(world: &World, from: Vec3, vel: Vec3) -> Option<Vec3> {
 
 /// A throw from `from` whose first impact is within `THROW_LAND` of `aim`: low and high arcs
 /// are tried, each simulated against the world and its speed corrected a couple of times.
-/// Returns the velocity and the impact point.
-pub fn solve_throw(world: &World, from: Vec3, aim: Vec3, max_speed: f32) -> Option<(Vec3, Vec3)> {
+/// Returns the velocity and the impact point (at gravity `g`).
+pub fn solve_throw(
+    world: &World,
+    from: Vec3,
+    aim: Vec3,
+    max_speed: f32,
+    g: f32,
+) -> Option<(Vec3, Vec3)> {
     let d3 = aim - from;
     let flat = Vec2::new(d3.x, d3.z);
     let dist = flat.length();
@@ -1503,13 +1509,13 @@ pub fn solve_throw(world: &World, from: Vec3, aim: Vec3, max_speed: f32) -> Opti
         if denom <= 0.0 {
             continue;
         }
-        let mut v = (GRAVITY * dist * dist / denom).sqrt();
+        let mut v = (g * dist * dist / denom).sqrt();
         for _ in 0..3 {
             if v > max_speed {
                 break;
             }
             let vel = Vec3::new(dir.x * v * c, v * s, dir.y * v * c);
-            let Some(q) = first_impact(world, from, vel) else {
+            let Some(q) = first_impact(world, from, vel, g) else {
                 break;
             };
             let err = Vec2::new(q.x - aim.x, q.z - aim.z).length();
@@ -2165,6 +2171,7 @@ impl Bot {
             p.feet + rel,
             aim + Vec3::Y * 0.05,
             sim.rules.grenade_max_speed,
+            sim.gravity(),
         )?;
         if land.distance(p.feet) < SELF_CLEAR || mates.iter().any(|m| m.distance(land) < MATE_CLEAR)
         {
@@ -3028,7 +3035,7 @@ mod tests {
         let mut found = 0;
         for k in 0..20 {
             let aim = from + Vec3::new(k as f32 - 10.0, -1.5, -8.0 - k as f32 * 0.5);
-            if let Some((v, q)) = solve_throw(&world, from, aim, 16.0) {
+            if let Some((v, q)) = solve_throw(&world, from, aim, 16.0, crate::collide::GRAVITY) {
                 found += 1;
                 assert!(v.length() <= 16.0);
                 assert!(Vec2::new(q.x - aim.x, q.z - aim.z).length() < THROW_LAND);

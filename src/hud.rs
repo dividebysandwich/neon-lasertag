@@ -1096,6 +1096,10 @@ fn clock_events(snap: &lt_sim::sim::Snapshot) -> (String, Color) {
         parts.push(format!("BLACKOUT {:.0}", left.ceil()));
         color = Color::srgb(0.75, 0.78, 0.95);
     }
+    if let Some((lt_sim::ArenaEvent::LowGravity, left)) = snap.event {
+        parts.push(format!("LOW GRAVITY {:.0}", left.ceil()));
+        color = Color::srgb(0.7, 1.0, 0.6);
+    }
     if let Some((lt_sim::ArenaEvent::MirrorStorm, left)) = snap.event {
         parts.push(format!("MIRROR STORM {:.0}", left.ceil()));
         color = Color::srgb(0.75, 0.95, 1.0);
@@ -2307,6 +2311,22 @@ pub fn event_banner_for(e: &SimEvent, rules: &lt_sim::Rules) -> Option<Banner> {
         } => Some(Banner {
             time: 2.0,
             ..banner("STORM OVER", String::new(), Color::srgb(0.75, 0.95, 1.0))
+        }),
+        SimEvent::EventStart {
+            kind: lt_sim::ArenaEvent::LowGravity,
+        } => Some(banner(
+            "LOW GRAVITY",
+            format!(
+                "JUMP HIGH - EVERYTHING FALLS SLOWLY FOR {:.0} S",
+                rules.lowgrav_time
+            ),
+            Color::srgb(0.7, 1.0, 0.6),
+        )),
+        SimEvent::EventEnd {
+            kind: lt_sim::ArenaEvent::LowGravity,
+        } => Some(Banner {
+            time: 2.0,
+            ..banner("GRAVITY BACK", String::new(), Color::srgb(0.7, 1.0, 0.6))
         }),
         SimEvent::Countdown { n } => Some(Banner {
             time: 0.95,

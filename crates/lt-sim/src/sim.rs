@@ -1249,6 +1249,7 @@ impl Sim {
 
     fn step_players(&mut self) {
         let rules = self.rules.clone();
+        let gravity = self.gravity();
         let hold = matches!(self.phase, MatchPhase::Countdown(_));
         for i in 0..self.players.len() {
             if hold {
@@ -1375,7 +1376,13 @@ impl Sim {
                     }
                 };
                 let d = if d.is_finite() { d } else { Vec2::ZERO };
-                self.world.move_body(p.feet, d, p.vy, TICK)
+                // (A jump pad's flight at full gravity: it's aimed for that.)
+                let g = if p.air == Vec2::ZERO {
+                    gravity
+                } else {
+                    GRAVITY
+                };
+                self.world.move_body_g(p.feet, d, p.vy, TICK, g)
             };
             let reload_here = self.level.reloads_at(feet);
             let home = self.level.spawn_at(feet);
@@ -2183,6 +2190,7 @@ impl Sim {
 
     fn step_grenades(&mut self) {
         let rules = self.rules.clone();
+        let gravity = self.gravity();
         let mut i = 0;
         while i < self.grenades.len() {
             let mut g = self.grenades[i];
@@ -2190,8 +2198,13 @@ impl Sim {
             let mut done = false;
             match g.phase {
                 GrenadePhase::Flying => {
-                    let (pos, vel, bounce) =
-                        grenade_step(&self.world, g.pos, g.vel, rules.grenade_restitution);
+                    let (pos, vel, bounce) = grenade_step(
+                        &self.world,
+                        g.pos,
+                        g.vel,
+                        rules.grenade_restitution,
+                        gravity,
+                    );
                     (g.pos, g.vel) = (pos, vel);
                     if let Some((q, speed)) = bounce
                         && speed > 1.2
@@ -2308,6 +2321,11 @@ impl Sim {
         }
     }
 
+    /// The gravity now (m/s²): less in low gravity.
+    pub fn gravity(&self) -> f32 {
+        gravity_for(self.event, &self.rules)
+    }
+
     /// A mirror storm going on.
     pub fn storm(&self) -> bool {
         matches!(self.event, Some((ArenaEvent::MirrorStorm, _)))
@@ -2322,6 +2340,7 @@ impl Sim {
         let length = match kind {
             ArenaEvent::Blackout => self.rules.blackout_time,
             ArenaEvent::MirrorStorm => self.rules.storm_time,
+            ArenaEvent::LowGravity => self.rules.lowgrav_time,
             // (Over at once; the time is the announcement's.)
             ArenaEvent::Overdrive => {
                 for slot in &mut self.slots {
@@ -2349,12 +2368,13 @@ impl Sim {
     /// Pulse sensors: flying until they meet the arena, then pulsing until their time is up
     /// (each pulse shows the enemies in range, `Player::revealed`).
     fn step_sensors(&mut self) {
+        let gravity = self.gravity();
         let rules = &self.rules;
         let mut i = 0;
         while i < self.sensors.len() {
             let s = &mut self.sensors[i];
             if !s.stuck {
-                s.vel.y -= GRAVITY * TICK;
+                s.vel.y -= gravity * TICK;
                 let to = s.pos + s.vel * TICK;
                 match self.world.ray(s.pos, to) {
                     Some((_, q, n)) => {
@@ -2478,10 +2498,11 @@ impl Sim {
     /// Decoys: running on ahead at a player's pace (stopped by walls) until their time is up.
     fn step_decoys(&mut self) {
         let speed = self.rules.move_speed;
+        let gravity = self.gravity();
         for d in &mut self.decoys {
             let ahead = Quat::from_rotation_y(d.cmd.yaw) * Vec3::NEG_Z;
             let delta = Vec2::new(ahead.x, ahead.z) * speed * TICK;
-            (d.feet, d.vy) = self.world.move_body(d.feet, delta, d.vy, TICK);
+            (d.feet, d.vy) = self.world.move_body_g(d.feet, delta, d.vy, TICK, gravity);
             d.left -= TICK;
         }
         let events = &mut self.events;
@@ -3187,6 +3208,15 @@ pub fn look_rot(dir: Vec3) -> Quat {
 /// A hovering grenade aims some bolts (`Rules::grenade_aimed`) at players it sees this close.
 pub const GRENADE_AIM_RANGE: f32 = 20.0;
 
+/// The gravity (m/s²) with arena event `event` going on (`Sim::gravity`; a client's from its
+/// snapshot).
+pub fn gravity_for(event: Option<(ArenaEvent, f32)>, rules: &Rules) -> f32 {
+    match event {
+        Some((ArenaEvent::LowGravity, _)) => GRAVITY * rules.lowgrav_factor,
+        _ => GRAVITY,
+    }
+}
+
 /// One tick of a flying grenade: falling, bouncing off the arena (losing speed), coming to rest
 /// on a floor. Returns the new position and velocity, and where it bounced and how hard.
 pub fn grenade_step(
@@ -3194,9 +3224,10 @@ pub fn grenade_step(
     pos: Vec3,
     vel: Vec3,
     restitution: f32,
+    gravity: f32,
 ) -> (Vec3, Vec3, Option<(Vec3, f32)>) {
     let mut vel = vel;
-    vel.y -= GRAVITY * TICK;
+    vel.y -= gravity * TICK;
     let to = pos + vel * TICK;
     match world.ray(pos, to) {
         Some((_, q, n)) => {
@@ -3213,8 +3244,15 @@ pub fn grenade_step(
 }
 
 /// Where a grenade thrown from `from` (world) with `vel` flies until its fuse runs out (as the
-/// sim will fly it, the arena's moving pieces aside): a point a tick, and the bounces.
-pub fn grenade_path(world: &World, rules: &Rules, from: Vec3, vel: Vec3) -> (Vec<Vec3>, Vec<Vec3>) {
+/// sim will fly it, the arena's moving pieces aside, at `gravity`): a point a tick, and the
+/// bounces.
+pub fn grenade_path(
+    world: &World,
+    rules: &Rules,
+    from: Vec3,
+    vel: Vec3,
+    gravity: f32,
+) -> (Vec<Vec3>, Vec<Vec3>) {
     let vel = if vel.is_finite() {
         vel.clamp_length_max(rules.grenade_max_speed)
     } else {
@@ -3224,7 +3262,7 @@ pub fn grenade_path(world: &World, rules: &Rules, from: Vec3, vel: Vec3) -> (Vec
     let mut path = vec![pos];
     let mut bounces = Vec::new();
     for _ in 0..(rules.grenade_fuse / TICK) as usize {
-        let (p, v, b) = grenade_step(world, pos, vel, rules.grenade_restitution);
+        let (p, v, b) = grenade_step(world, pos, vel, rules.grenade_restitution, gravity);
         (pos, vel) = (p, v);
         path.push(pos);
         if let Some((q, speed)) = b
@@ -4257,6 +4295,36 @@ mod tests {
         sim.start_event(ArenaEvent::MirrorStorm);
         assert!(sim.storm());
         assert_eq!(ArenaEvent::parse("storm"), Some(ArenaEvent::MirrorStorm));
+    }
+
+    #[test]
+    fn low_gravity_jumps_higher() {
+        let apex = |low: bool| {
+            let (mut sim, a, _) = duel();
+            if low {
+                sim.start_event(ArenaEvent::LowGravity);
+                assert!(sim.gravity() < crate::collide::GRAVITY);
+            }
+            sim.players[1].feet += Vec3::new(0.0, 0.0, -50.0);
+            sim.step();
+            let y0 = sim.player(a).unwrap().feet.y;
+            sim.set_cmd(
+                a,
+                PlayerCmd {
+                    jumps: 1,
+                    ..Default::default()
+                },
+            );
+            let mut top = y0;
+            for _ in 0..240 {
+                sim.step();
+                top = top.max(sim.player(a).unwrap().feet.y);
+            }
+            top - y0
+        };
+        let (normal, low) = (apex(false), apex(true));
+        assert!(normal > 0.3, "{normal}");
+        assert!(low > normal * 2.0, "{low} vs {normal}");
     }
 
     #[test]

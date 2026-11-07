@@ -313,13 +313,17 @@ pub enum ArenaEvent {
     Overdrive,
     /// For `Rules::storm_time` every wall turns a bolt back like a mirror (once).
     MirrorStorm,
+    /// For `Rules::lowgrav_time` everything falls at `Rules::lowgrav_factor` of the gravity
+    /// (jump pads' flights aside).
+    LowGravity,
 }
 
 impl ArenaEvent {
-    pub const ALL: [ArenaEvent; 3] = [
+    pub const ALL: [ArenaEvent; 4] = [
         ArenaEvent::Blackout,
         ArenaEvent::Overdrive,
         ArenaEvent::MirrorStorm,
+        ArenaEvent::LowGravity,
     ];
 
     pub fn name(self) -> &'static str {
@@ -327,6 +331,7 @@ impl ArenaEvent {
             ArenaEvent::Blackout => "BLACKOUT",
             ArenaEvent::Overdrive => "OVERDRIVE",
             ArenaEvent::MirrorStorm => "MIRROR STORM",
+            ArenaEvent::LowGravity => "LOW GRAVITY",
         }
     }
 
@@ -336,6 +341,7 @@ impl ArenaEvent {
             ArenaEvent::Blackout => "blackout",
             ArenaEvent::Overdrive => "overdrive",
             ArenaEvent::MirrorStorm => "storm",
+            ArenaEvent::LowGravity => "lowgrav",
         }
     }
 
