@@ -679,6 +679,8 @@ fn color_of(game: &Game, id: PlayerId) -> Color {
 }
 
 fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMut<Feed>) {
+    // (Twice as many in the last minute.)
+    let pts = |n: u32| if game.snap.double { n * 2 } else { n };
     for GameEvent(e) in events.read() {
         if let Some(tag) = hit_confirm(e, &game) {
             if tag || !feed.tag_mark || feed.hit_mark <= 0.0 {
@@ -706,7 +708,24 @@ fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMu
                 } else if player == by {
                     format!("{} tagged themself out", game.name_of(player))
                 } else {
-                    format!("{} tagged out {}", game.name_of(by), game.name_of(player))
+                    // (Points only for tagging out an enemy.)
+                    let team = |id| {
+                        game.snap
+                            .players
+                            .iter()
+                            .find(|p| p.id == id)
+                            .map(|p| p.team)
+                    };
+                    let points = if team(by) != team(player) {
+                        format!(" +{}", pts(game.rules.tag_points))
+                    } else {
+                        String::new()
+                    };
+                    format!(
+                        "{} tagged out {}{points}",
+                        game.name_of(by),
+                        game.name_of(player)
+                    )
                 };
                 feed.lines.push((line, c, 6.0));
             }
@@ -715,7 +734,7 @@ fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMu
                     format!(
                         "{} assist +{}",
                         game.name_of(player),
-                        game.rules.assist_points
+                        pts(game.rules.assist_points)
                     ),
                     neonui::GREEN,
                     3.0,
@@ -726,7 +745,7 @@ fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMu
                     format!(
                         "{} defended +{}",
                         game.name_of(player),
-                        game.rules.defend_points
+                        pts(game.rules.defend_points)
                     ),
                     neonui::GREEN,
                     3.0,
@@ -741,9 +760,10 @@ fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMu
                     .map(|t| t.team);
                 feed.lines.push((
                     format!(
-                        "{} hit the {:?} target +100",
+                        "{} hit the {:?} target +{}",
                         game.name_of(by),
-                        t.unwrap_or(Team::Red)
+                        t.unwrap_or(Team::Red),
+                        pts(game.rules.target_points)
                     ),
                     neonui::AMBER,
                     3.0,
@@ -752,7 +772,10 @@ fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMu
             SimEvent::SecondaryHit { by, charged, .. } => {
                 let who = game.name_of(by);
                 feed.lines.push((
-                    format!("{who} hit a secondary target +100"),
+                    format!(
+                        "{who} hit a secondary target +{}",
+                        pts(game.rules.secondary_points)
+                    ),
                     neonui::AMBER,
                     3.0,
                 ));
@@ -769,7 +792,7 @@ fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMu
                     format!(
                         "{} HIT THE MEGATARGET +{}",
                         game.name_of(by),
-                        game.rules.megatarget_points
+                        pts(game.rules.megatarget_points)
                     ),
                     neonui::MAGENTA,
                     8.0,
