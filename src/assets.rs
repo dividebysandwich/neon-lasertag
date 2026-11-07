@@ -239,6 +239,7 @@ fn powerup_mesh(kind: lt_sim::PickupKind) -> &'static str {
         lt_sim::PickupKind::Ricochet => "ricochet",
         lt_sim::PickupKind::Lance => "lance",
         lt_sim::PickupKind::Mirror => "mirror",
+        lt_sim::PickupKind::Sensor => "sensor",
     }
 }
 

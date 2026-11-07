@@ -1416,6 +1416,10 @@ impl Bot {
             if d < HEAR || d < SHOT_HEAR && o.fire_cd > o.fire_interval(&sim.rules) - 0.05 {
                 known = true;
             }
+            // (Shown by a pulse sensor of the bot's team.)
+            if o.revealed > 0.0 {
+                known = true;
+            }
             if known {
                 self.remember(o.id, o.feet, now);
             }
@@ -2401,6 +2405,8 @@ impl Controller for Bot {
         let gadget = match p.gadget_kind() {
             // (A mirror too: it turns their bolts back at them.)
             Some(Gadget::Barrier | Gadget::Mirror) => p.cooldown > 0.0 && target.is_some(),
+            // A sensor goes out ahead, now and then, when no enemy's in sight.
+            Some(Gadget::Sensor) => target.is_none() && self.rng.random::<f32>() < TICK / 4.0,
             None => false,
         };
         self.pose(PlayerCmd {

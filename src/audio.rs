@@ -51,6 +51,7 @@ struct Sounds {
     beam_fire: Handle<AudioSource>,
     lance_fire: Handle<AudioSource>,
     headshot: Handle<AudioSource>,
+    sensor_pulse: Handle<AudioSource>,
     barrier_up: Handle<AudioSource>,
     barrier_hit: Handle<AudioSource>,
     barrier_down: Handle<AudioSource>,
@@ -118,6 +119,7 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
         fire_red: s("laser_fire_red"),
         lance_fire: s("lance_fire"),
         headshot: s("headshot"),
+        sensor_pulse: s("sensor_pulse"),
         shotgun: s("shotgun"),
         deny: s("deny"),
         hit: s("hit_player"),
@@ -443,6 +445,20 @@ fn play_events(
                     .flatten();
                 play(&mut commands, gain, &sounds.charge_full, at, 0.8, 1.0)
             }
+            SimEvent::SensorThrown { pos, .. } => {
+                play(&mut commands, gain, &sounds.throw, Some(pos), 0.7, 1.3)
+            }
+            SimEvent::SensorStuck { pos, .. } => {
+                play(&mut commands, gain, &sounds.bounce, Some(pos), 0.8, 1.6)
+            }
+            SimEvent::Pulse { pos, .. } => play(
+                &mut commands,
+                gain,
+                &sounds.sensor_pulse,
+                Some(pos),
+                0.9,
+                1.0,
+            ),
             SimEvent::Headshot { by, pos, .. } => {
                 let mine = Some(by) == me;
                 play(

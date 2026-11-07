@@ -1338,6 +1338,19 @@ fn effects(
                     seed,
                 );
             }
+            // A pulse sensor's pulse: a ring sweeping out over its range.
+            SimEvent::Pulse { pos, team, .. } => {
+                commands.spawn((
+                    Ring {
+                        life: 0.7,
+                        max: 0.7,
+                        size: game.rules.sensor_range,
+                    },
+                    Mesh3d(meshes.ring.clone()),
+                    MeshMaterial3d(palette.bolt_for(Some(team))),
+                    Transform::from_translation(pos),
+                ));
+            }
             SimEvent::Launched { pos, .. } => {
                 commands.spawn((
                     Ring {

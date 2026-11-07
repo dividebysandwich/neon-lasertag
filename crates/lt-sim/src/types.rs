@@ -78,13 +78,17 @@ pub enum PickupKind {
     /// A gadget: a mirror put up like a barrier (`PlayerCmd::gadget`) for `Rules::mirror_time`,
     /// turning back every bolt that meets it, anyone's.
     Mirror,
+    /// A gadget: thrown (`PlayerCmd::gadget`), it sticks where it lands and for
+    /// `Rules::sensor_time` shows the enemies within `Rules::sensor_range` to its team every
+    /// `Rules::sensor_every` seconds, through walls and cloaks.
+    Sensor,
     /// A gadget, carried until put up (`PlayerCmd::gadget`): a wall of hard light in front of the
     /// player for `Rules::barrier_time`, stopping every bolt but its team's.
     Barrier,
 }
 
 impl PickupKind {
-    pub const ALL: [PickupKind; 11] = [
+    pub const ALL: [PickupKind; 12] = [
         PickupKind::Grenade,
         PickupKind::Rapid,
         PickupKind::Shield,
@@ -96,9 +100,10 @@ impl PickupKind {
         PickupKind::Ricochet,
         PickupKind::Lance,
         PickupKind::Mirror,
+        PickupKind::Sensor,
     ];
     /// The powerups (everything but the grenade).
-    pub const POWERUPS: [PickupKind; 10] = [
+    pub const POWERUPS: [PickupKind; 11] = [
         PickupKind::Rapid,
         PickupKind::Shield,
         PickupKind::Shotgun,
@@ -109,6 +114,7 @@ impl PickupKind {
         PickupKind::Ricochet,
         PickupKind::Lance,
         PickupKind::Mirror,
+        PickupKind::Sensor,
     ];
 
     pub fn name(self) -> &'static str {
@@ -124,6 +130,7 @@ impl PickupKind {
             PickupKind::Ricochet => "ricochet rifle",
             PickupKind::Lance => "prism lance",
             PickupKind::Mirror => "mirror",
+            PickupKind::Sensor => "pulse sensor",
         }
     }
 
@@ -141,6 +148,7 @@ impl PickupKind {
             PickupKind::Ricochet => "ricochet",
             PickupKind::Lance => "lance",
             PickupKind::Mirror => "mirror",
+            PickupKind::Sensor => "sensor",
         }
     }
 
@@ -155,7 +163,7 @@ impl PickupKind {
             PickupKind::Shotgun | PickupKind::Charge | PickupKind::Ricochet | PickupKind::Lance => {
                 Some(Pool::Weapon)
             }
-            PickupKind::Barrier | PickupKind::Mirror => Some(Pool::Gadget),
+            PickupKind::Barrier | PickupKind::Mirror | PickupKind::Sensor => Some(Pool::Gadget),
             PickupKind::Rapid | PickupKind::Shield | PickupKind::Cloak | PickupKind::Speed => {
                 Some(Pool::Power)
             }
@@ -178,6 +186,7 @@ impl PickupKind {
         match self {
             PickupKind::Barrier => Some(Gadget::Barrier),
             PickupKind::Mirror => Some(Gadget::Mirror),
+            PickupKind::Sensor => Some(Gadget::Sensor),
             _ => None,
         }
     }
@@ -201,6 +210,7 @@ pub enum Weapon {
 pub enum Gadget {
     Barrier,
     Mirror,
+    Sensor,
 }
 
 impl Gadget {
@@ -208,6 +218,7 @@ impl Gadget {
         match self {
             Gadget::Barrier => "barrier",
             Gadget::Mirror => "mirror",
+            Gadget::Sensor => "pulse sensor",
         }
     }
 }
@@ -433,6 +444,27 @@ pub enum SimEvent {
         pos: Vec3,
     },
     BarrierDown {
+        id: u32,
+        pos: Vec3,
+    },
+    /// A pulse sensor thrown (`Sim::sensors`), stuck where it landed, pulsing (the enemies
+    /// within its range, by player id bit), and gone.
+    SensorThrown {
+        id: u32,
+        player: PlayerId,
+        pos: Vec3,
+    },
+    SensorStuck {
+        id: u32,
+        pos: Vec3,
+    },
+    Pulse {
+        id: u32,
+        team: Team,
+        pos: Vec3,
+        seen: u64,
+    },
+    SensorDown {
         id: u32,
         pos: Vec3,
     },

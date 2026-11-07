@@ -120,6 +120,8 @@ pub struct Player {
     pub decloak: f32,
     /// Seconds left of the speed boost (0: none).
     pub speed: f32,
+    /// Seconds left that an enemy pulse sensor shows this player to the other team.
+    pub revealed: f32,
     /// How long the charge gun's trigger has been held (while it charges).
     pub charging: Option<f32>,
     /// The gadget carried, and how many.
@@ -378,6 +380,22 @@ impl Default for BoltExtra {
     }
 }
 
+/// A pulse sensor: flying (`stuck` false) or stuck to the arena at `pos`, pulsing every
+/// `Rules::sensor_every` seconds for `left` seconds.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Sensor {
+    pub id: u32,
+    pub team: Team,
+    pub owner: PlayerId,
+    pub pos: Vec3,
+    pub vel: Vec3,
+    /// Stuck, and the normal of what it stuck to.
+    pub stuck: bool,
+    pub normal: Vec3,
+    pub left: f32,
+    pub next_pulse: f32,
+}
+
 /// A barrier: a wall of hard light standing on the floor (`centre` at half its height),
 /// facing `normal` (the way its player looked from, horizontal).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -449,6 +467,9 @@ pub struct Snapshot {
     pub turrets: Vec<TurretSnap>,
     /// Barriers standing.
     pub barriers: Vec<Barrier>,
+    /// Pulse sensors thrown.
+    #[serde(default)]
+    pub sensors: Vec<Sensor>,
     /// The arena event going on (seconds left), and whether points count double.
     pub event: Option<(ArenaEvent, f32)>,
     pub double: bool,
@@ -511,6 +532,9 @@ pub struct PlayerSnap {
     pub decloak: f32,
     /// `Player::speed`.
     pub speed: f32,
+    /// `Player::revealed`.
+    #[serde(default)]
+    pub revealed: f32,
     /// `Player::charging` (0: not charging).
     pub charging: f32,
     /// `Player::gadget`.
@@ -588,6 +612,8 @@ pub struct Sim {
     pub turrets: Vec<TurretState>,
     /// Barriers standing.
     pub barriers: Vec<Barrier>,
+    /// Pulse sensors thrown.
+    pub sensors: Vec<Sensor>,
     /// The arena event going on, with its seconds left; when the next one comes (seconds into
     /// the match); and whether points count double now.
     pub event: Option<(ArenaEvent, f32)>,
@@ -662,6 +688,7 @@ impl Sim {
                     .collect()
             }),
             barriers: Vec::new(),
+            sensors: Vec::new(),
             event: None,
             next_event: 0.0,
             double: false,
@@ -736,6 +763,7 @@ impl Sim {
             cloak: 0.0,
             decloak: 0.0,
             speed: 0.0,
+            revealed: 0.0,
             charging: None,
             gadget: None,
             prev_gadget: false,
@@ -831,6 +859,7 @@ impl Sim {
         self.bolts.clear();
         self.grenades.clear();
         self.barriers.clear();
+        self.sensors.clear();
         self.event = None;
         self.double = false;
         self.time_left = self.rules.match_time;
@@ -909,6 +938,7 @@ impl Sim {
         self.step_bolts();
         self.step_grenades();
         self.step_barriers();
+        self.step_sensors();
         self.step_pickups();
         self.record();
     }
@@ -1340,7 +1370,42 @@ impl Sim {
                     pos: b.centre,
                 });
             }
+            if press && let Some((Gadget::Sensor, _)) = self.players[i].gadget {
+                let p = &mut self.players[i];
+                p.use_gadget();
+                p.protect = 0.0;
+                let eye = p.eye();
+                let (_, dir) = crate::shot::muzzle(p.feet, eye, &p.cmd);
+                let from = eye + dir * 0.3;
+                // (From the eye, unless that's inside a wall.)
+                let from = if self.world.clear(eye, from) {
+                    from
+                } else {
+                    eye
+                };
+                let (owner, team) = (p.id, p.team);
+                let id = self.id();
+                self.sensors.push(Sensor {
+                    id,
+                    team,
+                    owner,
+                    pos: from,
+                    vel: dir * rules.sensor_speed + Vec3::Y * 1.5,
+                    stuck: false,
+                    normal: Vec3::Y,
+                    left: rules.sensor_time,
+                    next_pulse: 0.0,
+                });
+                self.events.push(SimEvent::SensorThrown {
+                    id,
+                    player: owner,
+                    pos: from,
+                });
+            }
             let p = &mut self.players[i];
+
+            // A pulse sensor's showing running out.
+            p.revealed = (p.revealed - TICK).max(0.0);
 
             // The speed boost running out.
             if p.speed > 0.0 {
@@ -2115,6 +2180,70 @@ impl Sim {
     }
 
     /// Barriers running out.
+    /// Pulse sensors: flying until they meet the arena, then pulsing until their time is up
+    /// (each pulse shows the enemies in range, `Player::revealed`).
+    fn step_sensors(&mut self) {
+        let rules = &self.rules;
+        let mut i = 0;
+        while i < self.sensors.len() {
+            let s = &mut self.sensors[i];
+            if !s.stuck {
+                s.vel.y -= GRAVITY * TICK;
+                let to = s.pos + s.vel * TICK;
+                match self.world.ray(s.pos, to) {
+                    Some((_, q, n)) => {
+                        s.pos = q + n * 0.05;
+                        s.normal = n;
+                        s.vel = Vec3::ZERO;
+                        s.stuck = true;
+                        self.events.push(SimEvent::SensorStuck {
+                            id: s.id,
+                            pos: s.pos,
+                        });
+                    }
+                    None => s.pos = to,
+                }
+                // (Lost out of the arena.)
+                if s.pos.y < -20.0 {
+                    s.left = 0.0;
+                }
+            } else {
+                s.left -= TICK;
+                s.next_pulse -= TICK;
+                if s.next_pulse <= 0.0 && s.left > 0.0 {
+                    s.next_pulse = rules.sensor_every;
+                    let (pos, team) = (s.pos, s.team);
+                    let mut seen = 0u64;
+                    for p in &mut self.players {
+                        if p.team != team
+                            && p.alive()
+                            && p.chest().distance(pos) <= rules.sensor_range
+                        {
+                            p.revealed = rules.sensor_reveal;
+                            seen |= 1u64 << (p.id % 64);
+                        }
+                    }
+                    self.events.push(SimEvent::Pulse {
+                        id: s.id,
+                        team,
+                        pos,
+                        seen,
+                    });
+                }
+            }
+            let s = self.sensors[i];
+            if s.left <= 0.0 {
+                self.events.push(SimEvent::SensorDown {
+                    id: s.id,
+                    pos: s.pos,
+                });
+                self.sensors.swap_remove(i);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
     fn step_barriers(&mut self) {
         for b in &mut self.barriers {
             b.left -= TICK;
@@ -2585,6 +2714,7 @@ impl Sim {
                     cloak: p.cloak,
                     decloak: p.decloak,
                     speed: p.speed,
+                    revealed: p.revealed,
                     charging: p.charging.unwrap_or(0.0),
                     gadget: p.gadget,
                     shot: p.cmd.shot,
@@ -2630,6 +2760,7 @@ impl Sim {
                 })
                 .collect(),
             barriers: self.barriers.clone(),
+            sensors: self.sensors.clone(),
             event: self.event,
             double: self.double,
             phase: self.phase,
@@ -3625,6 +3756,62 @@ mod tests {
             sim.step();
         }
         assert!(sim.barriers.is_empty());
+    }
+
+    #[test]
+    fn pulse_sensors_stick_and_show_enemies_nearby_even_cloaked() {
+        let (mut sim, a, b) = duel();
+        let c = sim.add_player("c", Some(Team::Blue), false).unwrap();
+        sim.give(a, PickupKind::Sensor);
+        sim.give(b, PickupKind::Cloak);
+        assert!(sim.player(b).unwrap().cloaked());
+        // Thrown towards b (3 m off along -z).
+        let fb = sim.player(b).unwrap().feet;
+        sim.players[2].feet = fb + Vec3::new(0.0, 0.0, -200.0);
+        let me = sim.player(a).unwrap();
+        sim.set_cmd(
+            a,
+            PlayerCmd {
+                gun_hand: Some(Hand::Right),
+                muzzle: Pose {
+                    pos: me.eye() - Vec3::Y * 0.2 - me.feet,
+                    rot: look_rot(Vec3::new(0.0, -0.5, -1.0).normalize()),
+                },
+                gadget: true,
+                ..Default::default()
+            },
+        );
+        sim.drain_events();
+        sim.step();
+        assert_eq!(sim.sensors.len(), 1);
+        assert_eq!(sim.player(a).unwrap().gadget, None);
+        for _ in 0..90 {
+            sim.step();
+        }
+        let s = sim.sensors[0];
+        assert!(s.stuck, "landed: {s:?}");
+        let ev = sim.drain_events();
+        assert!(ev.iter().any(|e| matches!(e, SimEvent::SensorStuck { .. })));
+        let seen = ev.iter().find_map(|e| match *e {
+            SimEvent::Pulse { seen, team, .. } => Some((seen, team)),
+            _ => None,
+        });
+        let (seen, team) = seen.expect("a pulse");
+        assert_eq!(team, Team::Red);
+        assert!(seen & (1 << b) != 0, "b seen, cloaked as it is");
+        assert!(seen & (1 << c) == 0, "c too far");
+        assert!(seen & (1 << a) == 0, "not its own team");
+        assert!(sim.player(b).unwrap().revealed > 0.0);
+        assert_eq!(sim.player(c).unwrap().revealed, 0.0);
+        for _ in 0..(sim.rules.sensor_time / TICK) as usize + 2 {
+            sim.step();
+        }
+        assert!(sim.sensors.is_empty());
+        assert!(
+            sim.drain_events()
+                .iter()
+                .any(|e| matches!(e, SimEvent::SensorDown { .. }))
+        );
     }
 
     #[test]

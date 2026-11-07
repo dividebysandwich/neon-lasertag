@@ -311,7 +311,7 @@ fn spawn(mut commands: Commands) {
         BackgroundGradient::default(),
     ));
     // The marked places.
-    for k in 0..2 + MAX_GOALS {
+    for k in 0..2 + MAX_GOALS + MAX_REVEALED {
         commands.spawn((
             HudRoot,
             ObjMarker(k),
@@ -1669,6 +1669,15 @@ fn objective_markers(
         }
     }
     shown.resize(2 + MAX_GOALS, None);
+    // The enemies a pulse sensor shows.
+    if let Some(p) = me.filter(|p| p.respawn.is_none()) {
+        let c = crate::materials::team_color(Some(p.team.other()));
+        let c = Color::linear_rgb(c.x, c.y, c.z).with_alpha(pulse);
+        for pos in revealed(&game, p) {
+            shown.push(Some((pos, c, "SEEN".to_string())));
+        }
+    }
+    shown.resize(2 + MAX_GOALS + MAX_REVEALED, None);
     let size = Vec2::new(window.width(), window.height());
     let inv = gt.affine().inverse();
     for (m, mut node, mut border) in &mut marks {
@@ -1783,6 +1792,22 @@ impl GoalKind {
 
 /// Goal markers at most (two targets a team, or two secondary targets).
 pub const MAX_GOALS: usize = 4;
+/// Enemies a pulse sensor shows, marked at most.
+pub const MAX_REVEALED: usize = 6;
+
+/// The enemies of `me` a pulse sensor of its team shows now: over their heads, nearest first.
+pub fn revealed(game: &Game, me: &lt_sim::sim::PlayerSnap) -> Vec<Vec3> {
+    let mut out: Vec<Vec3> = game
+        .snap
+        .players
+        .iter()
+        .filter(|o| o.team != me.team && o.revealed > 0.0 && o.respawn.is_none())
+        .map(|o| o.feet + Vec3::Y * 2.3)
+        .collect();
+    out.sort_by(|a, b| a.distance(me.feet).total_cmp(&b.distance(me.feet)));
+    out.truncate(MAX_REVEALED);
+    out
+}
 
 /// The places `p` (alive) has to go for: Classic mode, every team target (marked over it);
 /// Megatarget mode, the secondary targets it hasn't hit yet, or, both hit, the megatarget
@@ -2166,6 +2191,12 @@ pub fn pickup_banner(
             "{}: A WALL THAT STOPS ENEMY BOLTS FOR {:.0} S",
             key(Action::Gadget, "GRIP OF THE FREE HAND"),
             rules.barrier_time
+        ),
+        PickupKind::Sensor => format!(
+            "{}: THROW IT - IT SHOWS ENEMIES WITHIN {:.0} M FOR {:.0} S",
+            key(Action::Gadget, "GRIP OF THE FREE HAND"),
+            rules.sensor_range,
+            rules.sensor_time
         ),
         PickupKind::Mirror => format!(
             "{}: A MIRROR THAT TURNS BACK EVERY BOLT FOR {:.0} S",

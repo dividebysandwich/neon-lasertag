@@ -19,6 +19,8 @@ Meshes (game frame, Y up, metres):
   ~0.3 m tall, origin at the centre.
 - `mirror`: a hexagonal hand mirror on a short post, its glass the accent, ~0.34 m wide,
   ~0.42 m tall, origin at the centre.
+- `sensor`: the pulse sensor, an octagonal puck with its glowing eye and two arcs of its
+  pulse, ~0.4 m wide, ~0.3 m tall, origin at the centre.
 - `shotgun`: the pump shotgun a player holds, in the blaster's frame (barrel along -Z, up +Y,
   origin at the middle of the grip hold), with `hit_1`/`hit_2`/`hit_3` lights on top of the
   receiver (hit_1 nearest the player) and a `muzzle` disc; the empty `shotgun_muzzle` marks the
@@ -268,6 +270,22 @@ def build_mirror():
     return g
 
 
+def build_sensor():
+    g = L.Geo()
+    octa = [(0.1 * math.cos(math.pi / 8 + k * math.pi / 4),
+             -0.04 + 0.1 * math.sin(math.pi / 8 + k * math.pi / 4)) for k in range(8)]
+    slab(g, octa, -0.04, 0.04, "body")
+    slab(g, inset(octa, 0.05), -0.05, 0.05, "body", front_mat="accent", back_mat="accent")
+    # The pulse: two arcs over it, of short strokes.
+    for r in (0.16, 0.23):
+        n = 6
+        pts = [(r * math.cos(a), -0.04 + r * math.sin(a))
+               for a in (math.radians(35 + 110 * k / n) for k in range(n + 1))]
+        for a, b in zip(pts, pts[1:]):
+            stroke(g, a, b, 0.022, 0.015)
+    return g
+
+
 def build_shotgun():
     g = L.Geo()
 
@@ -341,7 +359,7 @@ def main():
                         ("shotgun", build_shotgun), ("speed", build_speed),
                         ("charge", build_charge), ("barrier", build_barrier),
                         ("ricochet", build_ricochet), ("lance", build_lance),
-                        ("mirror", build_mirror)):
+                        ("mirror", build_mirror), ("sensor", build_sensor)):
         g = build()
         L.make_object(name, g)
         print("powerup %s %d tris" % (name, g.tris()))

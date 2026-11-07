@@ -43,7 +43,7 @@ impl Plugin for FeaturesPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BarrierViews>().add_systems(
             Update,
-            (on_events, animate, sync_barriers)
+            (on_events, animate, sync_barriers, sync_sensors)
                 .chain()
                 .run_if(resource_exists::<Game>),
         );
@@ -521,6 +521,70 @@ fn sync_barriers(
         }
         if let Some(mut m) = accents.get_mut(&v.2) {
             m.neon.color.w = (4.0 + 6.0 * v.3) * k.max(0.2);
+        }
+    }
+}
+
+/// Pulse sensors: a small glowing core in the team's colour on a dark shell, its light
+/// flaring with every pulse.
+#[allow(clippy::too_many_arguments)]
+fn sync_sensors(
+    mut commands: Commands,
+    game: Res<Game>,
+    time: Res<Time>,
+    palette: Res<crate::materials::Palette>,
+    mut views: Local<std::collections::HashMap<u32, Entity>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut ball: Local<Option<Handle<Mesh>>>,
+    mut q: Query<&mut Transform>,
+) {
+    let ball = ball
+        .get_or_insert_with(|| meshes.add(Sphere::new(0.07).mesh().ico(2).unwrap()))
+        .clone();
+    views.retain(|id, e| {
+        let keep = game.snap.sensors.iter().any(|s| s.id == *id);
+        if !keep && let Ok(mut c) = commands.get_entity(*e) {
+            c.despawn();
+        }
+        keep
+    });
+    let t = time.elapsed_secs();
+    for s in &game.snap.sensors {
+        let e = *views.entry(s.id).or_insert_with(|| {
+            let c = team_color(Some(s.team));
+            let root = commands
+                .spawn((
+                    ArenaPart,
+                    Mesh3d(ball.clone()),
+                    MeshMaterial3d(palette.bolt_for(Some(s.team))),
+                    Transform::from_translation(s.pos),
+                    Visibility::default(),
+                    Name::new("sensor"),
+                ))
+                .id();
+            commands.spawn((
+                PointLight {
+                    color: Color::linear_rgb(c.x, c.y, c.z),
+                    intensity: 8_000.0,
+                    range: 3.0,
+                    shadow_maps_enabled: false,
+                    ..default()
+                },
+                Transform::IDENTITY,
+                ChildOf(root),
+            ));
+            root
+        });
+        if let Ok(mut tr) = q.get_mut(e) {
+            tr.translation = s.pos;
+            // (A quick swell at each pulse, a slow breath between.)
+            let since = game.rules.sensor_every - s.next_pulse;
+            let flare = if s.stuck {
+                (1.0 - since / 0.3).max(0.0)
+            } else {
+                0.0
+            };
+            tr.scale = Vec3::splat(1.0 + 0.15 * (t * 3.0).sin() + 1.2 * flare);
         }
     }
 }

@@ -96,6 +96,13 @@ pub struct Rules {
     pub barrier_time: f32,
     /// Seconds a mirror put up stands (its size is a barrier's).
     pub mirror_time: f32,
+    /// Pulse sensors: seconds one pulses once stuck, between pulses, how far one sees (m), how
+    /// long a pulse shows the enemies it saw (s), and how fast one is thrown (m/s).
+    pub sensor_time: f32,
+    pub sensor_every: f32,
+    pub sensor_range: f32,
+    pub sensor_reveal: f32,
+    pub sensor_speed: f32,
     pub barrier_dist: f32,
     pub barrier_w: f32,
     pub barrier_h: f32,
@@ -202,6 +209,11 @@ impl Default for Rules {
             beam_range: 60.0,
             beam_damage: 2,
             mirror_time: 15.0,
+            sensor_time: 20.0,
+            sensor_every: 2.0,
+            sensor_range: 10.0,
+            sensor_reveal: 2.5,
+            sensor_speed: 14.0,
             barrier_time: 8.0,
             barrier_dist: 1.5,
             barrier_w: 2.4,

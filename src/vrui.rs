@@ -1923,7 +1923,7 @@ fn place_marks(
         ];
         // (The goals' own glows, in their colours at `hud::GOAL_ALPHA`.)
         let mut fades = Vec::new();
-        for _ in 0..crate::hud::MAX_GOALS {
+        for _ in 0..crate::hud::MAX_GOALS + crate::hud::MAX_REVEALED {
             let glow = glows.add(GlowMaterial {
                 overlay: true,
                 neon: NeonUniform::fixed(Vec3::ONE, 0.0),
@@ -1975,6 +1975,14 @@ fn place_marks(
                 GoalKind::Core => (solid, Hue::Magenta.color()),
             };
             places.push(Some((pos, 0.02, Some((mesh.clone(), c)))));
+        }
+    }
+    // The enemies a pulse sensor shows.
+    places.resize(2 + crate::hud::MAX_GOALS, None);
+    if let Some(p) = me.filter(|_| alive) {
+        let c = team_color(Some(p.team.other()));
+        for pos in crate::hud::revealed(&game, p) {
+            places.push(Some((pos, 0.016 * pulse, Some((solid.clone(), c)))));
         }
     }
     places.resize(ents.len(), None);

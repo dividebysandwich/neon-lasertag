@@ -663,6 +663,16 @@ def lance_fire():
     return echoes(crack + whine + glass + punch, [0.11, 0.26], [0.3, 0.15], 6000)
 
 
+def sensor_pulse():
+    T = 1.2
+    x = seconds(T)
+    # A sonar ping: a pure tone with a soft attack and a long, echoing tail.
+    f = 1320 * (1 - 0.04 * (1 - np.exp(-x / 0.3)))
+    ping = np.sin(2 * np.pi * phase(f)) * env(T, 0.004, 0.22) * 0.7
+    under = np.sin(2 * np.pi * phase(f * 0.5)) * env(T, 0.01, 0.15) * 0.25
+    return echoes(ping + under, [0.18, 0.36, 0.54], [0.4, 0.2, 0.1], 5000)
+
+
 def headshot():
     T = 0.5
     x = seconds(T)
@@ -770,6 +780,7 @@ SOUNDS = {
     "beam_fire": (beam_fire, -14.0, 291),
     "lance_fire": (lance_fire, -14.0, 292),
     "headshot": (headshot, -15.0, 293),
+    "sensor_pulse": (sensor_pulse, -21.0, 294),
     "barrier_up": (barrier_up, -19.0, 301),
     "barrier_hit": (barrier_hit, -20.0, 311),
     "barrier_down": (barrier_down, -22.0, 321),
