@@ -19,10 +19,9 @@ struct ClockText;
 #[derive(Component)]
 struct DoubleText;
 
-/// The big line announcing an arena event (BLACKOUT, OVERDRIVE, DOUBLE POINTS), and the
-/// seconds it has left to show.
+/// The big line announcing an arena event (BLACKOUT, OVERDRIVE, DOUBLE POINTS).
 #[derive(Component, Default)]
-struct EventBanner(f32);
+struct EventBanner;
 /// The line under the banner saying what the event does.
 #[derive(Component)]
 struct EventBannerSub;
@@ -281,7 +280,7 @@ fn spawn(mut commands: Commands) {
             },
         ))
         .with_children(|p| {
-            p.spawn((EventBanner::default(), text("", 60.0, Color::NONE, 900)));
+            p.spawn((EventBanner, text("", 60.0, Color::NONE, 900)));
             p.spawn((EventBannerSub, text("", 20.0, Color::NONE, 700)));
         });
     // Top: RED score, clock, BLUE score; the bots' difficulty below.
@@ -1024,15 +1023,51 @@ pub fn event_banner_for(e: &SimEvent, rules: &lt_sim::Rules) -> Option<Banner> {
 /// Seconds an arena event's banner shows.
 pub const BANNER_TIME: f32 = 4.0;
 
+/// Banners waiting their turn, so that two announced at once both show: the one showing gives
+/// way to the next after `BANNER_MIN` seconds.
+#[derive(Default)]
+pub struct BannerQueue {
+    waiting: std::collections::VecDeque<Banner>,
+    /// The showing banner's seconds left (0: none), and seconds shown.
+    pub left: f32,
+    pub shown: f32,
+}
+
+/// Seconds a banner shows at least when another one waits.
+const BANNER_MIN: f32 = 2.5;
+
+impl BannerQueue {
+    pub fn push(&mut self, b: Banner) {
+        self.waiting.push_back(b);
+    }
+
+    /// Runs the clock; the next banner if it's its turn now.
+    pub fn tick(&mut self, dt: f32) -> Option<Banner> {
+        self.shown += dt;
+        if !self.waiting.is_empty() {
+            self.left = self.left.min((BANNER_MIN - self.shown).max(0.5));
+        }
+        self.left = (self.left - dt).max(0.0);
+        if self.left > 0.0 {
+            return None;
+        }
+        let b = self.waiting.pop_front()?;
+        self.left = b.time;
+        self.shown = 0.0;
+        Some(b)
+    }
+}
+
 #[allow(clippy::type_complexity)]
 fn event_banner(
     mut events: MessageReader<GameEvent>,
     game: Res<Game>,
     time: Res<Time>,
-    mut q: Query<(&mut EventBanner, &mut Text, &mut TextColor), Without<EventBannerSub>>,
+    mut queue: Local<BannerQueue>,
+    mut q: Query<(&mut Text, &mut TextColor), (With<EventBanner>, Without<EventBannerSub>)>,
     mut sub: Query<(&mut Text, &mut TextColor), With<EventBannerSub>>,
 ) {
-    let Ok((mut b, mut text, mut color)) = q.single_mut() else {
+    let Ok((mut text, mut color)) = q.single_mut() else {
         return;
     };
     let Ok((mut sub_text, mut sub_color)) = sub.single_mut() else {
@@ -1040,15 +1075,16 @@ fn event_banner(
     };
     for GameEvent(e) in events.read() {
         if let Some(banner) = event_banner_for(e, &game.rules) {
-            b.0 = banner.time;
-            text.0 = banner.title.to_string();
-            sub_text.0 = banner.sub;
-            color.0 = banner.color;
+            queue.push(banner);
         }
     }
-    b.0 = (b.0 - time.delta_secs()).max(0.0);
+    if let Some(banner) = queue.tick(time.delta_secs()) {
+        text.0 = banner.title.to_string();
+        sub_text.0 = banner.sub;
+        color.0 = banner.color;
+    }
     // Fading out in the last half second, a little pulse meanwhile.
-    let a = (b.0 / 0.5).min(1.0);
+    let a = (queue.left / 0.5).min(1.0);
     color
         .0
         .set_alpha(a * (0.85 + 0.15 * (time.elapsed_secs() * 8.0).sin()));

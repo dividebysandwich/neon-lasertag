@@ -1324,14 +1324,17 @@ fn event_banner(
     time: Res<Time>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut transforms: Query<&mut Transform>,
-    mut banner: Local<Option<(Entity, f32, f32)>>,
+    mut banner: Local<Option<Entity>>,
+    mut queue: Local<crate::hud::BannerQueue>,
     game: Res<Game>,
 ) {
     for GameEvent(e) in events.read() {
-        let Some(b) = crate::hud::event_banner_for(e, &game.rules) else {
-            continue;
-        };
-        if let Some((old, _, _)) = banner.take()
+        if let Some(b) = crate::hud::event_banner_for(e, &game.rules) {
+            queue.push(b);
+        }
+    }
+    if let Some(b) = queue.tick(time.delta_secs()) {
+        if let Some(old) = banner.take()
             && let Ok(mut c) = commands.get_entity(old)
         {
             c.despawn();
@@ -1374,14 +1377,14 @@ fn event_banner(
                 None,
             );
         }
-        *banner = Some((root, b.time, b.time));
+        *banner = Some(root);
     }
-    let Some((root, left, total)) = banner.as_mut() else {
+    let Some(root) = *banner else {
         return;
     };
-    *left -= time.delta_secs();
-    if *left <= 0.0 {
-        if let Ok(mut c) = commands.get_entity(*root) {
+    let left = queue.left;
+    if left <= 0.0 {
+        if let Ok(mut c) = commands.get_entity(root) {
             c.despawn();
         }
         *banner = None;
@@ -1394,13 +1397,12 @@ fn event_banner(
             .unwrap_or(Transform::from_xyz(0.0, lt_sim::sim::EYE, 0.0));
     let fwd = head.rotation * Vec3::NEG_Z;
     let fwd = Vec3::new(fwd.x, 0.0, fwd.z).normalize_or(Vec3::NEG_Z);
-    if let Ok(mut t) = transforms.get_mut(*root) {
+    if let Ok(mut t) = transforms.get_mut(root) {
         // (Near, so that walls close by don't hide it.)
         t.translation = head.translation + fwd * 0.8 + Vec3::Y * 0.12;
         // (Its text faces +Z: turned about the vertical towards the eyes.)
         t.rotation = Quat::from_rotation_y((-fwd.x).atan2(-fwd.z));
-        let age = *total - *left;
-        t.scale = Vec3::splat((age / 0.15).min(1.0) * (*left / 0.3).min(1.0));
+        t.scale = Vec3::splat((queue.shown / 0.15).min(1.0) * (left / 0.3).min(1.0));
     }
 }
 
