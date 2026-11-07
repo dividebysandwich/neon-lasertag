@@ -243,6 +243,8 @@ pub struct Settings {
     /// How often each kind of pickup (by its `PickupKind::id`) was taken so far, counted up to
     /// `EXPLAINED`: its announcement says what it does until then.
     pub taken: Vec<(String, u32)>,
+    /// The first-match hints shown already (by id).
+    pub hints: Vec<String>,
 }
 
 /// Pickups of a kind whose announcements explain it.
@@ -257,6 +259,7 @@ impl Default for Settings {
             music_volume: 1.0,
             bindings: Action::ALL.iter().map(|&a| (a, a.defaults())).collect(),
             taken: Vec::new(),
+            hints: Vec::new(),
         }
     }
 }
@@ -285,6 +288,19 @@ impl Settings {
         *n += 1;
         self.save();
         true
+    }
+
+    /// Whether hint `id` was shown already.
+    pub fn hinted(&self, id: &str) -> bool {
+        self.hints.iter().any(|h| h == id)
+    }
+
+    /// Hint `id` shown (saved).
+    pub fn hint(&mut self, id: &str) {
+        if !self.hinted(id) {
+            self.hints.push(id.to_string());
+            self.save();
+        }
     }
 
     pub fn get(&self, a: Action) -> [Option<Binding>; 2] {
@@ -371,6 +387,7 @@ impl Settings {
                 s.sound_volume = saved.sound_volume.clamp(0.0, 1.0);
                 s.music_volume = saved.music_volume.clamp(0.0, 1.0);
                 s.taken = saved.taken;
+                s.hints = saved.hints;
                 for (id, names) in saved.bindings {
                     if let Some(a) = Action::ALL.iter().find(|a| a.id() == id)
                         && let Some((_, bs)) = s.bindings.iter_mut().find(|(x, _)| x == a)
@@ -404,6 +421,7 @@ impl Settings {
                 })
                 .collect(),
             taken: self.taken.clone(),
+            hints: self.hints.clone(),
         };
         let text = match ron::ser::to_string_pretty(&saved, ron::ser::PrettyConfig::default()) {
             Ok(t) => t,
@@ -428,6 +446,7 @@ struct Saved {
     music_volume: f32,
     bindings: Vec<(String, Vec<Option<String>>)>,
     taken: Vec<(String, u32)>,
+    hints: Vec<String>,
 }
 
 impl Default for Saved {
@@ -439,6 +458,7 @@ impl Default for Saved {
             music_volume: 1.0,
             bindings: Vec::new(),
             taken: Vec::new(),
+            hints: Vec::new(),
         }
     }
 }

@@ -158,6 +158,7 @@ impl Plugin for HudPlugin {
                     pickup_note,
                     hit_marker,
                     edge_glow,
+                    fade_shadows,
                 )
                     .chain()
                     .run_if(resource_exists::<Game>),
@@ -1084,6 +1085,85 @@ fn edge_glow(
     ];
 }
 
+/// A hint for a newcomer that's due now and wasn't shown before: its id (to remember it by)
+/// and banner. `since` is the seconds since the match began; `holding`: VR, the blaster is in
+/// hand.
+pub fn next_hint(
+    game: &Game,
+    settings: &Settings,
+    controls: Controls,
+    since: f32,
+    holding: bool,
+) -> Option<(&'static str, Banner)> {
+    let p = game
+        .me
+        .and_then(|id| game.snap.players.iter().find(|p| p.id == id))?;
+    if p.respawn.is_some() || game.snap.over {
+        return None;
+    }
+    let vr = matches!(controls, Controls::Vr);
+    let mega = game.level.mega.is_some();
+    let low = p.ammo as f32 <= game.rules.ammo as f32 * LOW_AMMO;
+    let hints: [(&'static str, bool, &'static str, String); 5] = [
+        (
+            "grab",
+            vr && since > 3.0 && !holding,
+            "GRAB YOUR BLASTER",
+            "REACH TO YOUR HIP AND SQUEEZE THE GRIP".into(),
+        ),
+        (
+            "goal",
+            since > 5.0,
+            "YOUR GOAL",
+            if mega {
+                "TAG OUT ENEMIES - HIT BOTH SECONDARY TARGETS AT THE SIDES TO OPEN THE MEGATARGET ROOM"
+            } else {
+                "TAG OUT ENEMIES AND HIT THE TARGETS UNDER THE ROOFS IN THEIR HALF"
+            }
+            .into(),
+        ),
+        (
+            "heal",
+            p.hits > 0 && p.cooldown <= 0.0,
+            "HURT",
+            "STEP ONTO YOUR SPAWN PADS TO HEAL".into(),
+        ),
+        (
+            "refill",
+            low && !p.reloading,
+            "LOW ON SHOTS",
+            "REFILL ON YOUR SPAWN PADS OR AT A WHITE STATION".into(),
+        ),
+        (
+            "keys",
+            since > 25.0,
+            "TIP",
+            if vr {
+                "THE RIGHT MENU BUTTON SHOWS THE SCORES - THE CONTROLS AND THE RULES".to_string()
+            } else {
+                format!(
+                    "HOLD {} FOR THE SCORES - ESC FOR THE MENU - THE CONTROLS AND THE RULES",
+                    key_hint(settings, Action::Scores)
+                )
+            },
+        ),
+    ];
+    let (id, _, title, sub) = hints
+        .into_iter()
+        .find(|(id, due, ..)| *due && !settings.hinted(id))?;
+    Some((
+        id,
+        Banner {
+            title,
+            sub,
+            color: neonui::CYAN,
+            time: 5.0,
+            pickup: None,
+            small: true,
+        },
+    ))
+}
+
 /// The rules in short, for the in-game menus (capitals, digits and `- : ' ( )` only, for VR's
 /// stroke font).
 pub fn rules_lines(rules: &lt_sim::Rules, mega: bool) -> Vec<String> {
@@ -1118,6 +1198,16 @@ pub fn rules_lines(rules: &lt_sim::Rules, mega: bool) -> Vec<String> {
     out.push("YOUR SPAWN PADS HEAL YOU - THEY AND THE WHITE STATIONS REFILL YOUR BLASTER".into());
     out.push(format!("THE LAST {:.0} S COUNT DOUBLE", rules.double_last));
     out
+}
+
+/// The HUD's text shadows fading with their texts (so that no dark ghost stays behind).
+fn fade_shadows(mut q: Query<(&TextColor, &mut TextShadow), Changed<TextColor>>) {
+    for (c, mut shadow) in &mut q {
+        let a = 0.85 * c.0.alpha();
+        if shadow.color.alpha() != a {
+            shadow.color.set_alpha(a);
+        }
+    }
 }
 
 /// Megatarget mode: whether `p` stands close to a forcefield it may not pass, outside the room.
@@ -1429,6 +1519,7 @@ fn pickup_note(
     time: Res<Time>,
     mut queue: Local<BannerQueue>,
     mut refill_from: Local<Option<f32>>,
+    mut since: Local<f32>,
     mut q: Query<(&mut Text, &mut TextColor), (With<PickupNote>, Without<PickupNoteSub>)>,
     mut sub: Query<(&mut Text, &mut TextColor), With<PickupNoteSub>>,
 ) {
@@ -1467,6 +1558,17 @@ fn pickup_note(
                 queue.push(b);
             }
         }
+    }
+    // A newcomer's hints, one at a time when nothing else shows.
+    if game.is_added() {
+        *since = 0.0;
+    }
+    *since += time.delta_secs();
+    if queue.idle()
+        && let Some((id, b)) = next_hint(&game, &settings, Controls::Keys, *since, true)
+    {
+        settings.hint(id);
+        queue.push(b);
     }
     if let Some(b) = queue.tick(time.delta_secs()) {
         text.0 = b.title.to_uppercase();
@@ -1859,6 +1961,11 @@ pub struct BannerQueue {
 const BANNER_MIN: f32 = 2.5;
 
 impl BannerQueue {
+    /// Nothing showing or waiting.
+    pub fn idle(&self) -> bool {
+        self.left <= 0.0 && self.waiting.is_empty()
+    }
+
     pub fn push(&mut self, b: Banner) {
         self.waiting.push_back(b);
     }

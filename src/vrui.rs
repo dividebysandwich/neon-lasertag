@@ -1428,6 +1428,7 @@ fn event_banner(
     mut banner: Local<Option<Entity>>,
     mut queue: Local<crate::hud::BannerQueue>,
     mut was_near: Local<bool>,
+    mut since: Local<f32>,
     game: Res<Game>,
     mut settings: ResMut<crate::settings::Settings>,
     palette: Res<Palette>,
@@ -1469,6 +1470,23 @@ fn event_banner(
         });
     }
     *was_near = near;
+    // A newcomer's hints, one at a time when nothing else shows.
+    if game.is_added() {
+        *since = 0.0;
+    }
+    *since += time.delta_secs();
+    if queue.idle()
+        && let Some((id, b)) = crate::hud::next_hint(
+            &game,
+            &settings,
+            crate::hud::Controls::Vr,
+            *since,
+            vr.gun.is_some(),
+        )
+    {
+        settings.hint(id);
+        queue.push(b);
+    }
     if let Some(b) = queue.tick(time.delta_secs()) {
         if let Some(old) = banner.take()
             && let Ok(mut c) = commands.get_entity(old)
@@ -1488,6 +1506,8 @@ fn event_banner(
             Some(m) => &m.0,
             None if b.color == crate::neonui::GREEN => &mats.tints[Hue::Green as usize].text,
             None if b.color == crate::neonui::PINK => &mats.tints[Hue::Pink as usize].text,
+            None if b.color == crate::neonui::CYAN => &mats.tints[Hue::Cyan as usize].text,
+            None if b.color == crate::neonui::AMBER => &mats.tints[Hue::Amber as usize].text,
             None if c.blue > c.red => &mats.white,
             None => &mats.gold,
         };

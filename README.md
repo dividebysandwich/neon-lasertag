@@ -41,7 +41,7 @@ flies, where it's fired and where it strikes, and the bots only see 12 m), or an
 grenade and powerup missing from the arena at once. In the last minute every point counts
 double (the clock shows 2x).
 
-**What the screen tells you.** The in-game menu lists the controls (as bound) and the rules in short, and in VR the scores too. Banners say what an arena event does, what a pickup you take does
+**What the screen tells you.** In your first matches a few hints (once each) say what to do, how to heal and refill and where the scores are. The in-game menu lists the controls (as bound) and the rules in short, and in VR the scores too. Banners say what an arena event does, what a pickup you take does
 and how to use it (the first three times of each kind), what your Megatarget progress means, and
 when a powerup runs out; a forcefield you may not pass yet warns you when you come close. Under
 the clock (VR: on the wrist) a blackout counts down and 2x shows. Your powerups sit as chips in
