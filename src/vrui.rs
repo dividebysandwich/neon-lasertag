@@ -64,6 +64,7 @@ impl Plugin for VrUiPlugin {
                     event_banner.run_if(resource_exists::<Game>),
                     tag_recap.run_if(resource_exists::<Game>),
                     hit_marks.run_if(resource_exists::<Game>),
+                    place_marks.run_if(resource_exists::<Game>),
                 )
                     .chain()
                     .after(PoseSet)
@@ -1683,7 +1684,16 @@ fn event_banner(
     game: Res<Game>,
     mut settings: ResMut<crate::settings::Settings>,
     palette: Res<Palette>,
+    (alert, mut alerted, mut rumble): (Res<crate::game::TargetAlert>, Local<u32>, ResMut<Rumble>),
 ) {
+    if let Some(b) = crate::hud::alert_banner(&alert, &mut alerted) {
+        queue.push(b);
+        // (A double pulse in both hands.)
+        for h in 0..2 {
+            rumble.play(h, 0.0, 0.08, 0.5);
+            rumble.play(h, 0.16, 0.08, 0.5);
+        }
+    }
     for GameEvent(e) in events.read() {
         if let Some(b) = crate::hud::event_banner_for(e, &game.rules)
             .or_else(|| crate::hud::mega_banner_for(e, &game))
@@ -1814,6 +1824,116 @@ fn event_banner(
         // (Its text faces +Z: turned about the vertical towards the eyes.)
         t.rotation = Quat::from_rotation_y((-fwd.x).atan2(-fwd.z));
         t.scale = Vec3::splat((queue.shown / 0.15).min(1.0) * (left / 0.3).min(1.0));
+    }
+}
+
+/// Marked places, seen through walls and as big at any distance: one's own team's target
+/// under attack (a pink diamond, pulsing, over it), and, low on shots, the nearest place to
+/// refill (a white chevron pointing down at it from above).
+#[allow(clippy::too_many_arguments)]
+fn place_marks(
+    mut commands: Commands,
+    game: Res<Game>,
+    alert: Res<crate::game::TargetAlert>,
+    vr: Res<VrState>,
+    input: Res<XrInput>,
+    mats: Res<UiMats>,
+    time: Res<Time>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut transforms: Query<&mut Transform>,
+    mut vis: Query<&mut Visibility>,
+    mut marks: Local<Option<[Entity; 2]>>,
+) {
+    let [diamond, chevron] = *marks.get_or_insert_with(|| {
+        let shape = |pts: &[(f32, f32)], idx: &[u32]| {
+            let mut m = MeshData::default();
+            for &(x, y) in pts {
+                m.pos.push([x, y, 0.0]);
+                m.nrm.push([0.0, 0.0, 1.0]);
+                m.uv.push([0.0, 0.0]);
+            }
+            m.idx.extend_from_slice(idx);
+            m.to_mesh()
+        };
+        // A diamond's frame, and a chevron (pointing down).
+        let o = 1.0;
+        let i = 0.62;
+        let frame = shape(
+            &[
+                (0.0, o),
+                (o, 0.0),
+                (0.0, -o),
+                (-o, 0.0),
+                (0.0, i),
+                (i, 0.0),
+                (0.0, -i),
+                (-i, 0.0),
+            ],
+            &[
+                0, 4, 5, 0, 5, 1, 1, 5, 6, 1, 6, 2, 2, 6, 7, 2, 7, 3, 3, 7, 4, 3, 4, 0,
+            ],
+        );
+        let chev = shape(
+            &[
+                (-1.0, 0.6),
+                (0.0, -0.4),
+                (1.0, 0.6),
+                (1.0, 0.2),
+                (0.0, -0.8),
+                (-1.0, 0.2),
+            ],
+            &[0, 5, 4, 0, 4, 1, 1, 4, 3, 1, 3, 2],
+        );
+        let mut spawn = |commands: &mut Commands, mesh: Mesh, mat: &Handle<AccentMaterial>| {
+            commands
+                .spawn((
+                    Mesh3d(meshes.add(mesh)),
+                    MeshMaterial3d(mat.clone()),
+                    Transform::IDENTITY,
+                    Visibility::Hidden,
+                ))
+                .id()
+        };
+        [
+            spawn(&mut commands, frame, &mats.tints[Hue::Pink as usize].text),
+            spawn(&mut commands, chev, &mats.white),
+        ]
+    });
+    let me = game
+        .me
+        .and_then(|id| game.snap.players.iter().find(|p| p.id == id));
+    let head = (vr.rig
+        * input
+            .head
+            .unwrap_or(Transform::from_xyz(0.0, lt_sim::sim::EYE, 0.0)))
+    .translation;
+    let alive = me.is_some_and(|p| p.respawn.is_none());
+    let places = [
+        (alert.left > 0.0 && alive).then_some(alert.pos + Vec3::Y * 0.6),
+        me.and_then(|p| crate::hud::refill_spot(&game, p))
+            .map(|at| at + Vec3::Y * 2.5),
+    ];
+    let pulse = 1.0 + 0.15 * (time.elapsed_secs() * 6.0).sin();
+    for (k, (e, at)) in [diamond, chevron].into_iter().zip(places).enumerate() {
+        if let Ok(mut v) = vis.get_mut(e) {
+            let want = if at.is_some() {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            };
+            if *v != want {
+                *v = want;
+            }
+        }
+        let Some(at) = at else { continue };
+        if let Ok(mut t) = transforms.get_mut(e) {
+            let d = (head - at).length().max(0.5);
+            t.translation = at;
+            // (Turned to the eyes about the vertical.)
+            let to = head - at;
+            t.rotation = Quat::from_rotation_y(to.x.atan2(to.z));
+            t.scale = Vec3::splat(0.022 * d * if k == 0 { pulse } else { 1.0 });
+        }
     }
 }
 

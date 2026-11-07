@@ -446,13 +446,14 @@ impl Plugin for GamePlugin {
             .init_resource::<LocalCmd>()
             .init_resource::<Mover>()
             .init_resource::<Recap>()
+            .init_resource::<TargetAlert>()
             .configure_sets(
                 Update,
                 (PredictSet.after(InputSet), DrawSet.after(PredictSet)),
             )
             .add_systems(
                 Update,
-                (predict, track_recap)
+                (predict, track_recap, track_alert)
                     .in_set(PredictSet)
                     .run_if(resource_exists::<Game>),
             )
@@ -651,6 +652,47 @@ fn track_recap(game: Res<Game>, mut recap: ResMut<Recap>, mut events: MessageRea
         })
     {
         recap.out = false;
+    }
+}
+
+/// The local player's team's targets under attack: the alerts so far (a new one after a quiet
+/// spell), where the last hit one is, and the seconds it stays marked.
+#[derive(Resource, Default, Clone, Copy)]
+pub struct TargetAlert {
+    pub count: u32,
+    pub pos: Vec3,
+    pub left: f32,
+}
+
+/// Seconds a target stays marked after a hit, and the quiet before another hit alerts anew.
+const ALERT_TIME: f32 = 4.0;
+const ALERT_QUIET: f32 = 8.0;
+
+fn track_alert(
+    game: Res<Game>,
+    time: Res<Time>,
+    mut alert: ResMut<TargetAlert>,
+    mut last: Local<Option<f32>>,
+    mut events: MessageReader<GameEvent>,
+) {
+    let (dt, now) = (time.delta_secs(), time.elapsed_secs());
+    alert.left = (alert.left - dt).max(0.0);
+    let mine = game
+        .me
+        .and_then(|me| game.snap.players.iter().find(|p| p.id == me))
+        .map(|p| p.team);
+    for GameEvent(e) in events.read() {
+        if let SimEvent::TargetHit { target, .. } = *e
+            && let Some(t) = game.level.targets.iter().find(|t| t.id == target)
+            && Some(t.team) == mine
+        {
+            if last.is_none_or(|t| now - t > ALERT_QUIET) {
+                alert.count += 1;
+            }
+            *last = Some(now);
+            alert.pos = t.centre();
+            alert.left = ALERT_TIME;
+        }
     }
 }
 

@@ -152,6 +152,30 @@ fn dev_script(
                 }));
             }
         }
+        // A hit on the local player's own team's target, by an enemy (only shown and heard).
+        "target-us" => {
+            let Some(game) = game else { return };
+            let Some(me) = game
+                .me
+                .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
+            else {
+                return;
+            };
+            let by = game
+                .snap
+                .players
+                .iter()
+                .find(|p| p.team != me.team)
+                .map(|p| p.id);
+            if let (Some(t), Some(by)) = (game.level.targets.iter().find(|t| t.team == me.team), by)
+            {
+                events.write(crate::game::GameEvent(lt_sim::SimEvent::TargetHit {
+                    target: t.id,
+                    by,
+                    pos: t.centre(),
+                }));
+            }
+        }
         "options" => {
             if let Some(mut o) = overlays {
                 o.options = !o.options;
@@ -452,6 +476,19 @@ fn dev_script(
                 }
             });
         }
+        // Local games: the player's blaster down to 5 shots (`drain`).
+        "drain" => commands.queue(|w: &mut World| {
+            let Some(mut game) = w.get_resource_mut::<Game>() else {
+                return;
+            };
+            let Some(me) = game.me else { return };
+            let Source::Local { sim, .. } = &mut game.source else {
+                return;
+            };
+            if let Some(p) = sim.players.iter_mut().find(|p| p.id == me) {
+                p.ammo = 5;
+            }
+        }),
         // Local games: the nearest enemy hit once and put 5 m in front of the player (`hurt`).
         "hurt" => commands.queue(|w: &mut World| {
             let Some(mut game) = w.get_resource_mut::<Game>() else {

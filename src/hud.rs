@@ -92,6 +92,12 @@ struct PowerChipFill(PickupKind);
 /// The track the fill runs in (hidden for powerups without a time).
 #[derive(Component)]
 struct PowerChipBar(PickupKind);
+/// A marked place (0: one's own target under attack, 1: where to refill, low on shots): its
+/// diamond, and the line under it.
+#[derive(Component)]
+struct ObjMarker(usize);
+#[derive(Component)]
+struct ObjLabel(usize);
 /// A piece of hit arc `mark` (of `MARKS`), `piece` (of `PIECES`).
 #[derive(Component)]
 struct ArcPiece {
@@ -158,6 +164,7 @@ impl Plugin for HudPlugin {
                     hit_marker,
                     edge_glow,
                     fade_shadows,
+                    objective_markers,
                 )
                     .chain()
                     .run_if(resource_exists::<Game>),
@@ -303,6 +310,37 @@ fn spawn(mut commands: Commands) {
         },
         BackgroundGradient::default(),
     ));
+    // The marked places.
+    for k in 0..2 {
+        commands.spawn((
+            HudRoot,
+            ObjMarker(k),
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Px(16.0),
+                height: Val::Px(16.0),
+                border: UiRect::all(Val::Px(3.0)),
+                display: Display::None,
+                ..default()
+            },
+            BorderColor::all(Color::WHITE),
+            BackgroundColor(Color::NONE),
+            UiTransform::from_rotation(Rot2::degrees(45.0)),
+        ));
+        commands.spawn((
+            HudRoot,
+            ObjLabel(k),
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Px(200.0),
+                justify_content: JustifyContent::Center,
+                display: Display::None,
+                ..default()
+            },
+            text("", 15.0, Color::WHITE, 800),
+            TextLayout::justify(Justify::Center),
+        ));
+    }
     // The hit arcs.
     for mark in 0..MARKS {
         for piece in 0..PIECES {
@@ -1582,6 +1620,125 @@ fn hit_arcs(
     }
 }
 
+/// Where one's own team's target is under attack, and (low on shots) the nearest place to
+/// refill: a diamond on the place, or at the edge of the screen towards it, with a word and
+/// the distance.
+#[allow(clippy::type_complexity)]
+fn objective_markers(
+    game: Res<Game>,
+    alert: Res<crate::game::TargetAlert>,
+    time: Res<Time>,
+    cam: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
+    window: Query<&Window, With<PrimaryWindow>>,
+    mut marks: Query<(&ObjMarker, &mut Node, &mut BorderColor), Without<ObjLabel>>,
+    mut labels: Query<(&ObjLabel, &mut Node, &mut Text, &mut TextColor), Without<ObjMarker>>,
+) {
+    let (Ok((camera, gt)), Ok(window)) = (cam.single(), window.single()) else {
+        return;
+    };
+    let me = game
+        .me
+        .and_then(|id| game.snap.players.iter().find(|p| p.id == id));
+    let eye = gt.translation();
+    let pulse = 0.65 + 0.35 * (time.elapsed_secs() * 6.0).sin();
+    let alert_at = (alert.left > 0.0 && me.is_some_and(|p| p.respawn.is_none())).then(|| {
+        (
+            alert.pos,
+            neonui::PINK.with_alpha(pulse),
+            "DEFEND".to_string(),
+        )
+    });
+    let refill = me.and_then(|p| refill_spot(&game, p)).map(|at| {
+        let d = at.distance(eye);
+        (at + Vec3::Y * 0.6, Color::WHITE, format!("REFILL {d:.0} M"))
+    });
+    let shown = [alert_at, refill];
+    let size = Vec2::new(window.width(), window.height());
+    let inv = gt.affine().inverse();
+    for (m, mut node, mut border) in &mut marks {
+        let at = shown[m.0]
+            .as_ref()
+            .map(|(pos, c, _)| (place_on_screen(camera, gt, &inv, *pos, size), *c));
+        let want = if at.is_some() {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        if node.display != want {
+            node.display = want;
+        }
+        if let Some((v, c)) = at {
+            node.left = Val::Px(v.x - 8.0);
+            node.top = Val::Px(v.y - 8.0);
+            *border = BorderColor::all(c);
+        }
+        for (l, mut ln, mut t, mut tc) in &mut labels {
+            if l.0 != m.0 {
+                continue;
+            }
+            if ln.display != want {
+                ln.display = want;
+            }
+            if let (Some((v, c)), Some((_, _, s))) = (at, shown[m.0].as_ref()) {
+                // (On the screen, even at its edge.)
+                ln.left = Val::Px((v.x - 100.0).clamp(0.0, (size.x - 200.0).max(0.0)));
+                ln.top = Val::Px((v.y + 12.0).min(size.y - 24.0));
+                if t.0 != *s {
+                    t.0 = s.clone();
+                }
+                tc.0 = c;
+            }
+        }
+    }
+}
+
+/// Where on the screen `pos` shows (`size`: the window's), or, off the screen or behind, at
+/// its edge towards it.
+fn place_on_screen(
+    camera: &Camera,
+    gt: &GlobalTransform,
+    inv: &bevy::math::Affine3A,
+    pos: Vec3,
+    size: Vec2,
+) -> Vec2 {
+    let margin = 48.0;
+    let local = inv.transform_point3(pos);
+    if local.z < 0.0
+        && let Ok(v) = camera.world_to_viewport(gt, pos)
+        && v.cmpge(Vec2::splat(margin)).all()
+        && v.cmple(size - margin).all()
+    {
+        return v;
+    }
+    // (Screen y runs down; straight behind: the bottom.)
+    let dir = Vec2::new(local.x, -local.y);
+    let dir = if dir.length() < 1e-3 {
+        Vec2::Y
+    } else {
+        dir.normalize()
+    };
+    let half = size / 2.0 - margin;
+    let t = (half.x / dir.x.abs().max(1e-4)).min(half.y / dir.y.abs().max(1e-4));
+    size / 2.0 + dir * t
+}
+
+/// Low on shots (and not refilling): the nearest reload station or own spawn pad, unless
+/// it's close by.
+pub fn refill_spot(game: &Game, p: &lt_sim::sim::PlayerSnap) -> Option<Vec3> {
+    let low = p.ammo as f32 <= game.rules.ammo as f32 * LOW_AMMO;
+    if p.respawn.is_some() || !low || p.reloading {
+        return None;
+    }
+    let at = game
+        .level
+        .reloads
+        .iter()
+        .copied()
+        .chain(game.level.spawns[p.team.index()].iter().map(|s| s.pos))
+        .min_by(|a, b| a.distance(p.feet).total_cmp(&b.distance(p.feet)))?;
+    (at.distance(p.feet) > 3.0).then_some(at)
+}
+
 /// Announces the pickups the local player takes (saying what they do the first few times).
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn pickup_note(
@@ -1982,6 +2139,23 @@ pub fn event_banner_for(e: &SimEvent, rules: &lt_sim::Rules) -> Option<Banner> {
     }
 }
 
+/// One's own team's target under attack (`game::TargetAlert`): its banner, once per alert
+/// (`seen`: the alerts announced so far).
+pub fn alert_banner(alert: &crate::game::TargetAlert, seen: &mut u32) -> Option<Banner> {
+    if alert.count == *seen {
+        return None;
+    }
+    *seen = alert.count;
+    Some(Banner {
+        title: "TARGET UNDER ATTACK",
+        sub: "DEFEND YOUR TEAM'S TARGET".to_string(),
+        color: neonui::PINK,
+        time: 2.5,
+        pickup: None,
+        small: true,
+    })
+}
+
 /// Megatarget mode: the banner for what `e` means to the local player, if anything.
 pub fn mega_banner_for(e: &SimEvent, game: &Game) -> Option<Banner> {
     let me = game.me?;
@@ -2082,6 +2256,8 @@ fn event_banner(
     mut events: MessageReader<GameEvent>,
     game: Res<Game>,
     time: Res<Time>,
+    alert: Res<crate::game::TargetAlert>,
+    mut alerted: Local<u32>,
     mut queue: Local<BannerQueue>,
     mut q: Query<
         (&mut Text, &mut TextColor, &mut TextFont),
@@ -2100,6 +2276,9 @@ fn event_banner(
         {
             queue.push(banner);
         }
+    }
+    if let Some(b) = alert_banner(&alert, &mut alerted) {
+        queue.push(b);
     }
     if let Some(banner) = queue.tick(time.delta_secs()) {
         text.0 = banner.title.to_uppercase();
