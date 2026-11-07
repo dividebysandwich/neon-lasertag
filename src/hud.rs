@@ -60,6 +60,10 @@ struct FeedLine(usize);
 struct FeedLineText(usize);
 #[derive(Component)]
 struct HitFlash;
+/// A glow round the edges of the screen while a shield runs (cyan) or cloaked (purple), and a
+/// moment after respawning (white).
+#[derive(Component)]
+struct EdgeTint;
 /// One of the three hits-left lights.
 #[derive(Component)]
 struct Pip(u8);
@@ -151,6 +155,7 @@ impl Plugin for HudPlugin {
                     event_banner,
                     pickup_note,
                     hit_marker,
+                    edge_glow,
                 )
                     .chain()
                     .run_if(resource_exists::<Game>),
@@ -284,6 +289,17 @@ fn spawn(mut commands: Commands) {
             ..default()
         },
         BackgroundColor(Color::srgba(1.0, 0.0, 0.0, 0.0)),
+    ));
+    commands.spawn((
+        HudRoot,
+        EdgeTint,
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        BackgroundGradient::default(),
     ));
     // The hit arcs.
     for mark in 0..MARKS {
@@ -991,6 +1007,81 @@ fn clock_events(snap: &lt_sim::sim::Snapshot) -> (String, Color) {
     (parts.join("  "), color)
 }
 
+/// The colour and strength (0..1) of the glow round the edge of the view for `p`: a moment
+/// after respawning (white, `since_respawn` seconds), cloaked (purple, blinking while seen),
+/// shielded (cyan, flickering in its last two seconds).
+pub fn edge_tint(p: &lt_sim::sim::PlayerSnap, since_respawn: f32, t: f32) -> (Color, f32) {
+    if since_respawn < 0.6 {
+        return (Color::WHITE, 1.0 - since_respawn / 0.6);
+    }
+    if p.respawn.is_some() {
+        return (Color::NONE, 0.0);
+    }
+    if p.cloak > 0.0 {
+        let seen = !p.cloaked();
+        let k = if seen {
+            if (t * 6.0).fract() < 0.5 { 0.7 } else { 0.2 }
+        } else {
+            0.3 + 0.1 * (t * 2.5).sin()
+        };
+        return (powerup_color(PickupKind::Cloak), k);
+    }
+    if p.shield > 0.0 {
+        let on = p.shield > 2.0 || (t * 10.0).fract() < 0.6;
+        return (
+            powerup_color(PickupKind::Shield),
+            if on { 0.3 } else { 0.1 },
+        );
+    }
+    (Color::NONE, 0.0)
+}
+
+/// The edge glow (see `edge_tint`).
+fn edge_glow(
+    game: Res<Game>,
+    time: Res<Time>,
+    mut events: MessageReader<GameEvent>,
+    mut since: Local<f32>,
+    mut q: Query<&mut BackgroundGradient, With<EdgeTint>>,
+) {
+    *since += time.delta_secs();
+    for GameEvent(e) in events.read() {
+        if let SimEvent::Respawned { player, .. } = *e
+            && Some(player) == game.me
+        {
+            *since = 0.0;
+        }
+    }
+    let Ok(mut gradient) = q.single_mut() else {
+        return;
+    };
+    let me = game
+        .me
+        .and_then(|id| game.snap.players.iter().find(|p| p.id == id));
+    let (c, k) = me.map_or((Color::NONE, 0.0), |p| {
+        edge_tint(p, *since, time.elapsed_secs())
+    });
+    if k <= 0.0 {
+        if !gradient.0.is_empty() {
+            gradient.0.clear();
+        }
+        return;
+    }
+    // From each edge inwards, fading out.
+    let stops = || {
+        vec![
+            ColorStop::new(c.with_alpha(0.55 * k), Val::Px(0.0)),
+            ColorStop::new(c.with_alpha(0.0), Val::Px(110.0)),
+        ]
+    };
+    gradient.0 = vec![
+        LinearGradient::to_right(stops()).into(),
+        LinearGradient::to_left(stops()).into(),
+        LinearGradient::to_bottom(stops()).into(),
+        LinearGradient::to_top(stops()).into(),
+    ];
+}
+
 /// Megatarget mode: whether `p` stands close to a forcefield it may not pass, outside the room.
 pub fn near_forcefield(game: &Game, p: &lt_sim::sim::PlayerSnap) -> bool {
     let Some(m) = game.level.mega.as_ref() else {
@@ -1345,9 +1436,7 @@ fn pickup_note(
 pub fn expiry_banner(e: &SimEvent, game: &Game) -> Option<Banner> {
     let me = game.me?;
     let (kind, title, sub) = match *e {
-        SimEvent::ShieldDown { player } if player == me => {
-            (PickupKind::Shield, "SHIELD OFF", "")
-        }
+        SimEvent::ShieldDown { player } if player == me => (PickupKind::Shield, "SHIELD OFF", ""),
         SimEvent::Uncloaked { player } if player == me => (
             PickupKind::Cloak,
             "CLOAK GONE",
@@ -1630,10 +1719,7 @@ pub fn event_banner_for(e: &SimEvent, rules: &lt_sim::Rules) -> Option<Banner> {
             kind: lt_sim::ArenaEvent::Blackout,
         } => Some(banner(
             "BLACKOUT",
-            format!(
-                "LIGHTS OUT FOR {:.0} S",
-                rules.blackout_time
-            ),
+            format!("LIGHTS OUT FOR {:.0} S", rules.blackout_time),
             pale,
         )),
         SimEvent::EventEnd {

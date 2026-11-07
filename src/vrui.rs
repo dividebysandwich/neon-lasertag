@@ -57,6 +57,7 @@ impl Plugin for VrUiPlugin {
                     panels,
                     pointer,
                     hit_flash.run_if(resource_exists::<Game>),
+                    view_tint.run_if(resource_exists::<Game>),
                     event_banner.run_if(resource_exists::<Game>),
                 )
                     .chain()
@@ -1546,5 +1547,87 @@ fn hit_flash(
         if let Some(mut g) = glows.get_mut(m) {
             g.neon.color.w = level.min(1.5) * 3.0;
         }
+    }
+}
+
+/// A glow round the edge of the view, as the flat screen's (`hud::edge_tint`): purple while
+/// cloaked, cyan while a shield runs, white a moment after respawning.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn view_tint(
+    mut commands: Commands,
+    mut events: MessageReader<GameEvent>,
+    game: Res<Game>,
+    vr: Res<VrState>,
+    input: Res<XrInput>,
+    time: Res<Time>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut glows: ResMut<Assets<GlowMaterial>>,
+    mut transforms: Query<&mut Transform>,
+    mut vis: Query<&mut Visibility>,
+    mut ring: Local<Option<(Entity, Handle<GlowMaterial>)>>,
+    mut since: Local<f32>,
+) {
+    let (root, mat) = ring
+        .get_or_insert_with(|| {
+            let mat = glows.add(GlowMaterial {
+                neon: NeonUniform::fixed(Vec3::ONE, 0.0),
+            });
+            let root = commands
+                .spawn((
+                    Name::new("view tint"),
+                    Transform::IDENTITY,
+                    Visibility::Hidden,
+                ))
+                .id();
+            let span = std::f32::consts::TAU / SECTORS as f32;
+            for k in 0..SECTORS {
+                // (Just behind the hit ring.)
+                let mesh = sector(k as f32 * span, span * 2.0, 0.45, 1.15, -0.95).to_mesh();
+                commands.spawn((
+                    Mesh3d(meshes.add(mesh)),
+                    MeshMaterial3d(mat.clone()),
+                    Transform::IDENTITY,
+                    ChildOf(root),
+                ));
+            }
+            (root, mat)
+        })
+        .clone();
+    *since += time.delta_secs();
+    for GameEvent(e) in events.read() {
+        if let SimEvent::Respawned { player, .. } = *e
+            && Some(player) == game.me
+        {
+            *since = 0.0;
+        }
+    }
+    let me = game
+        .me
+        .and_then(|id| game.snap.players.iter().find(|p| p.id == id));
+    let (c, k) = me.map_or((Color::NONE, 0.0), |p| {
+        crate::hud::edge_tint(p, *since, time.elapsed_secs())
+    });
+    if let Ok(mut v) = vis.get_mut(root) {
+        let want = if k > 0.0 {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *v != want {
+            *v = want;
+        }
+    }
+    if k <= 0.0 {
+        return;
+    }
+    if let Ok(mut t) = transforms.get_mut(root) {
+        *t = vr.rig
+            * input
+                .head
+                .unwrap_or(Transform::from_xyz(0.0, lt_sim::sim::EYE, 0.0));
+    }
+    if let Some(mut g) = glows.get_mut(&mat) {
+        let c = c.to_linear();
+        g.neon.color = Vec4::new(c.red, c.green, c.blue, 3.5 * k);
     }
 }
