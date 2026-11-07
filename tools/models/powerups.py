@@ -23,6 +23,8 @@ Meshes (game frame, Y up, metres):
   pulse, ~0.4 m wide, ~0.3 m tall, origin at the centre.
 - `decoy`: two figures, one behind the other (the copy in the accent), ~0.36 m wide,
   ~0.42 m tall, origin at the centre.
+- `medbeam`: a cross (the med beam) with a wavy beam under it, ~0.32 m wide, ~0.42 m tall,
+  origin at the centre.
 - `shotgun`: the pump shotgun a player holds, in the blaster's frame (barrel along -Z, up +Y,
   origin at the middle of the grip hold), with `hit_1`/`hit_2`/`hit_3` lights on top of the
   receiver (hit_1 nearest the player) and a `muzzle` disc; the empty `shotgun_muzzle` marks the
@@ -299,6 +301,19 @@ def build_decoy():
     return g
 
 
+def build_medbeam():
+    g = L.Geo()
+    # The cross: two bars, the accent face front and back.
+    for poly in ([(-0.045, -0.03), (0.045, -0.03), (0.045, 0.21), (-0.045, 0.21)],
+                 [(-0.13, 0.045), (0.13, 0.045), (0.13, 0.135), (-0.13, 0.135)]):
+        slab(g, poly, -0.03, 0.03, "body", front_mat="accent", back_mat="accent")
+    # The beam: a zigzag wave under it.
+    pts = [(-0.16 + 0.32 * k / 6, -0.13 + (0.04 if k % 2 else -0.04)) for k in range(7)]
+    for a, b in zip(pts, pts[1:]):
+        stroke(g, a, b, 0.03, 0.015)
+    return g
+
+
 def build_shotgun():
     g = L.Geo()
 
@@ -373,7 +388,7 @@ def main():
                         ("charge", build_charge), ("barrier", build_barrier),
                         ("ricochet", build_ricochet), ("lance", build_lance),
                         ("mirror", build_mirror), ("sensor", build_sensor),
-                        ("decoy", build_decoy)):
+                        ("decoy", build_decoy), ("medbeam", build_medbeam)):
         g = build()
         L.make_object(name, g)
         print("powerup %s %d tris" % (name, g.tris()))

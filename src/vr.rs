@@ -1678,8 +1678,8 @@ fn haptics(
                 rumble.play(1 - gun, 0.0, 0.03, 0.45);
                 rumble.play(1 - gun, 0.1, 0.03, 0.45);
             }
-            // Healed: two soft pulses in both hands.
-            SimEvent::Healed { player } if player == me => {
+            // Healed (or mended a hit): two soft pulses in both hands.
+            SimEvent::Healed { player } | SimEvent::Mended { player, .. } if player == me => {
                 rumble.both(0.0, 0.08, 0.25);
                 rumble.both(0.15, 0.08, 0.25);
             }

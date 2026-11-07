@@ -82,6 +82,7 @@ gadget at a time; a new one replaces the old.
 | Mirror | Put up a mirror for 15 s that turns back every bolt, anyone's. |
 | Pulse sensor | Throw it; it sticks where it lands and for 20 s marks every enemy within 10 m for your team, through walls and cloaks. |
 | Decoy | Send a copy of yourself running ahead for 6 s; bots take it for you, and a bolt pops it. |
+| Med beam | Hold the gadget input on a team mate within 8 m: it heals a hit every 2.5 s and refills their blaster (12 s of beam). |
 | Speed boost | Run 50% faster for 15 s. |
 
 ### Controls

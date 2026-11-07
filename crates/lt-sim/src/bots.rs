@@ -2364,9 +2364,24 @@ impl Controller for Bot {
             }
             (None, None) => self.panel_in_reach(sim, p, eye, muzzle).map(|c| (c, true)),
         };
-        let want = match shoot_at {
-            Some((pt, _)) => apply_error((pt - muzzle).normalize_or(self.aim), self.shot_err),
-            None => self.look_dir(sim, p, move_dir, now),
+        // With a med beam and no enemy to shoot: a hurt team mate in reach and in sight.
+        let mate = (p.gadget_kind() == Some(Gadget::Medbeam) && shoot_at.is_none())
+            .then(|| {
+                sim.players
+                    .iter()
+                    .filter(|o| o.id != p.id && o.team == p.team && o.alive() && o.hits > 0)
+                    .map(|o| (o.chest(), o.chest().distance(eye)))
+                    .filter(|&(c, d)| {
+                        d < sim.rules.medbeam_range * 0.9 && clear(&sim.world, eye, c)
+                    })
+                    .min_by(|a, b| a.1.total_cmp(&b.1))
+                    .map(|(c, _)| c)
+            })
+            .flatten();
+        let want = match (shoot_at, mate) {
+            (Some((pt, _)), _) => apply_error((pt - muzzle).normalize_or(self.aim), self.shot_err),
+            (None, Some(c)) => (c - muzzle).normalize_or(self.aim),
+            (None, None) => self.look_dir(sim, p, move_dir, now),
         };
         let want = want.normalize_or(self.aim);
         let angle = self.aim.angle_between(want);
@@ -2421,6 +2436,8 @@ impl Controller for Bot {
         let gadget = match p.gadget_kind() {
             // (A mirror too: it turns their bolts back at them.)
             Some(Gadget::Barrier | Gadget::Mirror) => p.cooldown > 0.0 && target.is_some(),
+            // The med beam, held on a hurt team mate.
+            Some(Gadget::Medbeam) => mate.is_some(),
             // A decoy runs off to draw fire when hit in a fight.
             Some(Gadget::Decoy) => p.cooldown > 0.0 && target.is_some(),
             // A sensor goes out ahead, now and then, when no enemy's in sight.

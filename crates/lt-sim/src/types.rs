@@ -85,13 +85,17 @@ pub enum PickupKind {
     /// A gadget: a copy of its player (`PlayerCmd::gadget`) that runs on ahead for
     /// `Rules::decoy_time`, drawing fire (a bolt pops it).
     Decoy,
+    /// A gadget: held (`PlayerCmd::gadget`) on a team mate in front within
+    /// `Rules::medbeam_range`, a beam that heals a hit every `Rules::medbeam_tick` seconds and
+    /// refills their blaster, for `Rules::medbeam_time` seconds of beam in all.
+    Medbeam,
     /// A gadget, carried until put up (`PlayerCmd::gadget`): a wall of hard light in front of the
     /// player for `Rules::barrier_time`, stopping every bolt but its team's.
     Barrier,
 }
 
 impl PickupKind {
-    pub const ALL: [PickupKind; 13] = [
+    pub const ALL: [PickupKind; 14] = [
         PickupKind::Grenade,
         PickupKind::Rapid,
         PickupKind::Shield,
@@ -105,9 +109,10 @@ impl PickupKind {
         PickupKind::Mirror,
         PickupKind::Sensor,
         PickupKind::Decoy,
+        PickupKind::Medbeam,
     ];
     /// The powerups (everything but the grenade).
-    pub const POWERUPS: [PickupKind; 12] = [
+    pub const POWERUPS: [PickupKind; 13] = [
         PickupKind::Rapid,
         PickupKind::Shield,
         PickupKind::Shotgun,
@@ -120,6 +125,7 @@ impl PickupKind {
         PickupKind::Mirror,
         PickupKind::Sensor,
         PickupKind::Decoy,
+        PickupKind::Medbeam,
     ];
 
     pub fn name(self) -> &'static str {
@@ -137,6 +143,7 @@ impl PickupKind {
             PickupKind::Mirror => "mirror",
             PickupKind::Sensor => "pulse sensor",
             PickupKind::Decoy => "decoy",
+            PickupKind::Medbeam => "med beam",
         }
     }
 
@@ -156,6 +163,7 @@ impl PickupKind {
             PickupKind::Mirror => "mirror",
             PickupKind::Sensor => "sensor",
             PickupKind::Decoy => "decoy",
+            PickupKind::Medbeam => "medbeam",
         }
     }
 
@@ -170,9 +178,11 @@ impl PickupKind {
             PickupKind::Shotgun | PickupKind::Charge | PickupKind::Ricochet | PickupKind::Lance => {
                 Some(Pool::Weapon)
             }
-            PickupKind::Barrier | PickupKind::Mirror | PickupKind::Sensor | PickupKind::Decoy => {
-                Some(Pool::Gadget)
-            }
+            PickupKind::Barrier
+            | PickupKind::Mirror
+            | PickupKind::Sensor
+            | PickupKind::Decoy
+            | PickupKind::Medbeam => Some(Pool::Gadget),
             PickupKind::Rapid | PickupKind::Shield | PickupKind::Cloak | PickupKind::Speed => {
                 Some(Pool::Power)
             }
@@ -197,6 +207,7 @@ impl PickupKind {
             PickupKind::Mirror => Some(Gadget::Mirror),
             PickupKind::Sensor => Some(Gadget::Sensor),
             PickupKind::Decoy => Some(Gadget::Decoy),
+            PickupKind::Medbeam => Some(Gadget::Medbeam),
             _ => None,
         }
     }
@@ -222,6 +233,7 @@ pub enum Gadget {
     Mirror,
     Sensor,
     Decoy,
+    Medbeam,
 }
 
 impl Gadget {
@@ -231,6 +243,7 @@ impl Gadget {
             Gadget::Mirror => "mirror",
             Gadget::Sensor => "pulse sensor",
             Gadget::Decoy => "decoy",
+            Gadget::Medbeam => "med beam",
         }
     }
 }
@@ -504,6 +517,12 @@ pub enum SimEvent {
     Blocked {
         player: PlayerId,
         pos: Vec3,
+    },
+    /// A team mate's med beam took a hit off `player` (`hits` left).
+    Mended {
+        player: PlayerId,
+        by: PlayerId,
+        hits: u8,
     },
     /// A hit player stepped onto its team's spawn pads and is unhurt again.
     Healed {

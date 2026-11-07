@@ -572,6 +572,9 @@ fn play_events(
             SimEvent::Healed { player } if Some(player) == me => {
                 play(&mut commands, gain, &sounds.reload_done, None, 0.8, 1.5)
             }
+            SimEvent::Mended { player, by, .. } if Some(player) == me || Some(by) == me => {
+                play(&mut commands, gain, &sounds.reload_done, None, 0.6, 1.8)
+            }
             SimEvent::PickedUp {
                 player, pos, kind, ..
             } => {

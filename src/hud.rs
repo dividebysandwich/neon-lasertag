@@ -1960,6 +1960,7 @@ pub fn resupply_banner(e: &SimEvent, game: &Game) -> Option<Banner> {
     let (title, color) = match *e {
         SimEvent::Reloaded { player } if player == me => ("BLASTER FULL", neonui::CYAN),
         SimEvent::Healed { player } if player == me => ("HEALED", neonui::GREEN),
+        SimEvent::Mended { player, .. } if player == me => ("MENDED", neonui::GREEN),
         _ => return None,
     };
     Some(Banner {
@@ -2109,6 +2110,20 @@ fn powerup_chip(
         PickupKind::Speed if p.speed > 0.0 => timed("SPEED", p.speed, rules.speed_time),
         PickupKind::Shield if p.shield > 0.0 => timed("SHIELD", p.shield, rules.shield_time),
         PickupKind::Shield if p.shields > 0 => carried("SHIELD", p.shields, Action::Shield),
+        PickupKind::Medbeam if p.gadget_kind() == Some(lt_sim::Gadget::Medbeam) => chip(
+            format!(
+                "{} {:.0}  [{}]",
+                if p.mending.is_some() {
+                    "MENDING"
+                } else {
+                    "MED BEAM"
+                },
+                p.medbeam_left.ceil(),
+                key_hint(settings, Action::Gadget)
+            ),
+            Some(p.medbeam_left / rules.medbeam_time.max(0.01)),
+            false,
+        ),
         _ if let Some((g, n)) = p.gadget
             && kind.gadget() == Some(g) =>
         {
@@ -2191,6 +2206,13 @@ pub fn pickup_banner(
             "{}: A WALL THAT STOPS ENEMY BOLTS FOR {:.0} S",
             key(Action::Gadget, "GRIP OF THE FREE HAND"),
             rules.barrier_time
+        ),
+        PickupKind::Medbeam => format!(
+            "HOLD {} ON A TEAM MATE: IT HEALS THEIR HITS AND REFILLS THEIR BLASTER",
+            match controls {
+                Controls::Keys => key_hint(settings, Action::Gadget),
+                Controls::Vr => "THE GRIP OF THE FREE HAND".to_string(),
+            }
         ),
         PickupKind::Decoy => format!(
             "{}: A COPY OF YOU RUNS AHEAD FOR {:.0} S AND DRAWS FIRE",

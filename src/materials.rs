@@ -49,6 +49,7 @@ pub fn pickup_color(kind: PickupKind) -> Vec3 {
         PickupKind::Mirror => Vec3::new(0.8, 0.95, 1.0),
         PickupKind::Sensor => Vec3::new(0.2, 1.0, 0.8),
         PickupKind::Decoy => Vec3::new(1.0, 0.55, 0.85),
+        PickupKind::Medbeam => Vec3::new(0.3, 1.0, 0.3),
     }
 }
 

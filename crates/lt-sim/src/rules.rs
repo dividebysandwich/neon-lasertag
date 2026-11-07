@@ -105,6 +105,14 @@ pub struct Rules {
     pub sensor_speed: f32,
     /// Seconds a decoy runs.
     pub decoy_time: f32,
+    /// The med beam: seconds of beam a pickup holds, its reach (m), the widest angle off the
+    /// aim a team mate may be (radians), the seconds of beam a hit takes to heal, and the shots
+    /// a second it refills.
+    pub medbeam_time: f32,
+    pub medbeam_range: f32,
+    pub medbeam_cone: f32,
+    pub medbeam_tick: f32,
+    pub medbeam_ammo: f32,
     pub barrier_dist: f32,
     pub barrier_w: f32,
     pub barrier_h: f32,
@@ -217,6 +225,11 @@ impl Default for Rules {
             sensor_reveal: 2.5,
             sensor_speed: 14.0,
             decoy_time: 6.0,
+            medbeam_time: 12.0,
+            medbeam_range: 8.0,
+            medbeam_cone: 0.35,
+            medbeam_tick: 2.5,
+            medbeam_ammo: 6.0,
             barrier_time: 8.0,
             barrier_dist: 1.5,
             barrier_w: 2.4,

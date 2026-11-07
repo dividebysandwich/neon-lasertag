@@ -43,7 +43,13 @@ impl Plugin for FeaturesPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BarrierViews>().add_systems(
             Update,
-            (on_events, animate, sync_barriers, sync_sensors)
+            (
+                on_events,
+                animate,
+                sync_barriers,
+                sync_sensors,
+                sync_tethers,
+            )
                 .chain()
                 .run_if(resource_exists::<Game>),
         );
@@ -587,6 +593,77 @@ fn sync_sensors(
             tr.scale = Vec3::splat(1.0 + 0.15 * (t * 3.0).sin() + 1.2 * flare);
         }
     }
+}
+
+/// Med beams on team mates: a green tether from the healer's gun (or chest) to the chest of
+/// the one it heals, shimmering.
+fn sync_tethers(
+    mut commands: Commands,
+    game: Res<Game>,
+    time: Res<Time>,
+    mut views: Local<std::collections::HashMap<lt_sim::PlayerId, Entity>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut glows: ResMut<Assets<GlowMaterial>>,
+    mut look: Local<Option<(Handle<Mesh>, Handle<GlowMaterial>)>>,
+    mut q: Query<&mut Transform>,
+) {
+    let (mesh, mat) = look
+        .get_or_insert_with(|| {
+            (
+                meshes.add(Cylinder::new(0.02, 1.0)),
+                glows.add(GlowMaterial {
+                    overlay: false,
+                    neon: NeonUniform::fixed(Vec3::new(0.3, 1.0, 0.35), 3.0),
+                }),
+            )
+        })
+        .clone();
+    let chest = |p: &lt_sim::sim::PlayerSnap| {
+        lt_sim::sim::chest_top(p.feet + p.head.pos, p.head.rot)
+            - Vec3::Y * lt_sim::hitbox::CHEST_HALF.y
+    };
+    let mut on = Vec::new();
+    for p in &game.snap.players {
+        let Some(t) = p.mending.filter(|_| p.respawn.is_none()) else {
+            continue;
+        };
+        let Some(o) = game.snap.players.iter().find(|o| o.id == t) else {
+            continue;
+        };
+        let from = p
+            .gun_hand
+            .map_or(chest(p), |h| p.feet + p.hands[h.index()].pos);
+        let to = chest(o);
+        let len = from.distance(to);
+        if len < 0.05 {
+            continue;
+        }
+        on.push(p.id);
+        let e = *views.entry(p.id).or_insert_with(|| {
+            commands
+                .spawn((
+                    ArenaPart,
+                    Mesh3d(mesh.clone()),
+                    MeshMaterial3d(mat.clone()),
+                    Transform::default(),
+                    Name::new("tether"),
+                ))
+                .id()
+        });
+        if let Ok(mut tr) = q.get_mut(e) {
+            let wobble = 1.0 + 0.3 * (time.elapsed_secs() * 20.0 + p.id as f32).sin();
+            *tr = Transform::from_translation((from + to) / 2.0)
+                .with_rotation(Quat::from_rotation_arc(Vec3::Y, (to - from) / len))
+                .with_scale(Vec3::new(wobble, len, wobble));
+        }
+    }
+    views.retain(|id, e| {
+        let keep = on.contains(id);
+        if !keep && let Ok(mut c) = commands.get_entity(*e) {
+            c.despawn();
+        }
+        keep
+    });
 }
 
 fn on_events(

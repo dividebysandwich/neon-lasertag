@@ -127,6 +127,12 @@ pub struct Player {
     /// The gadget carried, and how many.
     pub gadget: Option<(Gadget, u8)>,
     prev_gadget: bool,
+    /// The med beam: seconds of beam left, the team mate it's on now, and how far along the
+    /// next hit healed and shot refilled are.
+    pub medbeam_left: f32,
+    pub mending: Option<PlayerId>,
+    mend: f32,
+    mend_ammo: f32,
     /// A remote client judges this player's hits on others (`shot::HitClaim`), and the shots
     /// it fired lately to check them against.
     pub client_hits: bool,
@@ -244,7 +250,12 @@ impl Player {
                 self.ammo = rules.ammo;
                 self.reloading = None;
             }
-            _ if let Some(g) = kind.gadget() => self.gadget = Some((g, 1)),
+            _ if let Some(g) = kind.gadget() => {
+                self.gadget = Some((g, 1));
+                if g == Gadget::Medbeam {
+                    self.medbeam_left = rules.medbeam_time;
+                }
+            }
             _ => {}
         }
     }
@@ -272,6 +283,9 @@ impl Player {
         self.speed = 0.0;
         self.charging = None;
         self.gadget = None;
+        self.medbeam_left = 0.0;
+        self.mending = None;
+        self.mend = 0.0;
     }
 
     pub fn eye(&self) -> Vec3 {
@@ -603,6 +617,11 @@ pub struct PlayerSnap {
     pub charging: f32,
     /// `Player::gadget`.
     pub gadget: Option<(Gadget, u8)>,
+    /// `Player::medbeam_left`, `mending`.
+    #[serde(default)]
+    pub medbeam_left: f32,
+    #[serde(default)]
+    pub mending: Option<PlayerId>,
     /// The command's `PlayerCmd::shot` (the client's shots this state includes).
     #[serde(default)]
     pub shot: u32,
@@ -834,6 +853,10 @@ impl Sim {
             charging: None,
             gadget: None,
             prev_gadget: false,
+            medbeam_left: 0.0,
+            mending: None,
+            mend: 0.0,
+            mend_ammo: 0.0,
             client_hits: false,
             shot_log: std::collections::VecDeque::new(),
         };
@@ -1001,6 +1024,7 @@ impl Sim {
         self.step_events();
         self.step_movers();
         self.step_players();
+        self.step_medbeams();
         self.step_gates();
         self.step_mega();
         self.step_bolts();
@@ -2371,6 +2395,71 @@ impl Sim {
         }
     }
 
+    /// Med beams held: on the team mate nearest the aim (within its cone and reach, in sight),
+    /// healing them a hit at a time and refilling their blaster.
+    fn step_medbeams(&mut self) {
+        let rules = &self.rules;
+        for i in 0..self.players.len() {
+            let p = &self.players[i];
+            let held = p.cmd.gadget
+                && p.alive()
+                && p.gadget_kind() == Some(Gadget::Medbeam)
+                && p.medbeam_left > 0.0;
+            let target = held
+                .then(|| {
+                    let eye = p.eye();
+                    let (_, dir) = crate::shot::muzzle(p.feet, eye, &p.cmd);
+                    self.players
+                        .iter()
+                        .enumerate()
+                        .filter(|(j, o)| *j != i && o.team == p.team && o.alive())
+                        .filter_map(|(j, o)| {
+                            let to = o.chest() - eye;
+                            let d = to.length();
+                            let off = dir.angle_between(to);
+                            (d <= rules.medbeam_range
+                                && off <= rules.medbeam_cone
+                                && self.world.clear(eye, o.chest()))
+                            .then_some((j, off))
+                        })
+                        .min_by(|a, b| a.1.total_cmp(&b.1))
+                        .map(|(j, _)| j)
+                })
+                .flatten();
+            let target_id = target.map(|j| self.players[j].id);
+            let p = &mut self.players[i];
+            let was = p.mending;
+            p.mending = target_id;
+            if p.mending != was {
+                p.mend = 0.0;
+            }
+            let Some(j) = target else { continue };
+            p.medbeam_left -= TICK;
+            p.mend += TICK;
+            p.mend_ammo += rules.medbeam_ammo * TICK;
+            let (by, heal, refill) = (p.id, p.mend >= rules.medbeam_tick, p.mend_ammo.floor());
+            if heal {
+                p.mend = 0.0;
+            }
+            p.mend_ammo -= refill;
+            if p.medbeam_left <= 0.0 {
+                p.medbeam_left = 0.0;
+                p.gadget = None;
+                p.mending = None;
+            }
+            let o = &mut self.players[j];
+            o.ammo = (o.ammo + refill as u16).min(rules.ammo);
+            if heal && o.hits > 0 {
+                o.hits -= 1;
+                self.events.push(SimEvent::Mended {
+                    player: o.id,
+                    by,
+                    hits: o.hits,
+                });
+            }
+        }
+    }
+
     /// Decoys: running on ahead at a player's pace (stopped by walls) until their time is up.
     fn step_decoys(&mut self) {
         let speed = self.rules.move_speed;
@@ -2866,6 +2955,8 @@ impl Sim {
                     revealed: p.revealed,
                     charging: p.charging.unwrap_or(0.0),
                     gadget: p.gadget,
+                    medbeam_left: p.medbeam_left,
+                    mending: p.mending,
                     shot: p.cmd.shot,
                 })
                 .collect(),
@@ -4041,6 +4132,92 @@ mod tests {
             sim.step();
         }
         assert!(sim.decoys.is_empty());
+    }
+
+    #[test]
+    fn the_med_beam_heals_a_team_mate_in_front() {
+        let (mut sim, a, _) = duel();
+        sim.rules.reload_rate = 0.0;
+        let c = sim.add_player("c", Some(Team::Red), false).unwrap();
+        // a and c (hurt, 1.5 m in front) on open floor off the spawn pads (which heal).
+        let nav = &sim.level.nav;
+        let fa = (0..nav.pos.len())
+            .filter(|&i| nav.valid[i] && sim.level.spawn_at(nav.pos[i]).is_none())
+            .map(|i| nav.pos[i])
+            .find(|p| {
+                let q = *p + Vec3::new(0.0, 0.0, -1.5);
+                sim.world.clear(*p + Vec3::Y * EYE, q + Vec3::Y * 1.0)
+                    && sim
+                        .world
+                        .ground(q.x, q.z, q.y + 0.5)
+                        .is_some_and(|y| (y - q.y).abs() < 0.05)
+                    && sim.level.spawn_at(q).is_none()
+            })
+            .expect("open floor");
+        sim.players[0].feet = fa;
+        let ci = sim.players.iter().position(|p| p.id == c).unwrap();
+        sim.players[ci].feet = fa + Vec3::new(0.0, 0.0, -1.5);
+        sim.players[ci].hits = 2;
+        sim.players[ci].ammo = 10;
+        sim.players[1].feet = fa + Vec3::new(40.0, 0.0, 0.0);
+        sim.give(a, PickupKind::Medbeam);
+        assert_eq!(sim.player(a).unwrap().medbeam_left, sim.rules.medbeam_time);
+        let me = sim.player(a).unwrap();
+        let (eye, feet) = (me.eye(), me.feet);
+        let to = sim.players[ci].chest() - eye;
+        let held = PlayerCmd {
+            gun_hand: Some(Hand::Right),
+            muzzle: Pose {
+                pos: eye - feet,
+                rot: look_rot(to),
+            },
+            gadget: true,
+            ..Default::default()
+        };
+        sim.set_cmd(a, held);
+        sim.drain_events();
+        for _ in 0..(sim.rules.medbeam_tick / TICK) as usize + 2 {
+            sim.step();
+        }
+        assert_eq!(sim.player(a).unwrap().mending, Some(c));
+        assert_eq!(sim.player(c).unwrap().hits, 1, "a hit healed");
+        assert!(sim.player(c).unwrap().ammo > 10, "refilled some");
+        assert!(sim.drain_events().iter().any(
+            |e| matches!(e, SimEvent::Mended { player, by, hits: 1 } if *player == c && *by == a)
+        ));
+        // Let go: no beam, none used.
+        sim.set_cmd(
+            a,
+            PlayerCmd {
+                gadget: false,
+                ..held
+            },
+        );
+        sim.step();
+        let left = sim.player(a).unwrap().medbeam_left;
+        sim.step();
+        assert_eq!(sim.player(a).unwrap().mending, None);
+        assert_eq!(sim.player(a).unwrap().medbeam_left, left);
+        // Aimed away: nobody.
+        sim.set_cmd(
+            a,
+            PlayerCmd {
+                muzzle: Pose {
+                    pos: eye - feet,
+                    rot: look_rot(Vec3::X),
+                },
+                ..held
+            },
+        );
+        sim.step();
+        assert_eq!(sim.player(a).unwrap().mending, None);
+        // Held on until the beam's used up: the gadget's gone.
+        sim.set_cmd(a, held);
+        for _ in 0..(sim.rules.medbeam_time / TICK) as usize + 2 {
+            sim.step();
+        }
+        assert_eq!(sim.player(c).unwrap().hits, 0);
+        assert_eq!(sim.player(a).unwrap().gadget, None);
     }
 
     #[test]
