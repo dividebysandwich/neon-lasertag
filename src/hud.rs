@@ -15,7 +15,7 @@ use crate::session::Session;
 struct ScoreText(Team);
 #[derive(Component)]
 struct ClockText;
-/// Under the clock: "2X POINTS" while points count double.
+/// Under the clock: a blackout's seconds left, and "2X POINTS" while points count double.
 #[derive(Component)]
 struct DoubleText;
 
@@ -655,9 +655,12 @@ fn update(
     time: Res<Time>,
     mut feed: ResMut<Feed>,
     mut scores: Query<(&ScoreText, &mut Text), (Without<ClockText>, Without<CenterText>)>,
-    mut clock: Query<&mut Text, (With<ClockText>, Without<CenterText>)>,
+    mut clock: Query<
+        (&mut Text, &mut TextColor),
+        (With<ClockText>, Without<CenterText>, Without<DoubleText>),
+    >,
     mut double: Query<
-        &mut Text,
+        (&mut Text, &mut TextColor),
         (
             With<DoubleText>,
             Without<ScoreText>,
@@ -665,7 +668,7 @@ fn update(
             Without<CenterText>,
         ),
     >,
-    mut center: Query<(&mut Text, &mut TextColor), With<CenterText>>,
+    mut center: Query<(&mut Text, &mut TextColor), (With<CenterText>, Without<DoubleText>)>,
     mut flash: Query<&mut BackgroundColor, With<HitFlash>>,
     mut difficulty: Query<
         &mut Text,
@@ -696,18 +699,31 @@ fn update(
             t.0 = want;
         }
     }
-    if let Ok(mut t) = clock.single_mut() {
-        let s = game.snap.time_left.max(0.0) as u32;
+    if let Ok((mut t, mut c)) = clock.single_mut() {
+        let left = game.snap.time_left.max(0.0);
+        let s = left as u32;
         let want = format!("{}:{:02}", s / 60, s % 60);
         if t.0 != want {
             t.0 = want;
         }
+        // Amber in the last minute, throbbing pink in the last ten seconds.
+        c.0 = if game.snap.over || left > 60.0 {
+            neonui::TEXT
+        } else if left > 10.0 {
+            neonui::AMBER
+        } else {
+            neonui::PINK.mix(
+                &neonui::TEXT,
+                0.5 - 0.5 * (left.fract() * std::f32::consts::TAU).cos(),
+            )
+        };
     }
-    if let Ok(mut t) = double.single_mut() {
-        let want = if game.snap.double { "2X POINTS" } else { "" };
+    if let Ok((mut t, mut c)) = double.single_mut() {
+        let (want, color) = clock_events(&game.snap);
         if t.0 != want {
-            t.0 = want.to_string();
+            t.0 = want;
         }
+        c.0 = color;
     }
     let me = game
         .me
@@ -749,6 +765,21 @@ fn update(
     if let Ok(mut b) = flash.single_mut() {
         b.0 = Color::srgba(1.0, 0.0, 0.0, feed.flash * 0.3);
     }
+}
+
+/// What shows under the clock: a running blackout with its seconds left, and double points
+/// (in the blackout's pale blue while one runs, else amber).
+fn clock_events(snap: &lt_sim::sim::Snapshot) -> (String, Color) {
+    let mut parts = Vec::new();
+    let mut color = neonui::AMBER;
+    if let Some((lt_sim::ArenaEvent::Blackout, left)) = snap.event {
+        parts.push(format!("BLACKOUT {:.0}", left.ceil()));
+        color = Color::srgb(0.75, 0.78, 0.95);
+    }
+    if snap.double {
+        parts.push("2X POINTS".to_string());
+    }
+    (parts.join("  "), color)
 }
 
 /// The bottom left panel: team and score, hits left (blinking while the blaster is down), ammo
