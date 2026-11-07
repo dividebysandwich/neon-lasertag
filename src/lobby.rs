@@ -1,13 +1,19 @@
 //! The start menu's scene (out of a game; VR's panel, src/vrui.rs, and the flat screen's
 //! menu, src/menu.rs, show over it): an empty arena, just its floor and its rainbow border
-//! walls, with the player in the middle, and colourful fireworks going up all around it. The
+//! walls, with the player in the middle, a circle of red and blue players standing around them
+//! at ease (blasters pointed at the floor), and colourful fireworks going up all around it. The
 //! arena's parts are `ArenaPart`s, so starting a game takes them down with everything else; the
-//! fireworks go with them.
+//! players and the fireworks go with them.
 
 use bevy::prelude::*;
+use lt_sim::Team;
+use lt_sim::hitbox::{CHEST_DROP, HEAD_CROWN, HEAD_SCALE};
 use lt_sim::level::{ArenaSize, Level};
+use lt_sim::sim::{EYE, eye_on_neck, yaw_of};
 
+use crate::actors::spawn_model;
 use crate::arena::{ArenaPart, Kit};
+use crate::assets::Models;
 use crate::game::Game;
 use crate::materials::{AccentMaterial, GlowMaterial, NeonUniform, Palette};
 
@@ -34,6 +40,17 @@ const COLORS: [Vec3; 8] = [
     Vec3::new(0.75, 0.2, 1.0),
     Vec3::new(1.0, 0.3, 0.8),
 ];
+
+/// The players standing around the middle: how many, and how far from it (m).
+const SQUAD: usize = 10;
+const SQUAD_RADIUS: f32 = 3.2;
+
+/// One of them, idly looking about: their head, and when they do it.
+#[derive(Component)]
+struct Idler {
+    head: Entity,
+    phase: f32,
+}
 
 #[derive(Component)]
 struct Rocket {
@@ -89,7 +106,7 @@ impl Plugin for LobbyPlugin {
             Update,
             (
                 make.run_if(not(resource_exists::<Fireworks>)),
-                (show, fireworks)
+                (show, fireworks, idle)
                     .chain()
                     .run_if(resource_exists::<Fireworks>),
             ),
@@ -148,6 +165,7 @@ fn show(
     connecting: Option<Res<crate::Connecting>>,
     kit: Option<Res<Kit>>,
     palette: Option<Res<Palette>>,
+    models: Option<Res<Models>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut shown: Local<bool>,
     parts: Query<Entity, Or<(With<ArenaPart>, With<Rocket>, With<Spark>, With<Flash>)>>,
@@ -163,6 +181,9 @@ fn show(
         }
         let level = Level::empty(rand::random::<u32>() as u64, ArenaSize::Small);
         crate::arena::spawn_arena(&mut commands, &level, &kit, &palette, &mut meshes);
+        if let Some(models) = models {
+            spawn_squad(&mut commands, &models, &palette);
+        }
         *shown = true;
     } else if !lobby && *shown {
         // (The game's own arena is built once it exists: this goes first.)
@@ -299,6 +320,79 @@ fn fireworks(
         t.scale = Vec3::splat(4.0 + 10.0 * k);
         if let Some(mut m) = glows.get_mut(&f.mat) {
             m.neon.color.w = 2.5 * (1.0 - k) * (1.0 - k);
+        }
+    }
+}
+
+/// The players in a circle around the middle, facing it, red on the red half (+z), blue on
+/// the blue one: at ease, the blaster hanging in the right hand pointed at the floor, the left
+/// hand at the side.
+fn spawn_squad(commands: &mut Commands, models: &Models, palette: &Palette) {
+    for i in 0..SQUAD {
+        let a = (i as f32 + 0.5) / SQUAD as f32 * std::f32::consts::TAU;
+        let feet = Vec3::new(a.sin(), 0.0, a.cos()) * SQUAD_RADIUS;
+        let team = Some(if feet.z > 0.0 { Team::Red } else { Team::Blue });
+        let root = commands
+            .spawn((
+                Transform::from_translation(feet)
+                    .with_rotation(Quat::from_rotation_y(yaw_of(-feet))),
+                Visibility::default(),
+                ArenaPart,
+            ))
+            .id();
+        let part = |commands: &mut Commands, t: Transform| {
+            commands
+                .spawn((t, Visibility::default(), ChildOf(root)))
+                .id()
+        };
+        let body = part(commands, Transform::from_xyz(0.0, EYE - CHEST_DROP, 0.0));
+        spawn_model(commands, body, &models.torso, palette, team);
+        let head = part(commands, Transform::from_xyz(0.0, EYE, 0.0));
+        if !models.heads.is_empty() {
+            // (Grown about the skull top, as in a game: src/actors.rs.)
+            let grown = commands
+                .spawn((
+                    Transform::from_xyz(0.0, HEAD_CROWN * (1.0 - HEAD_SCALE), 0.0)
+                        .with_scale(Vec3::splat(HEAD_SCALE)),
+                    Visibility::default(),
+                    ChildOf(head),
+                ))
+                .id();
+            let animal = &models.heads[(i * 7 + 3) % models.heads.len()];
+            spawn_model(commands, grown, animal, palette, team);
+        }
+        // The left hand hanging loose, fingers down.
+        let left = part(
+            commands,
+            Transform::from_xyz(-0.25, 0.92, 0.03)
+                .with_rotation(Quat::from_rotation_z(-0.15) * Quat::from_rotation_x(-1.35)),
+        );
+        spawn_model(commands, left, &models.hands[0], palette, team);
+        // The blaster held low before the hip, its muzzle to the floor a little ahead, turned
+        // in a little across the body.
+        let right = part(
+            commands,
+            Transform::from_xyz(0.2, 0.98, -0.16)
+                .with_rotation(Quat::from_rotation_y(0.3) * Quat::from_rotation_x(-1.1)),
+        );
+        spawn_model(commands, right, &models.hands[1], palette, team);
+        spawn_model(commands, right, &models.blaster, palette, team);
+        commands.entity(root).insert(Idler {
+            head,
+            phase: i as f32 * 2.3,
+        });
+    }
+}
+
+/// The players in the circle look about slowly, each in their own time.
+fn idle(time: Res<Time>, idlers: Query<&Idler>, mut transforms: Query<&mut Transform>) {
+    let t = time.elapsed_secs();
+    for i in &idlers {
+        if let Ok(mut h) = transforms.get_mut(i.head) {
+            let yaw = 0.45 * (t * 0.31 + i.phase).sin() * (t * 0.13 + i.phase * 0.7).sin();
+            let pitch = -0.1 + 0.08 * (t * 0.23 + i.phase * 1.9).sin();
+            h.rotation = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
+            h.translation = eye_on_neck(Vec3::Y * EYE, h.rotation);
         }
     }
 }
