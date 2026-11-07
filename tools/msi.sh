@@ -37,7 +37,8 @@ case $target in
 esac
 mkdir -p "$out"
 msi=$out/lasertag-$version-$target.msi
+# SrcDir: the checkout as a Windows path, for the wildcard that takes in assets (pwd -W: Git Bash).
 wix build packaging/windows/lasertag.wxs -arch "$arch" -d "Version=$product_version" \
-    -bindpath "bin=$bin" -bindpath assets=assets -bindpath root=. -o "$msi"
+    -d "BinDir=$bin" -d "SrcDir=$(pwd -W)" -o "$msi"
 rm -f "${msi%.msi}.wixpdb"
 echo "$msi"

@@ -1,39 +1,75 @@
-<!--
-  The Windows installer (WiX v5), built by tools/msi.sh. Installs the game, its assets folder
-  beside it (where the game looks for it) and README.md into Program Files\Neon Lasertag, with a
-  Start menu shortcut. Settings live in %APPDATA%\lasertag and are kept on uninstall.
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Windows installer (WiX v5), built by tools/msi.sh:
+     wix build packaging/windows/lasertag.wxs -arch x64|arm64 \
+         -d Version=<cargo version> -d BinDir=target/<target>/release \
+         -d SrcDir=<the checkout, a Windows path> -o <out>.msi
 
-  Bind paths: bin (the folder holding neon-lasertag.exe), assets, root (the repository).
-  Variables: Version (numeric, x.y.z).
-  The UpgradeCode never changes: a new installer replaces the installed version, the same
-  version included (every CI build of a branch has the crate's version).
--->
+     Installs the game, its assets folder beside it (where the game looks for it,
+     src/assets.rs) and README.md into Program Files\Neon Lasertag, with Start menu
+     shortcuts for the flat screen and VR. neon-lasertag.exe needs no DLLs of its own:
+     bevy_mod_openxr links the OpenXR loader statically on Windows. Settings and the
+     log go to %APPDATA%\lasertag and are kept on uninstall.
+     The UpgradeCode never changes: a new installer replaces the installed version. -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
-  <Package Name="Neon Lasertag" Manufacturer="dividebysandwich" Version="$(Version)"
-           UpgradeCode="4db247d8-8952-454b-83ce-d6bb61152092" Scope="perMachine">
-    <MajorUpgrade AllowSameVersionUpgrades="yes"
-                  DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
-    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <Package Name="Neon Lasertag"
+             Manufacturer="dividebysandwich"
+             Version="$(var.Version)"
+             UpgradeCode="4DB247D8-8952-454B-83CE-D6BB61152092"
+             Language="1033"
+             Compressed="yes"
+             Scope="perMachine">
 
-    <Icon Id="lasertag.ico" SourceFile="!(bindpath.root)\packaging\windows\lasertag.ico" />
-    <Property Id="ARPPRODUCTICON" Value="lasertag.ico" />
+        <!-- Same-version upgrades: every build of a branch has Cargo.toml's version. -->
+        <MajorUpgrade AllowSameVersionUpgrades="yes"
+                      DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+        <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
-    <StandardDirectory Id="ProgramMenuFolder" />
-    <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="INSTALLFOLDER" Name="Neon Lasertag">
-        <Component>
-          <File Id="neon_lasertag.exe" Source="!(bindpath.bin)\neon-lasertag.exe" KeyPath="yes">
-            <Shortcut Id="StartMenuShortcut" Name="Neon Lasertag" Directory="ProgramMenuFolder"
-                      WorkingDirectory="INSTALLFOLDER" Icon="lasertag.ico" Advertise="yes" />
-          </File>
-        </Component>
-        <Component>
-          <File Source="!(bindpath.root)\README.md" />
-        </Component>
-        <Directory Id="ASSETS" Name="assets">
-          <Files Include="!(bindpath.assets)\**" />
-        </Directory>
-      </Directory>
-    </StandardDirectory>
-  </Package>
+        <Property Id="ARPURLINFOABOUT" Value="https://github.com/dividebysandwich/neon-lasertag" />
+        <!-- The icon in Installed apps; neon-lasertag.exe has it built in (build.rs). -->
+        <Icon Id="lasertag.ico" SourceFile="packaging/windows/lasertag.ico" />
+        <Property Id="ARPPRODUCTICON" Value="lasertag.ico" />
+
+        <StandardDirectory Id="ProgramFiles64Folder">
+            <Directory Id="INSTALLFOLDER" Name="Neon Lasertag">
+                <Component Id="MainExe" Guid="BF760A3C-55B7-440A-8154-C2641CF795C1">
+                    <File Id="GameExe" Source="$(var.BinDir)/neon-lasertag.exe" KeyPath="yes" />
+                </Component>
+                <Component Id="Docs" Guid="3B9D37EC-F0BE-4BDD-8352-597CEFEF11BF">
+                    <File Id="ReadmeMd" Source="README.md" KeyPath="yes" />
+                </Component>
+                <Directory Id="AssetsFolder" Name="assets" />
+            </Directory>
+        </StandardDirectory>
+
+        <!-- The game's files (models, shaders, sounds, music, fonts), every file under
+             assets with its folders. -->
+        <ComponentGroup Id="Assets" Directory="AssetsFolder">
+            <Files Include="$(var.SrcDir)\assets\**" />
+        </ComponentGroup>
+
+        <!-- The game, and the game in an OpenXR headset (Arguments). -->
+        <StandardDirectory Id="ProgramMenuFolder">
+            <Component Id="StartMenuShortcuts" Guid="0778A5AE-4890-4B56-8A0F-4BB9760A69D6">
+                <Shortcut Id="GameShortcut"
+                          Name="Neon Lasertag"
+                          Description="Red vs Blue lasertag in neon arenas"
+                          Target="[INSTALLFOLDER]neon-lasertag.exe"
+                          WorkingDirectory="INSTALLFOLDER" />
+                <Shortcut Id="VrShortcut"
+                          Name="Neon Lasertag VR"
+                          Description="Neon Lasertag in an OpenXR headset"
+                          Target="[INSTALLFOLDER]neon-lasertag.exe"
+                          Arguments="--vr"
+                          WorkingDirectory="INSTALLFOLDER" />
+                <RegistryValue Root="HKCU" Key="Software\neon-lasertag" Name="Shortcuts" Type="integer" Value="1" KeyPath="yes" />
+            </Component>
+        </StandardDirectory>
+
+        <Feature Id="Main">
+            <ComponentRef Id="MainExe" />
+            <ComponentRef Id="Docs" />
+            <ComponentGroupRef Id="Assets" />
+            <ComponentRef Id="StartMenuShortcuts" />
+        </Feature>
+    </Package>
 </Wix>
