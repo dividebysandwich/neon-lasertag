@@ -2020,11 +2020,20 @@ impl Bot {
         };
         let mut cands: Vec<(PlayerId, f32, Vec3)> = self.visible.clone();
         cands.sort_by(|a, b| {
-            let key = |c: &(PlayerId, f32, Vec3)| (!hittable(c.0), Some(c.0) != self.enemy, c.1);
+            // (A bounty first, then the one already fought.)
+            let key = |c: &(PlayerId, f32, Vec3)| {
+                (
+                    !hittable(c.0),
+                    sim.bounty != Some(c.0),
+                    Some(c.0) != self.enemy,
+                    c.1,
+                )
+            };
             let (ka, kb) = (key(a), key(b));
             ka.0.cmp(&kb.0)
                 .then(ka.1.cmp(&kb.1))
-                .then(ka.2.total_cmp(&kb.2))
+                .then(ka.2.cmp(&kb.2))
+                .then(ka.3.total_cmp(&kb.3))
         });
         cands.first().map(|&(id, d, pt)| (id, d, pt, hittable(id)))
     }

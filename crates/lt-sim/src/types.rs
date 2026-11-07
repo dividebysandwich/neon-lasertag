@@ -316,14 +316,18 @@ pub enum ArenaEvent {
     /// For `Rules::lowgrav_time` everything falls at `Rules::lowgrav_factor` of the gravity
     /// (jump pads' flights aside).
     LowGravity,
+    /// For `Rules::bounty_time` the top scorer (`Sim::bounty`) is marked for everyone, and
+    /// tagging them out is worth `Rules::bounty_points`; lasting it out pays them as much.
+    Bounty,
 }
 
 impl ArenaEvent {
-    pub const ALL: [ArenaEvent; 4] = [
+    pub const ALL: [ArenaEvent; 5] = [
         ArenaEvent::Blackout,
         ArenaEvent::Overdrive,
         ArenaEvent::MirrorStorm,
         ArenaEvent::LowGravity,
+        ArenaEvent::Bounty,
     ];
 
     pub fn name(self) -> &'static str {
@@ -332,6 +336,7 @@ impl ArenaEvent {
             ArenaEvent::Overdrive => "OVERDRIVE",
             ArenaEvent::MirrorStorm => "MIRROR STORM",
             ArenaEvent::LowGravity => "LOW GRAVITY",
+            ArenaEvent::Bounty => "BOUNTY",
         }
     }
 
@@ -342,6 +347,7 @@ impl ArenaEvent {
             ArenaEvent::Overdrive => "overdrive",
             ArenaEvent::MirrorStorm => "storm",
             ArenaEvent::LowGravity => "lowgrav",
+            ArenaEvent::Bounty => "bounty",
         }
     }
 
@@ -545,6 +551,17 @@ pub enum SimEvent {
     Blocked {
         player: PlayerId,
         pos: Vec3,
+    },
+    /// A bounty on `player` (`Sim::bounty`), claimed by `by` tagging them out, or lasted out.
+    BountyOn {
+        player: PlayerId,
+    },
+    BountyClaimed {
+        player: PlayerId,
+        by: PlayerId,
+    },
+    BountySurvived {
+        player: PlayerId,
     },
     /// A team mate's med beam took a hit off `player` (`hits` left).
     Mended {

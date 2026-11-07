@@ -1981,7 +1981,9 @@ fn place_marks(
     places.resize(2 + crate::hud::MAX_GOALS, None);
     if let Some(p) = me.filter(|_| alive) {
         let c = team_color(Some(p.team.other()));
-        for pos in crate::hud::revealed(&game, p) {
+        let gold = Vec3::new(1.0, 0.82, 0.2);
+        for (pos, bounty) in crate::hud::revealed(&game, p) {
+            let c = if bounty { gold } else { c };
             places.push(Some((pos, 0.016 * pulse, Some((solid.clone(), c)))));
         }
     }

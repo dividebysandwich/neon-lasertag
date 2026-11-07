@@ -449,6 +449,9 @@ fn play_events(
                     .flatten();
                 play(&mut commands, gain, &sounds.charge_full, at, 0.8, 1.0)
             }
+            SimEvent::BountyClaimed { .. } | SimEvent::BountySurvived { .. } => {
+                play(&mut commands, gain, &sounds.mega_win, None, 0.6, 1.3)
+            }
             SimEvent::DecoyOut { pos, .. } => {
                 play(&mut commands, gain, &sounds.power_up, Some(pos), 0.6, 1.4)
             }
@@ -498,6 +501,7 @@ fn play_events(
                     lt_sim::ArenaEvent::Overdrive => &sounds.event_overdrive,
                     lt_sim::ArenaEvent::MirrorStorm => &sounds.event_storm,
                     lt_sim::ArenaEvent::LowGravity => &sounds.event_lowgrav,
+                    lt_sim::ArenaEvent::Bounty => &sounds.event_double,
                 };
                 play(&mut commands, gain, sound, None, 1.0, 1.0)
             }

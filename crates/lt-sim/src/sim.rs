@@ -553,6 +553,9 @@ pub struct Snapshot {
     pub double: bool,
     #[serde(default)]
     pub phase: MatchPhase,
+    /// `Sim::bounty`.
+    #[serde(default)]
+    pub bounty: Option<PlayerId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -706,6 +709,8 @@ pub struct Sim {
     pub double: bool,
     /// The last arena event (the next is another).
     last_event: Option<ArenaEvent>,
+    /// The player with a bounty on them (`ArenaEvent::Bounty`).
+    pub bounty: Option<PlayerId>,
     /// Every player's hit-relevant state at the end of each of the last `HISTORY` ticks.
     history: std::collections::VecDeque<(u64, Vec<Ghost>)>,
     events: Vec<SimEvent>,
@@ -781,6 +786,7 @@ impl Sim {
             next_event: 0.0,
             double: false,
             last_event: None,
+            bounty: None,
             history: std::collections::VecDeque::with_capacity(HISTORY + 1),
             events: Vec::new(),
             rng: ChaCha8Rng::seed_from_u64(level.seed ^ 0x5EED),
@@ -2127,7 +2133,18 @@ impl Sim {
             });
             let hit_by = std::mem::take(&mut self.players[pi].hit_by);
             if b.owner_team != team && b.owner != HAZARD {
-                self.award(b.owner_team, Some(b.owner), self.rules.tag_points);
+                // (A bounty's worth more.)
+                let points = if self.bounty == Some(id) {
+                    self.events.push(SimEvent::BountyClaimed {
+                        player: id,
+                        by: b.owner,
+                    });
+                    self.end_bounty();
+                    self.rules.bounty_points.max(self.rules.tag_points)
+                } else {
+                    self.rules.tag_points
+                };
+                self.award(b.owner_team, Some(b.owner), points);
                 let grenade = b.team.is_none();
                 if let Some(s) = self.player_mut(b.owner) {
                     s.tags += 1;
@@ -2295,7 +2312,21 @@ impl Sim {
                 let kind = *kind;
                 self.event = None;
                 self.events.push(SimEvent::EventEnd { kind });
+                // Lasted out: the bounty is theirs.
+                if kind == ArenaEvent::Bounty
+                    && let Some(id) = self.bounty.take()
+                    && let Some(team) = self.player(id).map(|p| p.team)
+                {
+                    self.award(team, Some(id), self.rules.bounty_points);
+                    self.events.push(SimEvent::BountySurvived { player: id });
+                }
             }
+        }
+        // (A bounty's player gone: so is the bounty.)
+        if let Some(id) = self.bounty
+            && self.player(id).is_none()
+        {
+            self.end_bounty();
         }
         let rules = &self.rules;
         let elapsed = rules.match_time - self.time_left;
@@ -2326,6 +2357,17 @@ impl Sim {
         gravity_for(self.event, &self.rules)
     }
 
+    /// The bounty's over before its time (claimed, or its player gone).
+    fn end_bounty(&mut self) {
+        self.bounty = None;
+        if let Some((ArenaEvent::Bounty, _)) = self.event {
+            self.event = None;
+            self.events.push(SimEvent::EventEnd {
+                kind: ArenaEvent::Bounty,
+            });
+        }
+    }
+
     /// A mirror storm going on.
     pub fn storm(&self) -> bool {
         matches!(self.event, Some((ArenaEvent::MirrorStorm, _)))
@@ -2336,11 +2378,34 @@ impl Sim {
         if let Some((old, _)) = self.event.take() {
             self.events.push(SimEvent::EventEnd { kind: old });
         }
+        self.bounty = None;
         self.last_event = Some(kind);
         let length = match kind {
             ArenaEvent::Blackout => self.rules.blackout_time,
             ArenaEvent::MirrorStorm => self.rules.storm_time,
             ArenaEvent::LowGravity => self.rules.lowgrav_time,
+            // On the top scorer (of those in the game; none scored yet: anyone).
+            ArenaEvent::Bounty => {
+                let top = self
+                    .players
+                    .iter()
+                    .filter(|p| p.alive())
+                    .map(|p| p.score)
+                    .max();
+                let tops: Vec<PlayerId> = self
+                    .players
+                    .iter()
+                    .filter(|p| p.alive() && Some(p.score) == top)
+                    .map(|p| p.id)
+                    .collect();
+                if tops.is_empty() {
+                    return;
+                }
+                let id = tops[self.rng.random_range(0..tops.len())];
+                self.bounty = Some(id);
+                self.events.push(SimEvent::BountyOn { player: id });
+                self.rules.bounty_time
+            }
             // (Over at once; the time is the announcement's.)
             ArenaEvent::Overdrive => {
                 for slot in &mut self.slots {
@@ -3041,6 +3106,7 @@ impl Sim {
             event: self.event,
             double: self.double,
             phase: self.phase,
+            bounty: self.bounty,
         }
     }
 }
@@ -4280,6 +4346,8 @@ mod tests {
     #[test]
     fn arena_events_never_come_twice_in_a_row() {
         let mut sim = Sim::new(3, Rules::default());
+        // (A bounty needs someone to be on.)
+        sim.add_player("a", Some(Team::Red), false).unwrap();
         let mut last = None;
         let mut seen = std::collections::HashSet::new();
         for _ in 0..40 {
@@ -4325,6 +4393,49 @@ mod tests {
         let (normal, low) = (apex(false), apex(true));
         assert!(normal > 0.3, "{normal}");
         assert!(low > normal * 2.0, "{low} vs {normal}");
+    }
+
+    #[test]
+    fn a_bounty_on_the_top_scorer_pays_out_either_way() {
+        let (mut sim, a, b) = duel();
+        sim.players[1].score = 500;
+        sim.start_event(ArenaEvent::Bounty);
+        assert_eq!(sim.bounty, Some(b));
+        assert_eq!(sim.snapshot().bounty, Some(b));
+        // a tags b out: the bounty's points, and it's over.
+        let before = sim.scores[Team::Red.index()];
+        sim.players[1].hits = sim.rules.hits_to_tag - 1;
+        sim.players[1].protect = 0.0;
+        sim.players[1].feet = sim.player(a).unwrap().feet + Vec3::new(0.0, 0.0, -3.0);
+        shoot(&mut sim, a, b);
+        assert!(sim.player(b).unwrap().respawn.is_some(), "tagged out");
+        assert_eq!(
+            sim.scores[Team::Red.index()] - before,
+            sim.rules.bounty_points
+        );
+        assert_eq!(sim.bounty, None);
+        assert!(sim.event.is_none());
+        let ev = sim.drain_events();
+        assert!(ev.iter().any(
+            |e| matches!(e, SimEvent::BountyClaimed { player, by } if *player == b && *by == a)
+        ));
+        // Lasted out: the bounty's player gets it.
+        sim.players[0].score = 900;
+        sim.start_event(ArenaEvent::Bounty);
+        assert_eq!(sim.bounty, Some(a));
+        let before = sim.player(a).unwrap().score;
+        for _ in 0..(sim.rules.bounty_time / TICK) as usize + 2 {
+            sim.step();
+        }
+        assert_eq!(
+            sim.player(a).unwrap().score - before,
+            sim.rules.bounty_points
+        );
+        assert!(
+            sim.drain_events()
+                .iter()
+                .any(|e| matches!(e, SimEvent::BountySurvived { player } if *player == a))
+        );
     }
 
     #[test]

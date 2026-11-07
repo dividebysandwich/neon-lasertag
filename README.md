@@ -62,7 +62,8 @@ off for 15 s.
 - **Arena events** strike every few minutes, never the same twice in a row: a **Blackout**
   turns out the lights for 20 s, an **Overdrive** respawns every missing pickup at once, and a
   **Mirror Storm** makes every wall bounce bolts back (once) for 20 s, and **Low Gravity** lets
-  everyone jump about three times as high for 20 s.
+  everyone jump about three times as high for 20 s. A **Bounty** marks the top scorer for
+  everyone for 30 s: tagging them out is worth 300, and lasting it out pays them 300.
 
 ### Pickups
 

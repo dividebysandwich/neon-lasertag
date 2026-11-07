@@ -147,6 +147,9 @@ pub struct Rules {
     /// Seconds low gravity lasts, and how much of the gravity is left.
     pub lowgrav_time: f32,
     pub lowgrav_factor: f32,
+    /// Seconds a bounty runs, and the points it's worth (for the tag-out, all in).
+    pub bounty_time: f32,
+    pub bounty_points: u32,
     pub double_last: f32,
     /// The arena's size (with the seed and the mode, all a client needs to build the same
     /// arena).
@@ -258,6 +261,8 @@ impl Default for Rules {
             storm_time: 20.0,
             lowgrav_time: 20.0,
             lowgrav_factor: 0.35,
+            bounty_time: 30.0,
+            bounty_points: 300,
             blackout_time: 20.0,
             double_last: 60.0,
             arena: ArenaSize::Small,

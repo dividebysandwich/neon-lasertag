@@ -1096,6 +1096,10 @@ fn clock_events(snap: &lt_sim::sim::Snapshot) -> (String, Color) {
         parts.push(format!("BLACKOUT {:.0}", left.ceil()));
         color = Color::srgb(0.75, 0.78, 0.95);
     }
+    if let Some((lt_sim::ArenaEvent::Bounty, left)) = snap.event {
+        parts.push(format!("BOUNTY {:.0}", left.ceil()));
+        color = BOUNTY_GOLD;
+    }
     if let Some((lt_sim::ArenaEvent::LowGravity, left)) = snap.event {
         parts.push(format!("LOW GRAVITY {:.0}", left.ceil()));
         color = Color::srgb(0.7, 1.0, 0.6);
@@ -1681,8 +1685,12 @@ fn objective_markers(
     if let Some(p) = me.filter(|p| p.respawn.is_none()) {
         let c = crate::materials::team_color(Some(p.team.other()));
         let c = Color::linear_rgb(c.x, c.y, c.z).with_alpha(pulse);
-        for pos in revealed(&game, p) {
-            shown.push(Some((pos, c, "SEEN".to_string())));
+        for (pos, bounty) in revealed(&game, p) {
+            shown.push(Some(if bounty {
+                (pos, BOUNTY_GOLD.with_alpha(pulse), "BOUNTY".to_string())
+            } else {
+                (pos, c, "SEEN".to_string())
+            }));
         }
     }
     shown.resize(2 + MAX_GOALS + MAX_REVEALED, None);
@@ -1803,19 +1811,34 @@ pub const MAX_GOALS: usize = 4;
 /// Enemies a pulse sensor shows, marked at most.
 pub const MAX_REVEALED: usize = 6;
 
-/// The enemies of `me` a pulse sensor of its team shows now: over their heads, nearest first.
-pub fn revealed(game: &Game, me: &lt_sim::sim::PlayerSnap) -> Vec<Vec3> {
-    let mut out: Vec<Vec3> = game
+/// The players marked for `me`: the one with a bounty on them (anyone's but one's own, first),
+/// and the enemies a pulse sensor of its team shows now (nearest first); over their heads, and
+/// whether it's the bounty.
+pub fn revealed(game: &Game, me: &lt_sim::sim::PlayerSnap) -> Vec<(Vec3, bool)> {
+    let over = |o: &lt_sim::sim::PlayerSnap| o.feet + Vec3::Y * 2.3;
+    let bounty = game
+        .snap
+        .bounty
+        .filter(|id| *id != me.id)
+        .and_then(|id| game.snap.players.iter().find(|o| o.id == id))
+        .filter(|o| o.respawn.is_none());
+    let mut seen: Vec<Vec3> = game
         .snap
         .players
         .iter()
         .filter(|o| o.team != me.team && o.revealed > 0.0 && o.respawn.is_none())
-        .map(|o| o.feet + Vec3::Y * 2.3)
+        .filter(|o| Some(o.id) != bounty.map(|b| b.id))
+        .map(over)
         .collect();
-    out.sort_by(|a, b| a.distance(me.feet).total_cmp(&b.distance(me.feet)));
+    seen.sort_by(|a, b| a.distance(me.feet).total_cmp(&b.distance(me.feet)));
+    let mut out: Vec<(Vec3, bool)> = bounty.map(|b| (over(b), true)).into_iter().collect();
+    out.extend(seen.into_iter().map(|p| (p, false)));
     out.truncate(MAX_REVEALED);
     out
 }
+
+/// The bounty's colour.
+pub const BOUNTY_GOLD: Color = Color::srgb(1.0, 0.82, 0.2);
 
 /// The places `p` (alive) has to go for: Classic mode, every team target (marked over it);
 /// Megatarget mode, the secondary targets it hasn't hit yet, or, both hit, the megatarget
@@ -2327,6 +2350,24 @@ pub fn event_banner_for(e: &SimEvent, rules: &lt_sim::Rules) -> Option<Banner> {
         } => Some(Banner {
             time: 2.0,
             ..banner("GRAVITY BACK", String::new(), Color::srgb(0.7, 1.0, 0.6))
+        }),
+        SimEvent::EventStart {
+            kind: lt_sim::ArenaEvent::Bounty,
+        } => Some(banner(
+            "BOUNTY",
+            format!(
+                "TAG THE MARKED PLAYER OUT FOR {} - OR LAST {:.0} S",
+                rules.bounty_points, rules.bounty_time
+            ),
+            BOUNTY_GOLD,
+        )),
+        SimEvent::BountyClaimed { .. } => Some(Banner {
+            time: 2.0,
+            ..banner("BOUNTY CLAIMED", String::new(), BOUNTY_GOLD)
+        }),
+        SimEvent::BountySurvived { .. } => Some(Banner {
+            time: 2.0,
+            ..banner("BOUNTY SURVIVED", String::new(), BOUNTY_GOLD)
         }),
         SimEvent::Countdown { n } => Some(Banner {
             time: 0.95,
