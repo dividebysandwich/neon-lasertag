@@ -44,6 +44,10 @@ pub struct Rules {
     pub jump_speed: f32,
     pub coyote_time: f32,
     pub jump_buffer: f32,
+    /// Dashing: its speed (m/s), how long it lasts (s), and the least time between dashes (s).
+    pub dash_speed: f32,
+    pub dash_time: f32,
+    pub dash_cooldown: f32,
     /// Crouching players' share of `move_speed`.
     pub crouch_factor: f32,
     /// Most physical (room-scale) walking accepted per second.
@@ -151,6 +155,9 @@ impl Default for Rules {
             mirror_bounces: 1,
             move_speed: 4.0,
             crouch_factor: 0.5,
+            dash_speed: 12.0,
+            dash_time: 0.25,
+            dash_cooldown: 2.0,
             jump_speed: 3.9,
             coyote_time: 0.1,
             jump_buffer: 0.15,

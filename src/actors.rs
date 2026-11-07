@@ -678,7 +678,8 @@ fn fade_tracers(
     }
 }
 
-/// Speed-boosted players leave a short trail of fading motes behind them (not while cloaked).
+/// Speed-boosted players leave a short trail of fading motes behind them (not while cloaked),
+/// and dashing ones in their team's colour.
 fn speed_trails(
     mut commands: Commands,
     game: Res<Game>,
@@ -692,11 +693,23 @@ fn speed_trails(
         return;
     }
     *acc = 0.0;
-    let mat = palette.pickup_for(PickupKind::Speed).0;
+    let speed_mat = palette.pickup_for(PickupKind::Speed).0;
+    // (A dash under way: its cooldown just started.)
+    let dashing_from = game.rules.dash_cooldown - game.rules.dash_time - 0.05;
     for p in &game.snap.players {
-        if p.speed <= 0.0 || p.respawn.is_some() || p.cloaked() || Some(p.id) == game.me {
+        let dashing = p.dash_ready > dashing_from;
+        if (p.speed <= 0.0 && !dashing)
+            || p.respawn.is_some()
+            || p.cloaked()
+            || Some(p.id) == game.me
+        {
             continue;
         }
+        let mat = if dashing {
+            palette.bolt_for(Some(p.team))
+        } else {
+            speed_mat.clone()
+        };
         for h in [0.35, 0.9, 1.4] {
             commands.spawn((
                 Spark {

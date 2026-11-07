@@ -647,6 +647,7 @@ fn predict(
         mover.vel = Vec2::ZERO;
         mover.moves = lt_sim::sim::Moves {
             jumps: Some(local.cmd.jumps),
+            dashes: Some(local.cmd.dashes),
             ..default()
         };
         mover.valid = true;
@@ -677,8 +678,22 @@ fn predict(
     {
         vy = up;
     }
-    // (Flying from a jump pad: mostly the pad's throw, a little steering.)
-    let delta = mover.vel * dt * lt_sim::sim::air_control(mover.air) + mover.air * dt + walk;
+    let (cmd_stick, yaw) = (local.cmd.stick, local.cmd.yaw);
+    let (dash, _) = lt_sim::sim::dash_step(
+        &game.rules,
+        &mut mover.moves,
+        local.cmd.dashes,
+        cmd_stick,
+        yaw,
+        air,
+        dt,
+    );
+    // (Flying from a jump pad: mostly the pad's throw, a little steering; dashing, the dash.)
+    let delta = match dash {
+        Some(v) => v * dt,
+        None => mover.vel * dt * lt_sim::sim::air_control(mover.air),
+    } + mover.air * dt
+        + walk;
     let (feet, mut vy) = game.world.move_body(mover.feet, delta, vy, dt);
     let flying = mover.air != Vec2::ZERO;
     let mut air = mover.air;
@@ -688,7 +703,7 @@ fn predict(
     }
     mover.air = air;
     // Walking into a wall stops the movement into it.
-    if dt > 0.0 && !flying {
+    if dt > 0.0 && !flying && dash.is_none() {
         let moved = Vec2::new(feet.x - mover.feet.x, feet.z - mover.feet.z) - walk;
         let along = moved / dt;
         if along.length() < mover.vel.length() * 0.5 {

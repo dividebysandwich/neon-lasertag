@@ -458,6 +458,9 @@ pub struct PlayerSnap {
     /// `Player::protect`.
     #[serde(default)]
     pub protect: f32,
+    /// Seconds until the player may dash again (`Moves::dash_ready`).
+    #[serde(default)]
+    pub dash_ready: f32,
     pub respawn: Option<f32>,
     pub grenades: u8,
     pub ammo: u16,
@@ -1022,6 +1025,7 @@ impl Sim {
                 // (Presses while tagged out don't count.)
                 p.moves = Moves {
                     jumps: Some(p.cmd.jumps),
+                    dashes: Some(p.cmd.dashes),
                     ..Moves::default()
                 };
                 p.cmd.yaw = s.yaw;
@@ -1050,20 +1054,50 @@ impl Sim {
                     });
                 }
             }
+            let dash = {
+                let p = &mut self.players[i];
+                let (dash, started) = dash_step(
+                    &rules,
+                    &mut p.moves,
+                    p.cmd.dashes,
+                    p.cmd.stick,
+                    p.cmd.yaw,
+                    p.air,
+                    TICK,
+                );
+                if started {
+                    self.events.push(SimEvent::Dashed {
+                        player: p.id,
+                        pos: p.feet,
+                    });
+                }
+                dash
+            };
             let (feet, vy) = {
                 let p = &self.players[i];
                 let d = match p.cmd.feet {
                     Some(c) if c.is_finite() && p.claim_block == 0 => {
                         // A predicted position: as far as the speed limit allows (with slack for
-                        // ticks arriving unevenly).
-                        let max = (p.move_speed(&rules) + rules.walk_speed_max) * TICK * 2.5;
+                        // ticks arriving unevenly; a dash's while one is under way).
+                        let dashing = if dash.is_some() {
+                            rules.dash_speed
+                        } else {
+                            0.0
+                        };
+                        let max =
+                            (p.move_speed(&rules) + rules.walk_speed_max + dashing) * TICK * 2.5;
                         Vec2::new(c.x - p.feet.x, c.z - p.feet.z).clamp_length_max(max)
                     }
                     _ => {
-                        let stick = p.cmd.stick.clamp_length_max(1.0)
-                            * p.move_speed(&rules)
-                            * TICK
-                            * air_control(p.air);
+                        let stick = match dash {
+                            Some(v) => v * TICK,
+                            None => {
+                                p.cmd.stick.clamp_length_max(1.0)
+                                    * p.move_speed(&rules)
+                                    * TICK
+                                    * air_control(p.air)
+                            }
+                        };
                         let walk = p.cmd.walk.clamp_length_max(rules.walk_speed_max * TICK);
                         stick + walk + p.air * TICK
                     }
@@ -2255,6 +2289,7 @@ impl Sim {
                     hits: p.hits,
                     cooldown: p.cooldown,
                     protect: p.protect,
+                    dash_ready: p.moves.dash_ready,
                     respawn: p.respawn,
                     grenades: p.grenades,
                     ammo: p.ammo,
@@ -2340,6 +2375,51 @@ pub struct Moves {
     pub off_ground: f32,
     /// Jumped and not landed yet.
     pub jumped: bool,
+    /// The command's `PlayerCmd::dashes` last seen, the seconds left of a dash and its
+    /// direction, and the seconds until the next dash may start.
+    pub dashes: Option<u32>,
+    pub dash_left: f32,
+    pub dash_dir: Vec2,
+    pub dash_ready: f32,
+}
+
+/// A body's dash, after `jump_step`: with `dashes` the command's count of presses, `stick`
+/// where it moves (or, standing, `yaw` where it faces) and `air` a jump pad's throw, the
+/// horizontal velocity of a dash under way (the stick's movement instead of), and whether one
+/// starts now. Dashes start on the ground (or within `Rules::coyote_time` of leaving it), not
+/// flying from a pad, at most once every `Rules::dash_cooldown` seconds.
+pub fn dash_step(
+    rules: &Rules,
+    m: &mut Moves,
+    dashes: u32,
+    stick: Vec2,
+    yaw: f32,
+    air: Vec2,
+    dt: f32,
+) -> (Option<Vec2>, bool) {
+    let pressed = m.dashes.is_some_and(|seen| seen != dashes);
+    m.dashes = Some(dashes);
+    m.dash_ready = (m.dash_ready - dt).max(0.0);
+    let mut started = false;
+    if pressed
+        && m.dash_ready <= 0.0
+        && m.dash_left <= 0.0
+        && air == Vec2::ZERO
+        && m.off_ground <= rules.coyote_time
+    {
+        let facing = Vec2::new(-yaw.sin(), -yaw.cos());
+        m.dash_dir = stick.try_normalize().unwrap_or(facing);
+        m.dash_left = rules.dash_time;
+        m.dash_ready = rules.dash_cooldown;
+        started = true;
+    }
+    if m.dash_left <= 0.0 {
+        return (None, started);
+    }
+    // (The last step only as long as what's left.)
+    let k = (m.dash_left / dt).min(1.0);
+    m.dash_left = (m.dash_left - dt).max(0.0);
+    (Some(m.dash_dir * rules.dash_speed * k), started)
 }
 
 /// A body's jumping before its move (`World::move_body`): with `jumps` the command's count of
@@ -2667,6 +2747,49 @@ mod tests {
         let mut m = Moves::default();
         jump_step(&rules, &mut m, 0, 0.0, Vec2::ZERO, dt);
         assert!(jump_step(&rules, &mut m, 1, 0.0, Vec2::ONE, dt).is_none());
+    }
+
+    #[test]
+    fn a_dash_covers_three_metres_once_every_two_seconds() {
+        let (mut sim, a, _) = duel();
+        // (Facing -Z, away from b, along the open row.)
+        sim.players[0].feet = sim.players[1].feet;
+        sim.players[1].feet = sim.level.base_centre(Team::Blue);
+        sim.step();
+        let dash = |sim: &mut Sim, n: u32| {
+            sim.set_cmd(
+                a,
+                PlayerCmd {
+                    dashes: n,
+                    ..Default::default()
+                },
+            )
+        };
+        let from = sim.player(a).unwrap().feet;
+        dash(&mut sim, 1);
+        for _ in 0..30 {
+            sim.step();
+        }
+        let d = sim.player(a).unwrap().feet - from;
+        assert!((d.length() - 3.0).abs() < 0.1, "{d}");
+        assert!(d.z < 0.0, "{d}");
+        // Again at once: nothing.
+        let from = sim.player(a).unwrap().feet;
+        dash(&mut sim, 2);
+        for _ in 0..30 {
+            sim.step();
+        }
+        assert!((sim.player(a).unwrap().feet - from).length() < 0.01);
+        // Not in the air.
+        let mut m = Moves::default();
+        let r = Rules::default();
+        dash_step(&r, &mut m, 0, Vec2::ZERO, 0.0, Vec2::ZERO, TICK);
+        m.off_ground = 0.5;
+        assert!(
+            dash_step(&r, &mut m, 1, Vec2::X, 0.0, Vec2::ZERO, TICK)
+                .0
+                .is_none()
+        );
     }
 
     #[test]

@@ -80,6 +80,11 @@ glowing posts, in the color of the zone they stand in. They switch on for 2 s an
 one while it's on is a hit (unless your shield is on, or you're still recovering from the last
 hit). Bolts and grenades fly through. The bots wait for a gate to go off.
 
+**Jumping and dashing.** A jump is a hop of about 0.8 m, onto a crate or over a low wall. A
+dash throws you 3 m along the way you move (or face, standing still) in a quarter of a second,
+from the ground only, at most once every 2 s; the panel (flat screen) says when it's ready, and
+a dashing player leaves a short trail in their team's colour.
+
 **Blaster.** Three shots a second at most, 50 shots in a full blaster. It refills while you
 stand on your own spawn pads or on one of the two white reload stations in the middle of the
 arena (25 shots a second).
@@ -123,6 +128,7 @@ it. You lose them all when you're tagged out.
 | | VR | Flat screen |
 |---|---|---|
 | move | left stick (where you look), or walk in your room | WASD (Shift: slower) |
+| dash | click the left stick (not on the Steam Frame yet) | Left Alt or mouse button 4 |
 | jump | A or X (a hop of about 0.8 m; it still works just after you walk off an edge, and a press just before landing jumps on landing) | Space |
 | crouch | crouch (slower: you move at half speed) | Left Ctrl or C (hold; lowers you behind half walls, half speed) |
 | turn / look | right stick (smooth turn), your head | mouse |

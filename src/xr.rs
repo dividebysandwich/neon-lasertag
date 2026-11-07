@@ -116,6 +116,7 @@ struct XrActions {
     secondary: openxr::Action<bool>,
     menu: openxr::Action<bool>,
     thumbstick: openxr::Action<openxr::Vector2f>,
+    stick_click: openxr::Action<bool>,
     haptic: openxr::Action<Haptic>,
     hands: [openxr::Path; 2],
 }
@@ -142,6 +143,7 @@ fn create_actions(instance: Res<OxrInstance>, mut commands: Commands) {
             secondary: set.create_action("grenade", "Grenade (B / Y)", &hands)?,
             menu: set.create_action("menu", "Menu", &hands)?,
             thumbstick: set.create_action("thumbstick", "Move / turn", &hands)?,
+            stick_click: set.create_action("dash", "Dash (click the stick)", &hands)?,
             haptic: set.create_action("haptic", "Haptics", &hands)?,
             set,
             hands,
@@ -244,6 +246,25 @@ fn suggest_bindings(
         add(a.secondary.as_raw(), secondary);
         add(a.thumbstick.as_raw(), stick);
         add(a.menu.as_raw(), menu);
+        add(a.stick_click.as_raw(), stick_click(profile));
+    }
+}
+
+/// Clicking the stick (or the trackpad) in a profile (none in the Steam Frame's own, whose
+/// paths are uncertain: one the runtime refuses would lose the profile's other bindings).
+pub fn stick_click(profile: &str) -> Bindings {
+    let both = |s: &str| -> Bindings {
+        vec![
+            format!("/user/hand/left/{s}").into(),
+            format!("/user/hand/right/{s}").into(),
+        ]
+    };
+    match profile {
+        "/interaction_profiles/oculus/touch_controller"
+        | "/interaction_profiles/valve/index_controller"
+        | "/interaction_profiles/microsoft/motion_controller" => both("input/thumbstick/click"),
+        "/interaction_profiles/htc/vive_controller" => both("input/trackpad/click"),
+        _ => Vec::new(),
     }
 }
 
@@ -349,6 +370,7 @@ fn read(
         hand.primary = b(&actions.primary);
         hand.secondary = b(&actions.secondary);
         hand.menu = b(&actions.menu);
+        hand.stick_click = b(&actions.stick_click);
         hand.stick = actions
             .thumbstick
             .state(&session, path)

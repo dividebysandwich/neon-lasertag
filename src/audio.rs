@@ -493,6 +493,17 @@ fn play_events(
                     1.0,
                 )
             }
+            SimEvent::Dashed { player, pos } => {
+                let mine = Some(player) == me;
+                play(
+                    &mut commands,
+                    gain,
+                    &sounds.jump_pad,
+                    (!mine).then_some(pos),
+                    if mine { 0.4 } else { 0.6 },
+                    0.7,
+                )
+            }
             SimEvent::Jumped { player, pos } => {
                 let mine = Some(player) == me;
                 play(

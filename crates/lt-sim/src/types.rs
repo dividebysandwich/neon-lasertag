@@ -218,6 +218,9 @@ pub struct PlayerCmd {
     /// Jump presses so far (a count, so a lost command loses none; `sim::jump_step`).
     #[serde(default)]
     pub jumps: u32,
+    /// Dash presses so far (a count, as `jumps`; `sim::dash_step`).
+    #[serde(default)]
+    pub dashes: u32,
     /// Crouching (moves at `Rules::crouch_factor` of the speed).
     #[serde(default)]
     pub crouch: bool,
@@ -337,6 +340,11 @@ pub enum SimEvent {
     },
     /// A player jumped (`PlayerCmd::jumps`).
     Jumped {
+        player: PlayerId,
+        pos: Vec3,
+    },
+    /// A player dashed (`PlayerCmd::dashes`).
+    Dashed {
         player: PlayerId,
         pos: Vec3,
     },

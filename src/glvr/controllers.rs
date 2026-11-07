@@ -17,6 +17,7 @@ pub struct Controllers {
     secondary: xr::Action<bool>,
     menu: xr::Action<bool>,
     thumbstick: xr::Action<xr::Vector2f>,
+    stick_click: xr::Action<bool>,
     haptic: xr::Action<xr::Haptic>,
     /// /user/hand/left, /user/hand/right
     hands: [xr::Path; 2],
@@ -59,6 +60,9 @@ impl Controllers {
         let menu = set.create_action("menu", "Menu", &hands).map_err(&e)?;
         let thumbstick = set
             .create_action("thumbstick", "Move / turn", &hands)
+            .map_err(&e)?;
+        let stick_click = set
+            .create_action("dash", "Dash (click the stick)", &hands)
             .map_err(&e)?;
         let haptic = set.create_action("haptic", "Haptics", &hands).map_err(&e)?;
 
@@ -169,6 +173,9 @@ impl Controllers {
             for p in &me {
                 bindings.push(xr::Binding::new(&menu, path(p)?));
             }
+            for p in crate::xr::stick_click(profile) {
+                bindings.push(xr::Binding::new(&stick_click, path(&p)?));
+            }
             // (A runtime without the profile refuses it: the others still bind.)
             if let Err(e) = instance.suggest_interaction_profile_bindings(path(profile)?, &bindings)
             {
@@ -196,6 +203,7 @@ impl Controllers {
             secondary,
             menu,
             thumbstick,
+            stick_click,
             haptic,
             hands,
             spaces,
@@ -223,6 +231,7 @@ impl Controllers {
             c.primary = b(&self.primary);
             c.secondary = b(&self.secondary);
             c.menu = b(&self.menu);
+            c.stick_click = b(&self.stick_click);
             c.stick = self
                 .thumbstick
                 .state(session, path)

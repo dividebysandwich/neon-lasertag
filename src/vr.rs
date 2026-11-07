@@ -82,6 +82,8 @@ pub struct HandInput {
     /// The menu button.
     pub menu: bool,
     pub stick: Vec2,
+    /// The stick (or trackpad) clicked.
+    pub stick_click: bool,
 }
 
 /// Filled in by the XR backend before `InputSet`; `haptic` is read back after `Update`.
@@ -124,8 +126,9 @@ pub struct VrState {
     gripping: [bool; 2],
     menu_held: [bool; 2],
     hold: [(f32, bool); 2],
-    /// A / X held (last frame): pressing jumps.
+    /// A / X held (last frame): pressing jumps; the left stick clicked: dashes.
     primary_held: [bool; 2],
+    stick_held: bool,
     /// Times the menu was asked for (src/vrui.rs takes them).
     pub menu_requests: u32,
     /// Recentering was asked for this frame (the left menu button).
@@ -416,6 +419,11 @@ fn read_controls(
         }
         vr.primary_held[i] = down;
     }
+    let click = input.hands[0].stick_click;
+    if click && !vr.stick_held && !vr.ui {
+        local.cmd.dashes = local.cmd.dashes.wrapping_add(1);
+    }
+    vr.stick_held = click;
 
     // The holster: at the hip on the gun side, turned with the body (which follows the head's
     // facing slowly).

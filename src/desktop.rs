@@ -321,6 +321,9 @@ fn read_input(
     if grabbed && settings.just_pressed(Action::Jump, &input) {
         cmd.jumps = cmd.jumps.wrapping_add(1);
     }
+    if grabbed && settings.just_pressed(Action::Dash, &input) {
+        cmd.dashes = cmd.dashes.wrapping_add(1);
+    }
     cmd.shield = grabbed && on(Action::Shield);
     cmd.barrier = grabbed && on(Action::Barrier);
     if grabbed && !overlays.hold_fire && settings.just_pressed(Action::Fire, &input) {

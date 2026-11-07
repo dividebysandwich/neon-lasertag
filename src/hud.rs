@@ -49,6 +49,7 @@ enum StatusPart {
     Score,
     Ammo,
     Grenade,
+    Dash,
 }
 /// The ammo bar's filled part.
 #[derive(Component)]
@@ -651,6 +652,7 @@ fn spawn(mut commands: Commands) {
                     ));
                 });
                 b.spawn((StatusPart::Grenade, text("", 13.0, neonui::DIM, 700)));
+                b.spawn((StatusPart::Dash, text("", 13.0, neonui::DIM, 700)));
             });
         });
     // Top right: the feed, a pill per line.
@@ -1381,6 +1383,16 @@ fn status_panel(
                     )
                 } else {
                     ("NO GRENADE".to_string(), neonui::DIM)
+                }
+            }
+            StatusPart::Dash => {
+                if p.dash_ready <= 0.0 {
+                    (
+                        format!("DASH READY  [{}]", key_hint(&settings, Action::Dash)),
+                        neonui::CYAN,
+                    )
+                } else {
+                    (format!("DASH  {:.1}", p.dash_ready), neonui::DIM)
                 }
             }
         };
