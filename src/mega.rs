@@ -74,8 +74,13 @@ struct TurretView {
     eye: Handle<AccentMaterial>,
     sight: Handle<AccentMaterial>,
     switch: Handle<AccentMaterial>,
+    /// Under the deactivation target: a bar draining with the time the turret stays off.
+    timer: Entity,
     since_fired: f32,
 }
+
+/// The off timer's bar's full width (m).
+const TIMER_W: f32 = 0.56;
 
 #[derive(Component)]
 struct ShieldView {
@@ -390,6 +395,8 @@ fn spawn_turrets(
         meshes.add(Torus::new(0.09, 0.12)),
     ];
     let dot = meshes.add(Sphere::new(0.04));
+    let bar = meshes.add(Cuboid::new(TIMER_W, 0.05, 0.03));
+    let timer_mat = accent(accents, SWITCH, 6.0);
     for (k, t) in m.turrets.iter().enumerate() {
         let eye_mat = accent(accents, Vec3::new(1.0, 0.05, 0.05), 8.0);
         let sight_mat = accent(accents, Vec3::new(1.0, 0.05, 0.05), 2.5);
@@ -490,12 +497,22 @@ fn spawn_turrets(
             Transform::from_xyz(0.0, 0.0, -depth / 2.0 + 0.08),
             ChildOf(sw),
         ));
+        let timer = commands
+            .spawn((
+                Mesh3d(bar.clone()),
+                MeshMaterial3d(timer_mat.clone()),
+                Transform::from_xyz(0.0, -0.37, -depth / 2.0 + 0.06),
+                Visibility::Hidden,
+                ChildOf(sw),
+            ))
+            .id();
         commands.entity(gun).insert(TurretView {
             k,
             gun,
             sight: sight_mat,
             eye: eye_mat,
             switch: switch_mat,
+            timer,
             since_fired: 99.0,
         });
     }
@@ -641,6 +658,7 @@ fn animate(
     mut turrets: Query<(&mut TurretView, &mut Transform), Without<Climber>>,
     mut shields: Query<&mut ShieldView>,
     mut climbers: Query<(&Climber, &mut Transform), Without<TurretView>>,
+    mut visibility: Query<&mut Visibility>,
     mut parts: Query<&mut Transform, (Without<TurretView>, Without<Climber>, Without<CoreView>)>,
     mut accents: ResMut<Assets<AccentMaterial>>,
     mut glows: ResMut<Assets<GlowMaterial>>,
@@ -745,6 +763,22 @@ fn animate(
                 let left = (st.off / game.rules.turret_off.max(0.1)).clamp(0.0, 1.0);
                 SWITCH.extend(0.3 + 1.2 * (1.0 - left) * (0.5 + 0.5 * (t * 8.0).sin()))
             };
+        }
+        // The off timer draining towards its left end.
+        let left = (st.off / game.rules.turret_off.max(0.1)).clamp(0.0, 1.0);
+        if let Ok(mut tr) = parts.get_mut(v.timer) {
+            tr.scale.x = left.max(0.001);
+            tr.translation.x = -TIMER_W / 2.0 * (1.0 - left);
+        }
+        if let Ok(mut vis) = visibility.get_mut(v.timer) {
+            let want = if on {
+                Visibility::Hidden
+            } else {
+                Visibility::Inherited
+            };
+            if *vis != want {
+                *vis = want;
+            }
         }
         let _ = v.gun;
     }

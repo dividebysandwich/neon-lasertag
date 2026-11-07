@@ -207,9 +207,10 @@ fn dev_script(
             };
             events.write(crate::game::GameEvent(event));
         }
-        // Megatarget mode, local games: hit both secondary targets at once, or go to Red's
-        // doorway, into the room, before the first turret or into the first pocket.
-        "power" | "warp-door" | "warp-room" | "warp-turret" | "warp-pocket" => {
+        // Megatarget mode, local games: hit both secondary targets at once, switch the first
+        // turret off, or go to Red's doorway, into the room, before the first turret or into the
+        // first pocket.
+        "power" | "turret-off" | "warp-door" | "warp-room" | "warp-turret" | "warp-pocket" => {
             let action = action.clone();
             commands.queue(move |w: &mut World| {
                 let Some(mut game) = w.get_resource_mut::<Game>() else {
@@ -227,6 +228,14 @@ fn dev_script(
                         if let Some(p) = sim.players.iter_mut().find(|p| p.id == me) {
                             p.mega_hits = 3;
                             p.power = Some(sim.rules.power_time);
+                        }
+                        return;
+                    }
+                    // The first turret switched off.
+                    "turret-off" => {
+                        let off = sim.rules.turret_off;
+                        if let Some(t) = sim.turrets.first_mut() {
+                            t.off = off;
                         }
                         return;
                     }
