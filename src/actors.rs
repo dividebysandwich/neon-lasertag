@@ -113,6 +113,7 @@ impl Plugin for ActorsPlugin {
                 Update,
                 (
                     sync_players,
+                    damage_pips,
                     sync_bolts,
                     speed_trails,
                     fade_tracers,
@@ -675,6 +676,116 @@ fn fade_tracers(
         let w = t.width * t.life / t.max;
         tr.scale.x = w;
         tr.scale.y = w;
+    }
+}
+
+/// How far away an enemy's hits taken show over their head (m).
+const PIPS_RANGE: f32 = 30.0;
+
+/// Over every enemy who has taken hits (and isn't cloaked), a row of lights: their hits left
+/// in their team's colour, the hits taken small and white; facing the viewer and as readable
+/// far off as near.
+#[allow(clippy::type_complexity)]
+fn damage_pips(
+    mut commands: Commands,
+    game: Res<Game>,
+    palette: Res<Palette>,
+    local: Res<LocalCmd>,
+    mover: Res<Mover>,
+    time: Res<Time<Fixed>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut transforms: Query<&mut Transform>,
+    mut vis: Query<&mut Visibility>,
+    mut mesh: Local<Option<Handle<Mesh>>>,
+    mut rows: Local<std::collections::HashMap<PlayerId, (Entity, Vec<Entity>, u8)>>,
+) {
+    let mesh = mesh
+        .get_or_insert_with(|| meshes.add(Sphere::new(0.035).mesh().ico(2).unwrap()))
+        .clone();
+    let me = game
+        .me
+        .and_then(|id| game.snap.players.iter().find(|p| p.id == id));
+    let viewer = if mover.valid {
+        mover.feet + local.cmd.head.pos
+    } else {
+        me.map_or(Vec3::ZERO, |p| p.feet + p.head.pos)
+    };
+    let a = alpha(&time);
+    let n = game.rules.hits_to_tag;
+    rows.retain(|id, (root, _, _)| {
+        let keep = game.snap.players.iter().any(|p| p.id == *id);
+        if !keep && let Ok(mut c) = commands.get_entity(*root) {
+            c.despawn();
+        }
+        keep
+    });
+    for p in &game.snap.players {
+        let enemy = me.is_some_and(|m| m.team != p.team);
+        let prev = game.prev.players.iter().find(|q| q.id == p.id);
+        let feet = prev.map_or(p.feet, |q| q.feet.lerp(p.feet, a));
+        let top = feet + p.head.pos + Vec3::Y * 0.45;
+        let d = top.distance(viewer);
+        let show = enemy
+            && p.respawn.is_none()
+            && p.hits > 0
+            && !p.cloaked()
+            && p.cloak <= 0.0
+            && d < PIPS_RANGE;
+        let (root, pips, shown_hits) = rows.entry(p.id).or_insert_with(|| {
+            let root = commands
+                .spawn((Transform::from_translation(top), Visibility::Hidden))
+                .id();
+            (root, Vec::new(), u8::MAX)
+        });
+        if let Ok(mut v) = vis.get_mut(*root) {
+            let want = if show {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            };
+            if *v != want {
+                *v = want;
+            }
+        }
+        if !show {
+            continue;
+        }
+        // Built anew when the hits change.
+        if *shown_hits != p.hits || pips.len() != n as usize {
+            for e in pips.drain(..) {
+                commands.entity(e).despawn();
+            }
+            let left = n.saturating_sub(p.hits);
+            for k in 0..n {
+                let lit = k < left;
+                let x = (k as f32 - (n as f32 - 1.0) / 2.0) * 0.1;
+                let e = commands
+                    .spawn((
+                        Mesh3d(mesh.clone()),
+                        MeshMaterial3d(if lit {
+                            palette.bolt_for(Some(p.team))
+                        } else {
+                            palette.accent[2].clone()
+                        }),
+                        Transform::from_xyz(x, 0.0, 0.0).with_scale(Vec3::splat(if lit {
+                            1.0
+                        } else {
+                            0.5
+                        })),
+                        ChildOf(*root),
+                    ))
+                    .id();
+                pips.push(e);
+            }
+            *shown_hits = p.hits;
+        }
+        if let Ok(mut t) = transforms.get_mut(*root) {
+            t.translation = top;
+            // (Turned to the viewer about the vertical; bigger further off.)
+            let to = viewer - top;
+            t.rotation = Quat::from_rotation_y(to.x.atan2(to.z));
+            t.scale = Vec3::splat((d / 8.0).clamp(1.0, 3.0));
+        }
     }
 }
 

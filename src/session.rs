@@ -452,6 +452,33 @@ fn dev_script(
                 }
             });
         }
+        // Local games: the nearest enemy hit once and put 5 m in front of the player (`hurt`).
+        "hurt" => commands.queue(|w: &mut World| {
+            let Some(mut game) = w.get_resource_mut::<Game>() else {
+                return;
+            };
+            let Some(me) = game.me else { return };
+            let Source::Local { sim, .. } = &mut game.source else {
+                return;
+            };
+            let Some((feet, yaw, team)) = sim.player(me).map(|p| (p.feet, p.cmd.yaw, p.team))
+            else {
+                return;
+            };
+            let other = sim
+                .players
+                .iter()
+                .filter(|p| p.team != team && p.alive())
+                .min_by(|a, b| a.feet.distance(feet).total_cmp(&b.feet.distance(feet)))
+                .map(|p| p.id);
+            if let Some(id) = other {
+                let at = feet + Quat::from_rotation_y(yaw) * Vec3::NEG_Z * 5.0;
+                sim.teleport(id, at, yaw + std::f32::consts::PI);
+                if let Some(p) = sim.players.iter_mut().find(|p| p.id == id) {
+                    p.hits = 1;
+                }
+            }
+        }),
         // Local games: everyone's shield on at once.
         "shields-up" => commands.queue(|w: &mut World| {
             let Some(mut game) = w.get_resource_mut::<Game>() else {
