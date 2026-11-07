@@ -689,7 +689,7 @@ fn spawn(mut commands: Commands) {
 }
 
 /// A team's colour in the HUD.
-fn team_color(team: Team) -> Color {
+pub fn team_color(team: Team) -> Color {
     crate::endscreen::team_ui_color(Some(team))
 }
 
@@ -747,9 +747,130 @@ fn color_of(game: &Game, id: PlayerId) -> Color {
         .map_or(neonui::TEXT, |p| team_color(p.team))
 }
 
-fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMut<Feed>) {
+/// The kill feed's lines for `e` (the flat screen's, and VR's on the wrist): text, colour and
+/// seconds shown.
+pub fn feed_entries(e: &SimEvent, game: &Game) -> Vec<(String, Color, f32)> {
     // (Twice as many in the last minute.)
     let pts = |n: u32| if game.snap.double { n * 2 } else { n };
+    let mut out = Vec::new();
+    match *e {
+        SimEvent::TaggedOut { player, by, .. } => {
+            let c = if by == lt_sim::HAZARD || player == by {
+                neonui::PINK
+            } else {
+                color_of(game, by)
+            };
+            let line = if by == lt_sim::HAZARD {
+                format!("{} got zapped", game.name_of(player))
+            } else if player == by {
+                format!("{} tagged themself out", game.name_of(player))
+            } else {
+                // (Points only for tagging out an enemy.)
+                let team = |id| {
+                    game.snap
+                        .players
+                        .iter()
+                        .find(|p| p.id == id)
+                        .map(|p| p.team)
+                };
+                let points = if team(by) != team(player) {
+                    format!(" +{}", pts(game.rules.tag_points))
+                } else {
+                    String::new()
+                };
+                format!(
+                    "{} tagged out {}{points}",
+                    game.name_of(by),
+                    game.name_of(player)
+                )
+            };
+            out.push((line, c, 6.0));
+        }
+        SimEvent::Assist { player, .. } => {
+            out.push((
+                format!(
+                    "{} assist +{}",
+                    game.name_of(player),
+                    pts(game.rules.assist_points)
+                ),
+                neonui::GREEN,
+                3.0,
+            ));
+        }
+        SimEvent::Defended { player, .. } => {
+            out.push((
+                format!(
+                    "{} defended +{}",
+                    game.name_of(player),
+                    pts(game.rules.defend_points)
+                ),
+                neonui::GREEN,
+                3.0,
+            ));
+        }
+        SimEvent::TargetHit { by, target, .. } => {
+            let t = game
+                .level
+                .targets
+                .iter()
+                .find(|t| t.id == target)
+                .map(|t| t.team);
+            out.push((
+                format!(
+                    "{} hit the {:?} target +{}",
+                    game.name_of(by),
+                    t.unwrap_or(Team::Red),
+                    pts(game.rules.target_points)
+                ),
+                neonui::AMBER,
+                3.0,
+            ));
+        }
+        SimEvent::SecondaryHit { by, charged, .. } => {
+            let who = game.name_of(by);
+            out.push((
+                format!(
+                    "{who} hit a secondary target +{}",
+                    pts(game.rules.secondary_points)
+                ),
+                neonui::AMBER,
+                3.0,
+            ));
+            if charged {
+                out.push((
+                    format!("{who} may enter the megatarget room!"),
+                    neonui::GREEN,
+                    5.0,
+                ));
+            }
+        }
+        SimEvent::MegaHit { by, .. } => {
+            out.push((
+                format!(
+                    "{} HIT THE MEGATARGET +{}",
+                    game.name_of(by),
+                    pts(game.rules.megatarget_points)
+                ),
+                neonui::MAGENTA,
+                8.0,
+            ));
+        }
+        SimEvent::MatchOver { scores } => {
+            let (w, c) = if scores[0] > scores[1] {
+                ("RED WINS", team_color(Team::Red))
+            } else if scores[1] > scores[0] {
+                ("BLUE WINS", team_color(Team::Blue))
+            } else {
+                ("DRAW", neonui::TEXT)
+            };
+            out.push((w.to_string(), c, 15.0));
+        }
+        _ => {}
+    }
+    out
+}
+
+fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMut<Feed>) {
     for GameEvent(e) in events.read() {
         // (A hit doesn't cut a tag-out's marker short.)
         if let Some(tag) = hit_confirm(e, &game)
@@ -766,108 +887,8 @@ fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMu
                 feed.points.remove(0);
             }
         }
+        feed.lines.extend(feed_entries(e, &game));
         match *e {
-            SimEvent::TaggedOut { player, by, .. } => {
-                let c = if by == lt_sim::HAZARD || player == by {
-                    neonui::PINK
-                } else {
-                    color_of(&game, by)
-                };
-                let line = if by == lt_sim::HAZARD {
-                    format!("{} got zapped", game.name_of(player))
-                } else if player == by {
-                    format!("{} tagged themself out", game.name_of(player))
-                } else {
-                    // (Points only for tagging out an enemy.)
-                    let team = |id| {
-                        game.snap
-                            .players
-                            .iter()
-                            .find(|p| p.id == id)
-                            .map(|p| p.team)
-                    };
-                    let points = if team(by) != team(player) {
-                        format!(" +{}", pts(game.rules.tag_points))
-                    } else {
-                        String::new()
-                    };
-                    format!(
-                        "{} tagged out {}{points}",
-                        game.name_of(by),
-                        game.name_of(player)
-                    )
-                };
-                feed.lines.push((line, c, 6.0));
-            }
-            SimEvent::Assist { player, .. } => {
-                feed.lines.push((
-                    format!(
-                        "{} assist +{}",
-                        game.name_of(player),
-                        pts(game.rules.assist_points)
-                    ),
-                    neonui::GREEN,
-                    3.0,
-                ));
-            }
-            SimEvent::Defended { player, .. } => {
-                feed.lines.push((
-                    format!(
-                        "{} defended +{}",
-                        game.name_of(player),
-                        pts(game.rules.defend_points)
-                    ),
-                    neonui::GREEN,
-                    3.0,
-                ));
-            }
-            SimEvent::TargetHit { by, target, .. } => {
-                let t = game
-                    .level
-                    .targets
-                    .iter()
-                    .find(|t| t.id == target)
-                    .map(|t| t.team);
-                feed.lines.push((
-                    format!(
-                        "{} hit the {:?} target +{}",
-                        game.name_of(by),
-                        t.unwrap_or(Team::Red),
-                        pts(game.rules.target_points)
-                    ),
-                    neonui::AMBER,
-                    3.0,
-                ));
-            }
-            SimEvent::SecondaryHit { by, charged, .. } => {
-                let who = game.name_of(by);
-                feed.lines.push((
-                    format!(
-                        "{who} hit a secondary target +{}",
-                        pts(game.rules.secondary_points)
-                    ),
-                    neonui::AMBER,
-                    3.0,
-                ));
-                if charged {
-                    feed.lines.push((
-                        format!("{who} may enter the megatarget room!"),
-                        neonui::GREEN,
-                        5.0,
-                    ));
-                }
-            }
-            SimEvent::MegaHit { by, .. } => {
-                feed.lines.push((
-                    format!(
-                        "{} HIT THE MEGATARGET +{}",
-                        game.name_of(by),
-                        pts(game.rules.megatarget_points)
-                    ),
-                    neonui::MAGENTA,
-                    8.0,
-                ));
-            }
             SimEvent::Hit {
                 player, by, pos, ..
             } if Some(player) == game.me => {
@@ -883,16 +904,6 @@ fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMu
                     from: from.unwrap_or(pos),
                     life: MARK_LIFE,
                 });
-            }
-            SimEvent::MatchOver { scores } => {
-                let (w, c) = if scores[0] > scores[1] {
-                    ("RED WINS", team_color(Team::Red))
-                } else if scores[1] > scores[0] {
-                    ("BLUE WINS", team_color(Team::Blue))
-                } else {
-                    ("DRAW", neonui::TEXT)
-                };
-                feed.lines.push((w.to_string(), c, 15.0));
             }
             _ => {}
         }

@@ -243,7 +243,7 @@ impl Plugin for VrPlugin {
             .add_systems(Update, menu_buttons.in_set(InputSet))
             .add_systems(
                 Update,
-                (place_rig, wrist, wrist_points, holster)
+                (place_rig, wrist, wrist_points, wrist_glance, holster)
                     .chain()
                     .in_set(PoseSet)
                     .run_if(resource_exists::<Game>),
@@ -1274,6 +1274,161 @@ fn wrist(
         t.translation = head + r * Vec3::new(0.0, -0.1, -1.6);
         t.rotation = r;
     }
+}
+
+/// Turned to look at the wrist display: the scores and the latest of the kill feed over it, and
+/// beside it always a dot lit while a dash is ready.
+#[derive(Default)]
+struct Glance {
+    root: Option<Entity>,
+    dash: Option<Entity>,
+    /// The feed's lines (text, team colour index, seconds left), and what the panel shows.
+    lines: Vec<(String, usize, f32)>,
+    shows: String,
+}
+
+/// Feed lines on the wrist.
+const GLANCE_LINES: usize = 3;
+
+#[allow(clippy::too_many_arguments)]
+fn wrist_glance(
+    mut commands: Commands,
+    mut events: MessageReader<GameEvent>,
+    wrist: Option<Res<Wrist>>,
+    game: Res<Game>,
+    local: Res<LocalCmd>,
+    mover: Res<Mover>,
+    palette: Res<Palette>,
+    time: Res<Time>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    transforms: Query<&Transform>,
+    mut vis: Query<&mut Visibility>,
+    mut g: Local<Glance>,
+) {
+    let Some(w) = wrist else { return };
+    let dt = time.delta_secs();
+    let colour = |c: Color| {
+        if c == crate::hud::team_color(lt_sim::Team::Red) {
+            0
+        } else if c == crate::hud::team_color(lt_sim::Team::Blue) {
+            1
+        } else {
+            2
+        }
+    };
+    for GameEvent(e) in events.read() {
+        for (text, c, secs) in crate::hud::feed_entries(e, &game) {
+            g.lines.push((text, colour(c), secs.max(6.0)));
+        }
+    }
+    for l in &mut g.lines {
+        l.2 -= dt;
+    }
+    g.lines.retain(|l| l.2 > 0.0);
+    let n = g.lines.len().saturating_sub(GLANCE_LINES);
+    g.lines.drain(..n);
+    let Some(p) = game
+        .me
+        .and_then(|me| game.snap.players.iter().find(|p| p.id == me))
+    else {
+        return;
+    };
+    // The dash's dot.
+    let dash = *g.dash.get_or_insert_with(|| {
+        commands
+            .spawn((
+                Mesh3d(meshes.add(Sphere::new(0.0045))),
+                MeshMaterial3d(palette.accent[2].clone()),
+                Transform::from_xyz(0.05, 0.03, 0.0),
+                ChildOf(w.root),
+            ))
+            .id()
+    });
+    if let Ok(mut v) = vis.get_mut(dash) {
+        let want = if p.dash_ready <= 0.0 && p.respawn.is_none() {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *v != want {
+            *v = want;
+        }
+    }
+    // Looking at it: the display's face (+Z) turned to the eyes.
+    let feet = if mover.valid { mover.feet } else { p.feet };
+    let eye = feet + local.cmd.head.pos;
+    let looking = transforms.get(w.root).is_ok_and(|t| {
+        let to_eye = (eye - t.translation).normalize_or_zero();
+        (t.rotation * Vec3::Z).dot(to_eye) > 0.8 && t.translation.distance(eye) < 0.7
+    });
+    let [r, b] = game.snap.scores;
+    let shows = if looking {
+        let mut s = format!("RED {r}  BLUE {b}");
+        for l in &g.lines {
+            s.push('\n');
+            s.push_str(&l.0);
+        }
+        s
+    } else {
+        String::new()
+    };
+    if shows == g.shows {
+        return;
+    }
+    g.shows = shows;
+    if let Some(e) = g.root.take()
+        && let Ok(mut c) = commands.get_entity(e)
+    {
+        c.despawn();
+    }
+    if !looking {
+        return;
+    }
+    let root = commands
+        .spawn((
+            Transform::from_xyz(0.0, 0.075, 0.0),
+            Visibility::default(),
+            ChildOf(w.root),
+        ))
+        .id();
+    // The scores, each team's in its colour.
+    let h = 0.008;
+    segtext::spawn(
+        &mut commands,
+        &mut meshes,
+        root,
+        &format!("RED {r}"),
+        h,
+        Vec3::new(-0.004, 0.035, 0.0),
+        Align::Right,
+        &palette.accent[0],
+        None,
+    );
+    segtext::spawn(
+        &mut commands,
+        &mut meshes,
+        root,
+        &format!("BLUE {b}"),
+        h,
+        Vec3::new(0.004, 0.035, 0.0),
+        Align::Left,
+        &palette.accent[1],
+        None,
+    );
+    for (k, l) in g.lines.iter().rev().enumerate() {
+        segtext::spawn(
+            &mut commands,
+            &mut meshes,
+            root,
+            &l.0.to_uppercase(),
+            0.0055,
+            Vec3::new(0.0, 0.018 - k as f32 * 0.011, 0.0),
+            Align::Center,
+            &palette.accent[l.1],
+            None,
+        );
+    }
+    g.root = Some(root);
 }
 
 fn blink_slow(time: &Time) -> bool {
