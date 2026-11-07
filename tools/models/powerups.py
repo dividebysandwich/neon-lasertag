@@ -25,6 +25,7 @@ Meshes (game frame, Y up, metres):
   ~0.42 m tall, origin at the centre.
 - `medbeam`: a cross (the med beam) with a wavy beam under it, ~0.32 m wide, ~0.42 m tall,
   origin at the centre.
+- `dual`: two pistols crossed, ~0.42 m wide, ~0.3 m tall, origin at the centre.
 - `shotgun`: the pump shotgun a player holds, in the blaster's frame (barrel along -Z, up +Y,
   origin at the middle of the grip hold), with `hit_1`/`hit_2`/`hit_3` lights on top of the
   receiver (hit_1 nearest the player) and a `muzzle` disc; the empty `shotgun_muzzle` marks the
@@ -314,6 +315,26 @@ def build_medbeam():
     return g
 
 
+def build_dual():
+    g = L.Geo()
+    for s, z in ((-1, -0.025), (1, 0.025)):
+        a = math.radians(35) * s
+        ca, sa = math.cos(a), math.sin(a)
+
+        def rot(pts):
+            return [(x * ca - y * sa, y * ca + x * sa) for x, y in pts]
+
+        # Barrel and slide along +x (mirrored), the grip down from its back.
+        barrel = rot([(-0.06 * s, 0.0), (0.2 * s, 0.0), (0.2 * s, 0.05), (-0.06 * s, 0.05)])
+        grip = rot([(-0.06 * s, 0.0), (-0.0 * s, 0.0), (-0.03 * s, -0.11), (-0.09 * s, -0.11)])
+        tip = rot([(0.17 * s, 0.008), (0.205 * s, 0.008), (0.205 * s, 0.042), (0.17 * s, 0.042)])
+        for poly, mat in ((barrel, "body"), (grip, "body"), (tip, "accent")):
+            if L.signed_area(poly) < 0:
+                poly.reverse()
+            slab(g, poly, z - 0.018, z + 0.018, mat, front_mat="accent" if mat == "body" else None)
+    return g
+
+
 def build_shotgun():
     g = L.Geo()
 
@@ -388,7 +409,8 @@ def main():
                         ("charge", build_charge), ("barrier", build_barrier),
                         ("ricochet", build_ricochet), ("lance", build_lance),
                         ("mirror", build_mirror), ("sensor", build_sensor),
-                        ("decoy", build_decoy), ("medbeam", build_medbeam)):
+                        ("decoy", build_decoy), ("medbeam", build_medbeam),
+                        ("dual", build_dual)):
         g = build()
         L.make_object(name, g)
         print("powerup %s %d tris" % (name, g.tris()))

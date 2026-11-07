@@ -123,11 +123,15 @@ pub fn first_hit(feet: Vec3, eye: Vec3, cmd: &PlayerCmd, a: Vec3, b: Vec3) -> Op
             take(ray_sphere(a, d, p, HAND_RADIUS, len), Part::Hand);
         }
     }
-    if cmd.gun_hand.is_some() {
-        let p = feet + cmd.muzzle.pos;
-        if cmd.muzzle.pos != Vec3::ZERO && p.is_finite() && (p - eye).length() < 1.5 {
+    // (Dual pistols: the second too.)
+    for (hand, muzzle) in [(cmd.gun_hand, cmd.muzzle), (cmd.gun2_hand, cmd.muzzle2)] {
+        if hand.is_none() {
+            continue;
+        }
+        let p = feet + muzzle.pos;
+        if muzzle.pos != Vec3::ZERO && p.is_finite() && (p - eye).length() < 1.5 {
             take(
-                ray_obb(a, d, p, unit(cmd.muzzle.rot), GUN_MIN, GUN_MAX, len),
+                ray_obb(a, d, p, unit(muzzle.rot), GUN_MIN, GUN_MAX, len),
                 Part::Gun,
             );
         }

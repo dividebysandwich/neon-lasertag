@@ -47,6 +47,8 @@ pub struct Rules {
     pub lance_cooldown: f32,
     pub lance_cost: u16,
     pub lance_head_damage: u8,
+    /// Each of the dual pistols' least time between shots.
+    pub dual_cooldown: f32,
     pub move_speed: f32,
     /// Jumping: the upward speed (m/s), how long after walking off an edge one still may (s),
     /// and how long before landing a press still counts (s).
@@ -199,6 +201,7 @@ impl Default for Rules {
             lance_cooldown: 1.2,
             lance_cost: 2,
             lance_head_damage: 2,
+            dual_cooldown: 0.45,
             move_speed: 4.0,
             crouch_factor: 0.5,
             countdown: 3.0,

@@ -397,6 +397,8 @@ pub struct LocalCmd {
     pub cmd: PlayerCmd,
     /// The trigger was pulled since the last tick (so a quick click isn't lost between ticks).
     pub fire_latch: bool,
+    /// The same for the second of dual pistols.
+    pub fire2_latch: bool,
     /// Seconds more to hold the trigger down (testing: `LT_DEV` `fire=S`), and a barrier to
     /// put up (`barrier`).
     pub dev_fire: f32,
@@ -474,6 +476,10 @@ fn step_game(
         cmd.fire = true;
         local.fire_latch = false;
     }
+    if local.fire2_latch {
+        cmd.fire2 = true;
+        local.fire2_latch = false;
+    }
     if local.dev_fire > 0.0 {
         cmd.fire = true;
         local.dev_fire -= lt_sim::TICK;
@@ -484,6 +490,7 @@ fn step_game(
     // (Nobody fires in the countdown: no bolt shown that the sim won't fire.)
     if matches!(game.snap.phase, lt_sim::MatchPhase::Countdown(_)) {
         cmd.fire = false;
+        cmd.fire2 = false;
     }
     // A throw is sent once.
     local.cmd.throw = None;

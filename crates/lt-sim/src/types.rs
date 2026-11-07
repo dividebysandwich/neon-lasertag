@@ -75,6 +75,9 @@ pub enum PickupKind {
     /// whose shot reaches `Rules::lance_range` at once and deals `Rules::lance_head_damage`
     /// hits to the head (for `Rules::lance_cost` shots); taking one also fills it up.
     Lance,
+    /// Dual pistols instead of the blaster until tagged out: one in each hand, each firing at
+    /// `Rules::dual_cooldown`, sharing the shots; taking them also fills them up.
+    Dual,
     /// A gadget: a mirror put up like a barrier (`PlayerCmd::gadget`) for `Rules::mirror_time`,
     /// turning back every bolt that meets it, anyone's.
     Mirror,
@@ -95,7 +98,7 @@ pub enum PickupKind {
 }
 
 impl PickupKind {
-    pub const ALL: [PickupKind; 14] = [
+    pub const ALL: [PickupKind; 15] = [
         PickupKind::Grenade,
         PickupKind::Rapid,
         PickupKind::Shield,
@@ -110,9 +113,10 @@ impl PickupKind {
         PickupKind::Sensor,
         PickupKind::Decoy,
         PickupKind::Medbeam,
+        PickupKind::Dual,
     ];
     /// The powerups (everything but the grenade).
-    pub const POWERUPS: [PickupKind; 13] = [
+    pub const POWERUPS: [PickupKind; 14] = [
         PickupKind::Rapid,
         PickupKind::Shield,
         PickupKind::Shotgun,
@@ -126,6 +130,7 @@ impl PickupKind {
         PickupKind::Sensor,
         PickupKind::Decoy,
         PickupKind::Medbeam,
+        PickupKind::Dual,
     ];
 
     pub fn name(self) -> &'static str {
@@ -144,6 +149,7 @@ impl PickupKind {
             PickupKind::Sensor => "pulse sensor",
             PickupKind::Decoy => "decoy",
             PickupKind::Medbeam => "med beam",
+            PickupKind::Dual => "dual pistols",
         }
     }
 
@@ -164,6 +170,7 @@ impl PickupKind {
             PickupKind::Sensor => "sensor",
             PickupKind::Decoy => "decoy",
             PickupKind::Medbeam => "medbeam",
+            PickupKind::Dual => "dual",
         }
     }
 
@@ -175,9 +182,11 @@ impl PickupKind {
     pub fn pool(self) -> Option<Pool> {
         match self {
             PickupKind::Grenade => None,
-            PickupKind::Shotgun | PickupKind::Charge | PickupKind::Ricochet | PickupKind::Lance => {
-                Some(Pool::Weapon)
-            }
+            PickupKind::Shotgun
+            | PickupKind::Charge
+            | PickupKind::Ricochet
+            | PickupKind::Lance
+            | PickupKind::Dual => Some(Pool::Weapon),
             PickupKind::Barrier
             | PickupKind::Mirror
             | PickupKind::Sensor
@@ -196,6 +205,7 @@ impl PickupKind {
             PickupKind::Charge => Some(Weapon::Charge),
             PickupKind::Ricochet => Some(Weapon::Ricochet),
             PickupKind::Lance => Some(Weapon::Lance),
+            PickupKind::Dual => Some(Weapon::Dual),
             _ => None,
         }
     }
@@ -224,6 +234,8 @@ pub enum Weapon {
     Ricochet,
     /// Hitscan: the shot crosses `Rules::lance_range` at once, a head hit counts double.
     Lance,
+    /// A pistol in each hand (`PlayerCmd::gun2_hand`), sharing the shots.
+    Dual,
 }
 
 /// A carried gadget (one at a time, used with `PlayerCmd::gadget`).
@@ -416,6 +428,13 @@ pub struct PlayerCmd {
     /// The blaster's muzzle relative to the feet; bolts leave from here along its forward.
     pub muzzle: Pose,
     pub fire: bool,
+    /// Dual pistols: the hand holding the second, its muzzle (as `muzzle`) and its trigger.
+    #[serde(default)]
+    pub gun2_hand: Option<Hand>,
+    #[serde(default)]
+    pub muzzle2: Pose,
+    #[serde(default)]
+    pub fire2: bool,
     /// A grenade is in this hand (drawn, not yet thrown).
     pub grenade_hand: Option<Hand>,
     /// The player is in VR (its throws get `Rules::vr_throw_factor`).

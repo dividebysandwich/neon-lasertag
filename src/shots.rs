@@ -33,6 +33,8 @@ struct Flying {
 #[derive(Default)]
 pub struct Shots {
     gun: Gun,
+    /// Dual pistols' second.
+    gun2: Gun,
     /// Shots fired (`PlayerCmd::shot`), and the ammo each cost, until the server's state
     /// includes them.
     seq: u32,
@@ -86,25 +88,74 @@ impl Shots {
         self.gun.weapon = me.weapon;
         self.gun.cooldown = me.cooldown;
         self.gun.tick();
+        // (Dual pistols: the second's trigger, sharing the shots.)
+        self.gun2.ammo = self.gun.ammo;
+        self.gun2.rapid = me.rapid;
+        self.gun2.weapon = me.weapon;
+        self.gun2.cooldown = me.cooldown;
+        self.gun2.tick();
         if me.respawn.is_some() {
             self.gun.prev_fire = cmd.fire;
             self.gun.charging = None;
+            self.gun2.prev_fire = cmd.fire2;
             return;
         }
         let player = id;
-        let shot = match self.gun.trigger(cmd.fire, cmd.gun_hand.is_some(), rules) {
-            None => return,
-            Some(Trigger::Denied) => return out.push(SimEvent::Denied { player }),
-            Some(Trigger::Empty) => return out.push(SimEvent::Empty { player }),
-            Some(Trigger::ChargeFull) => return out.push(SimEvent::ChargeFull { player }),
-            Some(Trigger::Fire(s)) => s,
-        };
-        self.gun.fired(shot, rules);
+        // Both triggers first (the second's with the first's shot paid), then the shots, in
+        // order (as the sim numbers them).
+        let mut fired = Vec::new();
+        for second in [false, true] {
+            let t = if second {
+                if me.weapon != lt_sim::Weapon::Dual {
+                    self.gun2.prev_fire = cmd.fire2;
+                    continue;
+                }
+                self.gun2.ammo = self.gun.ammo;
+                self.gun2.trigger(cmd.fire2, cmd.gun2_hand.is_some(), rules)
+            } else {
+                self.gun.trigger(cmd.fire, cmd.gun_hand.is_some(), rules)
+            };
+            match t {
+                None => {}
+                Some(Trigger::Denied) => out.push(SimEvent::Denied { player }),
+                Some(Trigger::Empty) => out.push(SimEvent::Empty { player }),
+                Some(Trigger::ChargeFull) => out.push(SimEvent::ChargeFull { player }),
+                Some(Trigger::Fire(shot)) => {
+                    if second {
+                        self.gun2.fired(shot, rules);
+                        self.gun.ammo = self.gun2.ammo;
+                    } else {
+                        self.gun.fired(shot, rules);
+                    }
+                    fired.push((shot, second));
+                }
+            }
+        }
+        for (shot, second) in fired {
+            self.fire(cmd, me, feet, world, rules, id, shot, second, out);
+        }
+    }
+
+    /// One shot fired (`trigger`): counted, and its bolts flying.
+    #[allow(clippy::too_many_arguments)]
+    fn fire(
+        &mut self,
+        cmd: &mut PlayerCmd,
+        me: &PlayerSnap,
+        feet: Vec3,
+        world: &World,
+        rules: &Rules,
+        id: PlayerId,
+        shot: Shot,
+        second: bool,
+        out: &mut Vec<SimEvent>,
+    ) {
+        let player = id;
         self.seq += 1;
         cmd.shot = self.seq;
         self.costs.push_back((self.seq, shot.cost(rules)));
         let eye = feet + shot::head_offset(cmd.head.pos);
-        let (from, dir) = shot::muzzle(feet, eye, cmd);
+        let (from, dir) = shot::muzzle_of(feet, eye, cmd, second);
         out.push(SimEvent::Fired {
             player,
             pos: from,

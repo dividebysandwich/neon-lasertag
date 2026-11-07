@@ -2130,6 +2130,7 @@ fn powerup_chip(
         PickupKind::Rapid if p.rapid => chip("RAPID FIRE".into(), None, false),
         PickupKind::Shotgun if p.weapon == Weapon::Shotgun => chip("SHOTGUN".into(), None, false),
         PickupKind::Lance if p.weapon == Weapon::Lance => chip("PRISM LANCE".into(), None, false),
+        PickupKind::Dual if p.weapon == Weapon::Dual => chip("DUAL PISTOLS".into(), None, false),
         PickupKind::Ricochet if p.weapon == Weapon::Ricochet => {
             chip("RICOCHET".into(), None, false)
         }
@@ -2250,6 +2251,15 @@ pub fn pickup_banner(
             "{}: A WALL THAT STOPS ENEMY BOLTS FOR {:.0} S",
             key(Action::Gadget, "GRIP OF THE FREE HAND"),
             rules.barrier_time
+        ),
+        PickupKind::Dual => format!(
+            "A PISTOL IN EACH HAND{}",
+            match controls {
+                Controls::Keys => " - THEY FIRE IN TURN".to_string(),
+                Controls::Vr => {
+                    " - GRIP THE OTHER ONE - SHIELD: LEFT STICK - GADGET: HOLD B OR Y".to_string()
+                }
+            }
         ),
         PickupKind::Medbeam => format!(
             "HOLD {} ON A TEAM MATE: IT HEALS THEIR HITS AND REFILLS THEIR BLASTER",

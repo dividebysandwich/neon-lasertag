@@ -36,6 +36,9 @@ use crate::sevenseg::{Digit, show, spawn_digits};
 /// puts it elsewhere.
 const HOLSTER: Vec3 = Vec3::new(0.23, -0.58, -0.07);
 
+/// Dual pistols: a second jump press within this long (s) dashes instead.
+const DOUBLE_TAP: f32 = 0.3;
+
 fn holster_offset() -> Vec3 {
     static AT: std::sync::OnceLock<Vec3> = std::sync::OnceLock::new();
     *AT.get_or_init(|| {
@@ -124,6 +127,12 @@ pub struct VrState {
     pub rig: Transform,
     last_head: Option<Vec3>,
     pub gun: Option<Hand>,
+    /// Dual pistols: the hand holding the second (gripped anywhere, while the first is
+    /// drawn), and its trigger.
+    pub gun2: Option<Hand>,
+    firing2: bool,
+    /// Dual pistols: seconds since the last jump press (a second quick press dashes).
+    since_jump: f32,
     grenade: Option<Hand>,
     /// The hand that threw the last grenade.
     threw: Option<Hand>,
@@ -477,16 +486,28 @@ fn read_controls(
     let want = if vr.stick_crouch { 1.0 } else { 0.0 };
     vr.crouch += (want - vr.crouch) * (1.0 - (-dt / STICK_CROUCH_TIME).exp());
     local.cmd.yaw = vr.yaw + input.head.map_or(0.0, |h| flat_yaw(h.rotation));
+    // Dual pistols: the left stick's click is the shield, so a quick second jump press dashes.
+    let dual = game
+        .me
+        .and_then(|me| game.snap.players.iter().find(|p| p.id == me))
+        .is_some_and(|p| p.weapon == Weapon::Dual);
+    vr.since_jump += dt;
     // A or X: jump.
     for i in 0..2 {
         let down = input.hands[i].primary;
         if down && !vr.primary_held[i] && !vr.ui {
-            local.cmd.jumps = local.cmd.jumps.wrapping_add(1);
+            if dual && vr.since_jump < DOUBLE_TAP {
+                local.cmd.dashes = local.cmd.dashes.wrapping_add(1);
+                vr.since_jump = DOUBLE_TAP;
+            } else {
+                local.cmd.jumps = local.cmd.jumps.wrapping_add(1);
+                vr.since_jump = 0.0;
+            }
         }
         vr.primary_held[i] = down;
     }
     let click = input.hands[0].stick_click;
-    if click && !vr.stick_held && !vr.ui {
+    if click && !vr.stick_held && !vr.ui && !dual {
         local.cmd.dashes = local.cmd.dashes.wrapping_add(1);
     }
     vr.stick_held = click;
@@ -543,7 +564,28 @@ fn read_controls(
             vr.gripping[i] = gripping;
         }
     }
+    // Dual pistols: the other hand gripping holds the second (only with the first drawn).
+    let other = vr.gun.map(|h| match h {
+        Hand::Left => Hand::Right,
+        Hand::Right => Hand::Left,
+    });
+    match (vr.gun2, other) {
+        (Some(h), Some(o)) if dual && h == o => {
+            if input.hands[h.index()].squeeze < 0.4 {
+                vr.gun2 = None;
+                rumble.play(h.index(), 0.0, 0.035, 0.85);
+            }
+        }
+        (_, Some(o)) if dual && vr.grenade != Some(o) && input.hands[o.index()].squeeze > 0.6 => {
+            if vr.gun2.is_none() {
+                rumble.play(o.index(), 0.0, 0.035, 0.85);
+            }
+            vr.gun2 = Some(o);
+        }
+        _ => vr.gun2 = None,
+    }
     local.cmd.gun_hand = vr.gun;
+    local.cmd.gun2_hand = vr.gun2;
     local.cmd.vr = true;
     let trigger = vr.gun.map_or(0.0, |h| input.hands[h.index()].trigger);
     let was = vr.firing;
@@ -553,6 +595,17 @@ fn read_controls(
     local.cmd.fire = vr.firing && alive && !blocked;
     if vr.firing && !was && alive && !blocked {
         local.fire_latch = true;
+    }
+    let trigger2 = vr.gun2.map_or(0.0, |h| input.hands[h.index()].trigger);
+    let was2 = vr.firing2;
+    vr.firing2 = if was2 {
+        trigger2 > 0.5
+    } else {
+        trigger2 > 0.75
+    };
+    local.cmd.fire2 = vr.firing2 && alive && !blocked;
+    if vr.firing2 && !was2 && alive && !blocked {
+        local.fire2_latch = true;
     }
 
     // The shield: the trigger of the hand without the blaster (the left one, unless it holds
@@ -566,12 +619,20 @@ fn read_controls(
     // The gadget: gripping with that hand away from the holster.
     local.cmd.gadget =
         alive && !blocked && !vr.near[free.index()] && input.hands[free.index()].squeeze > 0.75;
+    // Dual pistols: both hands full; the shield on the left stick's click, the gadget on B or Y
+    // held.
+    if dual {
+        local.cmd.shield = alive && !blocked && input.hands[0].stick_click;
+        local.cmd.gadget =
+            alive && !blocked && (input.hands[0].secondary || input.hands[1].secondary);
+    }
 
-    // The menu (its button: `menu_buttons`), or B / Y held without taking a grenade.
+    // The menu (its button: `menu_buttons`), or B / Y held without taking a grenade (not with
+    // dual pistols: B / Y is the gadget).
     for i in 0..2 {
         let hand = &input.hands[i];
         let (held, opened) = vr.hold[i];
-        if hand.secondary && vr.grenade != Some(hand_of(i)) {
+        if hand.secondary && vr.grenade != Some(hand_of(i)) && !dual {
             let held = held + dt;
             let open = held >= MENU_HOLD && !opened;
             if open {
@@ -615,6 +676,7 @@ fn read_controls(
             for h in [Hand::Right, Hand::Left] {
                 // (Not while B / Y is held for the menu, nor with a panel up.)
                 if has
+                    && !dual
                     && input.hands[h.index()].secondary
                     && vr.gun != Some(h)
                     && vr.hold[h.index()].0 < 0.25
@@ -715,6 +777,17 @@ fn place_rig(
                 };
         local.cmd.muzzle = Pose {
             pos: muzzle,
+            rot: look_rot(p.rot * Vec3::NEG_Z),
+        };
+    }
+    // Dual pistols: the second, held as the first.
+    if let Some(gh) = vr.gun2 {
+        let tilt = gun_tilt(&settings);
+        let hand = &mut local.cmd.hands[gh.index()];
+        hand.rot *= Quat::from_rotation_x(-tilt);
+        let p = *hand;
+        local.cmd.muzzle2 = Pose {
+            pos: p.pos + p.rot * models.muzzle,
             rot: look_rot(p.rot * Vec3::NEG_Z),
         };
     }

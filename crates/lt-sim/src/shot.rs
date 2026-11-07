@@ -63,6 +63,7 @@ impl Gun {
         let base = match self.weapon {
             Weapon::Ricochet => rules.ricochet_cooldown,
             Weapon::Lance => rules.lance_cooldown,
+            Weapon::Dual => rules.dual_cooldown,
             _ => rules.fire_cooldown,
         };
         if self.rapid { base * 0.5 } else { base }
@@ -104,6 +105,7 @@ impl Gun {
                     Weapon::Blaster => return Some(Trigger::Fire(Shot::Bolt)),
                     Weapon::Ricochet => return Some(Trigger::Fire(Shot::Ricochet)),
                     Weapon::Lance => return Some(Trigger::Fire(Shot::Lance)),
+                    Weapon::Dual => return Some(Trigger::Fire(Shot::Bolt)),
                 }
             }
         }
@@ -167,6 +169,19 @@ pub fn muzzle(feet: Vec3, eye: Vec3, cmd: &PlayerCmd) -> (Vec3, Vec3) {
         dir = Quat::from_rotation_y(cmd.yaw) * Vec3::NEG_Z;
     }
     (from, dir.normalize())
+}
+
+/// `muzzle`, for the second of dual pistols (`PlayerCmd::muzzle2`) if `second`.
+pub fn muzzle_of(feet: Vec3, eye: Vec3, cmd: &PlayerCmd, second: bool) -> (Vec3, Vec3) {
+    if second {
+        let c = PlayerCmd {
+            muzzle: cmd.muzzle2,
+            ..*cmd
+        };
+        muzzle(feet, eye, &c)
+    } else {
+        muzzle(feet, eye, cmd)
+    }
 }
 
 /// The seed of a remote player's `seq`-th shot (the shotgun's spread), known to both sides.

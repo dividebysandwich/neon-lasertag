@@ -32,6 +32,8 @@ pub struct Look {
     pub crouch_on: bool,
     /// Zooming in with the prism lance: 0 not at all, 1 all the way (eased).
     pub zoom: f32,
+    /// Dual pistols: the left one's turn to fire (they take turns, a click each).
+    pub left_turn: bool,
 }
 
 /// How far crouching lowers the eyes (m), how long it takes (time constant, s), and how much
@@ -330,10 +332,12 @@ fn read_input(
     // The camera stays over the feet; the head others see turns on its neck in front of it.
     let cam = Vec3::Y * look.eye_height();
     let head = eye_on_neck(cam, view);
-    let shotgun = game
+    let weapon = game
         .me
         .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
-        .is_some_and(|p| p.weapon == Weapon::Shotgun);
+        .map(|p| p.weapon);
+    let shotgun = weapon == Some(Weapon::Shotgun);
+    let dual = weapon == Some(Weapon::Dual);
     // (The shotgun further out, its stock clear of the eye.)
     let hold = if shotgun { SHOTGUN_GRIP } else { GRIP };
     let grip = cam + view * (hold + gun_offset);
@@ -374,7 +378,31 @@ fn read_input(
         pos: muzzle,
         rot: muzzle_rot,
     };
-    cmd.fire = grabbed && !overlays.hold_fire && on(Action::Fire);
+    // Dual pistols: the second in the left hand, mirrored; a click fires each in turn.
+    let pull = grabbed && !overlays.hold_fire && settings.just_pressed(Action::Fire, &input);
+    if dual {
+        let flip = Vec3::new(-1.0, 1.0, 1.0);
+        let grip2 = cam + view * ((hold + gun_offset) * flip);
+        let muzzle2 = grip2 + grip_rot * models.muzzle;
+        cmd.gun2_hand = Some(Hand::Left);
+        cmd.hands[0] = Pose {
+            pos: grip2,
+            rot: grip_rot,
+        };
+        cmd.muzzle2 = Pose {
+            pos: muzzle2,
+            rot: look_rot(aim - (feet + muzzle2)),
+        };
+        if pull {
+            look.left_turn = !look.left_turn;
+        }
+    } else {
+        cmd.gun2_hand = None;
+        look.left_turn = false;
+    }
+    let held = grabbed && !overlays.hold_fire && on(Action::Fire);
+    cmd.fire = held && !(dual && look.left_turn);
+    cmd.fire2 = held && dual && look.left_turn;
     if grabbed && settings.just_pressed(Action::Jump, &input) {
         cmd.jumps = cmd.jumps.wrapping_add(1);
     }
@@ -383,22 +411,30 @@ fn read_input(
     }
     cmd.shield = grabbed && on(Action::Shield);
     cmd.gadget = grabbed && on(Action::Gadget);
-    if grabbed && !overlays.hold_fire && settings.just_pressed(Action::Fire, &input) {
-        local.fire_latch = true;
+    if pull {
+        if dual && look.left_turn {
+            local.fire2_latch = true;
+        } else {
+            local.fire_latch = true;
+        }
     }
     let cmd = &mut local.cmd;
     let has = game
         .me
         .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
-        .is_some_and(|p| p.grenades > 0);
+        .is_some_and(|p| p.grenades > 0)
+        // (No grenades with dual pistols: both hands are full.)
+        && !dual;
     // (`.1`: shown for testing, `LT_DEV` "arc".)
     let holding = grabbed && has && on(Action::Grenade) || arc.1;
     let released = settings.just_released(Action::Grenade, &input);
     let off_hand = cam + view * Vec3::new(-0.22, -0.18, -0.35);
-    cmd.hands[0] = Pose {
-        pos: off_hand,
-        rot: view,
-    };
+    if !dual {
+        cmd.hands[0] = Pose {
+            pos: off_hand,
+            rot: view,
+        };
+    }
     let throw_vel = view * Vec3::NEG_Z * 11.0 + Vec3::Y * 2.5;
     arc.0 = None;
     if holding {

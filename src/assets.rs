@@ -242,6 +242,7 @@ fn powerup_mesh(kind: lt_sim::PickupKind) -> &'static str {
         lt_sim::PickupKind::Sensor => "sensor",
         lt_sim::PickupKind::Decoy => "decoy",
         lt_sim::PickupKind::Medbeam => "medbeam",
+        lt_sim::PickupKind::Dual => "dual",
     }
 }
 

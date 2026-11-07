@@ -67,6 +67,9 @@ pub struct Player {
     pub moves: Moves,
     pub cmd: PlayerCmd,
     prev_fire: bool,
+    /// Dual pistols: the second's trigger and time to its next shot.
+    prev_fire2: bool,
+    fire_cd2: f32,
     /// Hits taken since the last respawn.
     pub hits: u8,
     /// Time left of the blaster's lockout after a hit (no hits taken meanwhile either).
@@ -194,6 +197,22 @@ impl Player {
             weapon: self.weapon,
             cooldown: self.cooldown,
         }
+    }
+
+    /// The second of dual pistols' trigger (the shots are shared).
+    pub fn gun2(&self) -> Gun {
+        Gun {
+            prev_fire: self.prev_fire2,
+            fire_cd: self.fire_cd2,
+            charging: None,
+            ..self.gun()
+        }
+    }
+
+    fn set_gun2(&mut self, g: Gun) {
+        self.prev_fire2 = g.prev_fire;
+        self.fire_cd2 = g.fire_cd;
+        self.ammo = g.ammo;
     }
 
     fn set_gun(&mut self, g: Gun) {
@@ -620,6 +639,9 @@ pub struct PlayerSnap {
     pub charging: f32,
     /// `Player::gadget`.
     pub gadget: Option<(Gadget, u8)>,
+    /// `PlayerCmd::gun2_hand`.
+    #[serde(default)]
+    pub gun2_hand: Option<Hand>,
     /// `Player::medbeam_left`, `mending`.
     #[serde(default)]
     pub medbeam_left: f32,
@@ -829,6 +851,8 @@ impl Sim {
             moves: Moves::default(),
             cmd: PlayerCmd::default(),
             prev_fire: false,
+            prev_fire2: false,
+            fire_cd2: 0.0,
             hits: 0,
             cooldown: 0.0,
             protect: 0.0,
@@ -1278,6 +1302,9 @@ impl Sim {
                 let mut gun = p.gun();
                 gun.tick();
                 p.set_gun(gun);
+                let mut gun = p.gun2();
+                gun.tick();
+                p.set_gun2(gun);
                 match p.respawn.as_mut() {
                     Some(t) => {
                         *t -= TICK;
@@ -1318,6 +1345,7 @@ impl Sim {
                 let p = &mut self.players[i];
                 p.cmd.throw = None;
                 p.prev_fire = p.cmd.fire;
+                p.prev_fire2 = p.cmd.fire2;
                 continue;
             }
 
@@ -1563,20 +1591,42 @@ impl Sim {
                 }
             }
 
-            // Firing (`Gun::trigger`).
+            // Firing (`Gun::trigger`; dual pistols: each, the first's shot paid for before the
+            // second's trigger, and numbered first when both fire at once).
             let mut gun = p.gun();
             let trigger = gun.trigger(p.cmd.fire, p.cmd.gun_hand.is_some(), &rules);
             p.set_gun(gun);
-            let player = p.id;
-            match trigger {
-                Some(Trigger::Denied) => self.events.push(SimEvent::Denied { player }),
-                Some(Trigger::Empty) => self.events.push(SimEvent::Empty { player }),
-                Some(Trigger::ChargeFull) => self.events.push(SimEvent::ChargeFull { player }),
-                Some(Trigger::Fire(shot)) => {
-                    self.players[i].protect = 0.0;
-                    self.fire(i, shot, &rules)
+            let mut triggers = vec![(trigger, false)];
+            if p.weapon == Weapon::Dual {
+                let mut gun2 = p.gun2();
+                if let Some(Trigger::Fire(s)) = trigger {
+                    gun2.ammo = gun2.ammo.saturating_sub(s.cost(&rules));
                 }
-                None => {}
+                let t2 = gun2.trigger(p.cmd.fire2, p.cmd.gun2_hand.is_some(), &rules);
+                p.prev_fire2 = gun2.prev_fire;
+                triggers.push((t2, true));
+            } else {
+                p.prev_fire2 = p.cmd.fire2;
+            }
+            let player = p.id;
+            let shots = triggers
+                .iter()
+                .filter(|t| matches!(t.0, Some(Trigger::Fire(_))))
+                .count() as u32;
+            let mut k = 0;
+            for (trigger, second) in triggers {
+                match trigger {
+                    Some(Trigger::Denied) => self.events.push(SimEvent::Denied { player }),
+                    Some(Trigger::Empty) => self.events.push(SimEvent::Empty { player }),
+                    Some(Trigger::ChargeFull) => self.events.push(SimEvent::ChargeFull { player }),
+                    Some(Trigger::Fire(shot)) => {
+                        self.players[i].protect = 0.0;
+                        k += 1;
+                        let seq = self.players[i].cmd.shot.wrapping_sub(shots - k);
+                        self.fire(i, shot, &rules, second, seq)
+                    }
+                    None => {}
+                }
             }
 
             // Throwing.
@@ -1619,18 +1669,24 @@ impl Sim {
 
     /// Player `pi` fires (it may: see `step_players`): a blaster bolt, the shotgun's spread of
     /// short-lived bolts or the charge gun's beam.
-    fn fire(&mut self, pi: usize, shot: Shot, rules: &Rules) {
+    fn fire(&mut self, pi: usize, shot: Shot, rules: &Rules, second: bool, seq: u32) {
         let seed = self.rng.random::<u64>();
         let p = &mut self.players[pi];
-        let mut gun = p.gun();
-        gun.fired(shot, rules);
-        p.set_gun(gun);
+        if second {
+            let mut gun = p.gun2();
+            gun.fired(shot, rules);
+            p.set_gun2(gun);
+        } else {
+            let mut gun = p.gun();
+            gun.fired(shot, rules);
+            p.set_gun(gun);
+        }
         p.decloak = rules.cloak_flash;
         p.shots += 1;
         let eye = p.eye();
-        let (from, dir) = crate::shot::muzzle(p.feet, eye, &p.cmd);
+        let (from, dir) = crate::shot::muzzle_of(p.feet, eye, &p.cmd, second);
         let (id, team, view) = (p.id, p.team, p.cmd.view_tick);
-        let (client, seq) = (p.client_hits, p.cmd.shot);
+        let client = p.client_hits;
         // A client judging its hits made the same spread.
         let seed = if client {
             crate::shot::shot_seed(id, seq)
@@ -3056,6 +3112,7 @@ impl Sim {
                     revealed: p.revealed,
                     charging: p.charging.unwrap_or(0.0),
                     gadget: p.gadget,
+                    gun2_hand: p.cmd.gun2_hand.filter(|_| p.weapon == Weapon::Dual),
                     medbeam_left: p.medbeam_left,
                     mending: p.mending,
                     shot: p.cmd.shot,
@@ -4436,6 +4493,79 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, SimEvent::BountySurvived { player } if *player == a))
         );
+    }
+
+    #[test]
+    fn dual_pistols_fire_from_each_hand_sharing_the_shots() {
+        let (mut sim, a, _) = duel();
+        sim.rules.reload_rate = 0.0;
+        sim.players[1].feet = Vec3::new(0.0, 0.0, 100.0);
+        sim.give(a, PickupKind::Dual);
+        assert_eq!(sim.player(a).unwrap().weapon, Weapon::Dual);
+        let right = Vec3::new(0.25, 1.4, -0.2);
+        let left = Vec3::new(-0.25, 1.4, -0.2);
+        let cmd = PlayerCmd {
+            gun_hand: Some(Hand::Right),
+            gun2_hand: Some(Hand::Left),
+            muzzle: Pose {
+                pos: right,
+                rot: Quat::IDENTITY,
+            },
+            muzzle2: Pose {
+                pos: left,
+                rot: Quat::IDENTITY,
+            },
+            ..Default::default()
+        };
+        let feet = sim.player(a).unwrap().feet;
+        let mine = |sim: &Sim| -> Vec<Bolt> {
+            sim.bolts.iter().filter(|b| b.owner == a).copied().collect()
+        };
+        // The left one alone: a bolt from the left hand.
+        sim.set_cmd(a, PlayerCmd { fire2: true, ..cmd });
+        sim.step();
+        let b = mine(&sim);
+        assert_eq!(b.len(), 1);
+        assert!(
+            (b[0].pos - (feet + left)).length() < 1.7,
+            "{:?}",
+            b[0].pos - feet
+        );
+        assert!(b[0].pos.x < feet.x, "from the left");
+        assert_eq!(sim.player(a).unwrap().ammo, sim.rules.ammo - 1);
+        // Both at once (the left one's still cooling down: only the right fires).
+        sim.set_cmd(
+            a,
+            PlayerCmd {
+                fire: true,
+                fire2: false,
+                ..cmd
+            },
+        );
+        sim.step();
+        assert_eq!(sim.player(a).unwrap().ammo, sim.rules.ammo - 2);
+        // Later, both together: two shots, numbered in turn.
+        sim.set_cmd(a, cmd);
+        for _ in 0..(sim.rules.dual_cooldown / TICK) as usize + 2 {
+            sim.step();
+        }
+        sim.bolts.clear();
+        sim.set_cmd(
+            a,
+            PlayerCmd {
+                fire: true,
+                fire2: true,
+                shot: 9,
+                ..cmd
+            },
+        );
+        sim.step();
+        assert_eq!(mine(&sim).len(), 2);
+        assert_eq!(sim.player(a).unwrap().ammo, sim.rules.ammo - 4);
+        // Lost with a tag-out: the blaster again, one hand.
+        sim.players[0].lose_powerups();
+        assert_eq!(sim.player(a).unwrap().weapon, Weapon::Blaster);
+        assert_eq!(sim.snapshot().players[0].gun2_hand, None);
     }
 
     #[test]

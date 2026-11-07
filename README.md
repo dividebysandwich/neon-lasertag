@@ -80,6 +80,7 @@ gadget at a time; a new one replaces the old.
 | Charge gun | Replaces your blaster: hold the trigger to charge a beam that pierces players and deals two hits. |
 | Ricochet rifle | Replaces your blaster: slower-firing bolts that bounce off every wall up to 3 times (but not off targets). |
 | Prism lance | Replaces your blaster: a slow marksman rifle whose shot hits instantly; a head hit counts as two. Zoom with Z / mouse button 5 (VR: a laser sight). |
+| Dual pistols | Replaces your blaster: a pistol in each hand, sharing the shots. Flat screen: clicks fire them in turn. VR: grip the second with your free hand; while you hold both, the shield is on the left stick's click, the gadget on holding B / Y, a quick double jump dashes, and there are no grenades. |
 | Cloak | Nearly invisible for 100 s; you flicker into view when you fire or are hit. |
 | Barrier | Put up a wall of light for 8 s that blocks enemy bolts but lets your team's through. |
 | Mirror | Put up a mirror for 15 s that turns back every bolt, anyone's. |

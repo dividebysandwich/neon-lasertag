@@ -48,6 +48,8 @@ struct AvatarParts {
     coil: Entity,
     charge_glow: Entity,
     gun_hits: Vec<(Entity, u8)>,
+    /// Dual pistols: the second, a blaster in the other hand.
+    gun2: Entity,
     grenade: Entity,
     /// The shield's beam of light (a child of `root`), with its light on the player.
     beam: Entity,
@@ -373,6 +375,19 @@ fn spawn_avatar(
             ChildOf(blaster),
         ))
         .id();
+    let gun2 = commands
+        .spawn((Transform::IDENTITY, Visibility::Hidden))
+        .id();
+    gun_hits.extend(spawn_dual(
+        commands,
+        gun2,
+        &models.blaster,
+        palette,
+        team,
+        &ghost_mat,
+        &mut solid,
+        &mut ghost,
+    ));
     let grenade = commands
         .spawn((Transform::IDENTITY, Visibility::Hidden))
         .id();
@@ -412,6 +427,7 @@ fn spawn_avatar(
         coil,
         charge_glow,
         gun_hits,
+        gun2,
         grenade,
         beam,
         solid,
@@ -487,6 +503,7 @@ fn sync_players(
         for (_, v) in views.players.drain() {
             commands.entity(v.root).despawn();
             commands.entity(v.gun).despawn();
+            commands.entity(v.gun2).despawn();
             commands.entity(v.grenade).despawn();
         }
     }
@@ -503,6 +520,7 @@ fn sync_players(
         if let Some(v) = views.players.remove(&id) {
             commands.entity(v.root).despawn();
             commands.entity(v.gun).despawn();
+            commands.entity(v.gun2).despawn();
             commands.entity(v.grenade).despawn();
         }
     }
@@ -572,6 +590,12 @@ fn sync_players(
         } else {
             (p.hands, p.gun_hand, p.grenade_hand, feet)
         };
+        let gun2_hand = if me && !local.autopilot && mover.valid {
+            local.cmd.gun2_hand
+        } else {
+            p.gun2_hand
+        }
+        .filter(|_| p.weapon == Weapon::Dual);
         let place = |t: &mut Transform, pose: &Pose| {
             t.translation = base + pose.pos;
             t.rotation = pose.rot;
@@ -602,6 +626,12 @@ fn sync_players(
         }
         if let Some(h) = gun_hand
             && let Ok(mut t) = transforms.get_mut(v.gun)
+        {
+            place(&mut t, &hands[h.index()]);
+        }
+        set_vis(&mut vis, v.gun2, alive && gun2_hand.is_some());
+        if let Some(h) = gun2_hand
+            && let Ok(mut t) = transforms.get_mut(v.gun2)
         {
             place(&mut t, &hands[h.index()]);
         }
