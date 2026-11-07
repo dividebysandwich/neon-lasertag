@@ -304,12 +304,29 @@ fn out_of_game(
 }
 
 /// Testing without controllers (`LT_VR_FAKE_HANDS=1`): the right hand points ahead and a little
-/// down (at a panel's second button), the left one is at the holster.
-fn fake_hands(mut input: ResMut<XrInput>, vr: Res<VrState>, mut on: Local<Option<bool>>) {
-    let on = *on.get_or_insert_with(|| std::env::var("LT_VR_FAKE_HANDS").is_ok_and(|v| v == "1"));
-    let Some(head) = input.head.filter(|_| on) else {
+/// down (at a panel's second button), the left one is at the holster (`LT_VR_FAKE_HANDS=wrist`:
+/// held up before the eyes, its wrist display turned to them).
+fn fake_hands(
+    mut input: ResMut<XrInput>,
+    vr: Res<VrState>,
+    mut mode: Local<Option<Option<String>>>,
+) {
+    let mode = mode.get_or_insert_with(|| {
+        std::env::var("LT_VR_FAKE_HANDS")
+            .ok()
+            .filter(|v| v == "1" || v == "wrist")
+    });
+    let Some(head) = input.head.filter(|_| mode.is_some()) else {
         return;
     };
+    if mode.as_deref() == Some("wrist") && input.hands[0].grip.is_none() {
+        let rot = Quat::from_rotation_y(flat_yaw(head.rotation));
+        // (The wrist display is turned by -1.2 rad about the hand's x: undone.)
+        let t = Transform::from_translation(head.translation + rot * Vec3::new(-0.02, -0.2, -0.3))
+            .with_rotation(rot * Quat::from_rotation_x(1.2 - 0.5));
+        input.hands[0].grip = Some(t);
+        input.hands[0].aim = Some(t);
+    }
     let rot = Quat::from_rotation_y(flat_yaw(head.rotation));
     if input.hands[1].grip.is_none() {
         let at = head.translation + rot * Vec3::new(0.2, -0.25, -0.35);
@@ -764,12 +781,32 @@ struct Wrist {
     panel_digits: Vec<Digit>,
     mega_digits: Vec<Digit>,
     mega_pips: [Entity; 2],
-    /// Small copies of the powerups one has, in a row along the top.
-    powerups: Vec<(PickupKind, Entity)>,
+    /// Small copies of the powerups one has, in a row along the top, and under each a bar in
+    /// its colour draining with its time left (shown while it runs).
+    powerups: Vec<(PickupKind, Entity, Entity)>,
 }
 
 /// The wrist's powerup icons' size (of the pickups').
 const ICON_SCALE: f32 = 0.08;
+/// The width of a full powerup timer bar under its icon (m).
+const TIMER_WIDTH: f32 = 0.024;
+
+/// How full a running powerup's timer is (shield, cloak, speed boost; the charge gun's charge),
+/// `None` while it isn't running.
+fn powerup_timer(
+    p: &lt_sim::sim::PlayerSnap,
+    kind: PickupKind,
+    rules: &lt_sim::Rules,
+) -> Option<f32> {
+    let k = match kind {
+        PickupKind::Shield if p.shield > 0.0 => p.shield / rules.shield_time,
+        PickupKind::Cloak if p.cloak > 0.0 => p.cloak / rules.cloak_time,
+        PickupKind::Speed if p.speed > 0.0 => p.speed / rules.speed_time,
+        PickupKind::Charge if p.charging > 0.0 => p.charging / rules.charge_time,
+        _ => return None,
+    };
+    Some(k.clamp(0.0, 1.0))
+}
 
 fn spawn_wrist(
     mut commands: Commands,
@@ -830,6 +867,7 @@ fn spawn_wrist(
             ))
             .id()
     });
+    let timer = meshes.add(Cuboid::new(TIMER_WIDTH, 0.003, 0.002));
     let powerups = PickupKind::POWERUPS
         .iter()
         .filter_map(|&k| {
@@ -842,7 +880,20 @@ fn spawn_wrist(
                 ))
                 .id();
             crate::actors::spawn_powerup(&mut commands, e, model, &palette, k);
-            Some((k, e))
+            let accent = palette
+                .pickup
+                .get(&k)
+                .map_or(white.clone(), |m| m.0.clone());
+            let bar = commands
+                .spawn((
+                    Mesh3d(timer.clone()),
+                    MeshMaterial3d(accent),
+                    Transform::IDENTITY,
+                    Visibility::Hidden,
+                    ChildOf(root),
+                ))
+                .id();
+            Some((k, e, bar))
         })
         .collect();
     let panel = commands
@@ -918,14 +969,30 @@ fn wrist(
     // The powerups, side by side along the top (a running shield flickering in its last two
     // seconds).
     let mut x = -0.03;
-    for &(kind, e) in &w.powerups {
+    for &(kind, e, bar) in &w.powerups {
         let has = p.respawn.is_none() && p.has(kind);
-        // (A running shield or speed boost flickers in its last two seconds.)
+        // (A running shield, cloak or speed boost flickers in its last two seconds.)
         let ending = match kind {
             PickupKind::Shield => p.shield > 0.0 && p.shield <= 2.0,
             PickupKind::Speed => p.speed <= 2.0,
+            PickupKind::Cloak => p.cloak <= 2.0,
             _ => false,
         };
+        let timer = powerup_timer(p, kind, &game.rules).filter(|_| has);
+        if let Ok(mut v) = vis.get_mut(bar) {
+            *v = if timer.is_some() {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            };
+        }
+        if let Some(k) = timer
+            && let Ok(mut t) = transforms.get_mut(bar)
+        {
+            // (Draining towards its left end.)
+            t.translation = Vec3::new(x - TIMER_WIDTH / 2.0 * (1.0 - k), 0.088, 0.0);
+            t.scale = Vec3::new(k.max(0.01), 1.0, 1.0);
+        }
         let on = has && (!ending || (time.elapsed_secs() * 10.0).fract() < 0.6);
         if let Ok(mut v) = vis.get_mut(e) {
             *v = if on {

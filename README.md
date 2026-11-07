@@ -164,7 +164,7 @@ nearest other player 4 m (M m) in front of you; Megatarget mode: `power` hits bo
 you there; `warp-mirror` puts you before the nearest mirror, `warp-pad` (or `warp-pad=M`) 1 m (M m) before
 the nearest jump pad, `warp-gate` before the nearest laser gate; `yaw=DEG` and `pitch=DEG` turn the flat screen's view),
 `LT_MENU=top|botmatch|multiplayer|internet|lan|host-lan|host-internet` opens the start menu at
-that level, `LT_MASTER=URL` asks another master server, `LT_VR_MENU=1` opens the VR menu, `LT_VR_FAKE_HANDS=1` fakes controllers, `LT_HOLSTER=x,y,z`
+that level, `LT_MASTER=URL` asks another master server, `LT_VR_MENU=1` opens the VR menu, `LT_VR_FAKE_HANDS=1` fakes controllers (`wrist`: the free hand held up, showing its wrist display), `LT_HOLSTER=x,y,z`
 moves the holster (from the eyes; default `0.23,-0.58,-0.07`). `LT_GUN_TILT=DEG` turns the
 blaster nose down in the hand by that much from the controller's aim (default 15), for a more
 upright handle.
