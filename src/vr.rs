@@ -1034,9 +1034,12 @@ fn wrist(
     };
     let pose = local.cmd.hands[hand.index()];
     if let Ok(mut t) = transforms.get_mut(w.root) {
-        // On the back of the wrist, tilted towards the eyes.
-        t.translation = feet + pose.pos + pose.rot * Vec3::new(0.0, 0.035, 0.06);
-        t.rotation = pose.rot * Quat::from_rotation_x(-1.2);
+        // On the back of the wrist, tilted towards the eyes, floating clear of the glove (it
+        // rises up to 21 mm through the display's plane at the cuff).
+        let tilt = Quat::from_rotation_x(-1.2);
+        t.translation =
+            feet + pose.pos + pose.rot * (Vec3::new(0.0, 0.035, 0.06) + tilt * Vec3::Z * 0.03);
+        t.rotation = pose.rot * tilt;
     }
     let blink = p.cooldown <= 0.0 || (time.elapsed_secs() * 8.0).fract() < 0.5;
     let n = game.rules.hits_to_tag.min(MAX_BARS as u8);
