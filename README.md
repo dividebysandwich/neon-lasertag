@@ -128,6 +128,7 @@ it. You lose them all when you're tagged out.
 | grenade | hold B (or Y), throw, let go | hold G or the right mouse button (shows the throw's arc and where it goes off), let go |
 | shield (powerup) | trigger of the hand without the blaster | Q |
 | barrier (powerup) | grip of the hand without the blaster, away from the holster | E |
+| scores | in the in-game menu | hold Tab |
 | menu | menu button (left Touch controller), or hold B / Y for a second without a grenade; point and pull the trigger | Esc |
 
 ## Command Parameters
@@ -173,7 +174,7 @@ nearest other player 4 m (M m) in front of you; Megatarget mode: `power` hits bo
 you there; `warp-mirror` puts you before the nearest mirror, `warp-pad` (or `warp-pad=M`) 1 m (M m) before
 the nearest jump pad, `warp-gate` before the nearest laser gate; `yaw=DEG` and `pitch=DEG` turn the flat screen's view),
 `LT_MENU=top|botmatch|multiplayer|internet|lan|host-lan|host-internet` opens the start menu at
-that level, `LT_MASTER=URL` asks another master server, `LT_VR_MENU=1` opens the VR menu, `LT_VR_FAKE_HANDS=1` fakes controllers (`wrist`: the free hand held up, showing its wrist display), `LT_HOLSTER=x,y,z`
+that level, `LT_MASTER=URL` asks another master server, `LT_VR_MENU=1` opens the VR menu, `LT_SCORES=1` shows the flat screen's scores as if Tab were held, `LT_VR_FAKE_HANDS=1` fakes controllers (`wrist`: the free hand held up, showing its wrist display), `LT_HOLSTER=x,y,z`
 moves the holster (from the eyes; default `0.23,-0.58,-0.07`). `LT_GUN_TILT=DEG` turns the
 blaster nose down in the hand by that much from the controller's aim (default 15), for a more
 upright handle.

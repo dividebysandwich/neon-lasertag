@@ -21,10 +21,11 @@ pub enum Action {
     Grenade,
     Shield,
     Barrier,
+    Scores,
 }
 
 impl Action {
-    pub const ALL: [Action; 10] = [
+    pub const ALL: [Action; 11] = [
         Action::Forward,
         Action::Back,
         Action::Left,
@@ -35,6 +36,7 @@ impl Action {
         Action::Grenade,
         Action::Shield,
         Action::Barrier,
+        Action::Scores,
     ];
 
     pub fn name(self) -> &'static str {
@@ -49,6 +51,7 @@ impl Action {
             Action::Grenade => "Grenade (hold, let go)",
             Action::Shield => "Shield (switch on)",
             Action::Barrier => "Barrier (put up)",
+            Action::Scores => "Scores (hold)",
         }
     }
 
@@ -64,6 +67,7 @@ impl Action {
             Action::Grenade => "grenade",
             Action::Shield => "shield",
             Action::Barrier => "barrier",
+            Action::Scores => "scores",
         }
     }
 
@@ -80,6 +84,7 @@ impl Action {
             Action::Grenade => [Some(Key(KeyCode::KeyG)), Some(Mouse(MouseButton::Right))],
             Action::Shield => [Some(Key(KeyCode::KeyQ)), None],
             Action::Barrier => [Some(Key(KeyCode::KeyE)), None],
+            Action::Scores => [Some(Key(KeyCode::Tab)), None],
         }
     }
 }

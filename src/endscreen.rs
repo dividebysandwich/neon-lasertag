@@ -170,6 +170,9 @@ pub fn team_ui_color(team: Option<Team>) -> Color {
 
 #[derive(Component)]
 struct EndRoot;
+/// The scores during a match, while the scores key is held.
+#[derive(Component)]
+struct ScoresRoot;
 
 #[derive(Component)]
 struct Countdown;
@@ -184,7 +187,7 @@ pub struct EndScreenPlugin;
 
 impl Plugin for EndScreenPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (show, countdown, buttons).chain());
+        app.add_systems(Update, (show, countdown, buttons, scoreboard).chain());
     }
 }
 
@@ -483,4 +486,62 @@ mod tests {
         assert_eq!(won.len(), 4);
         assert_eq!(won[0].detail, "50% accuracy");
     }
+}
+
+/// During a match, while the scores key is held: both teams' tables (refreshed twice a second).
+#[allow(clippy::too_many_arguments)]
+fn scoreboard(
+    mut commands: Commands,
+    game: Option<Res<Game>>,
+    overlays: Res<Overlays>,
+    settings: Res<crate::settings::Settings>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    time: Res<Time>,
+    root: Query<Entity, With<ScoresRoot>>,
+    mut age: Local<f32>,
+) {
+    let held = settings.pressed(
+        crate::settings::Action::Scores,
+        &crate::settings::Inputs {
+            keys: &keys,
+            mouse: &mouse,
+        },
+    ) || std::env::var("LT_SCORES").is_ok_and(|v| v == "1");
+    let want = held && !overlays.end && !overlays.menu && !overlays.options;
+    let game = game.filter(|_| want);
+    *age += time.delta_secs();
+    let shown = root.single().ok();
+    let Some(game) = game else {
+        if let Some(e) = shown {
+            commands.entity(e).despawn();
+        }
+        return;
+    };
+    if shown.is_some() && *age < 0.5 {
+        return;
+    }
+    *age = 0.0;
+    if let Some(e) = shown {
+        commands.entity(e).despawn();
+    }
+    let rows = standings(&game);
+    let [r, b] = game.snap.scores;
+    commands
+        .spawn((
+            ScoresRoot,
+            neonui::backdrop(Color::srgba(0.01, 0.0, 0.03, 0.8), 14),
+        ))
+        .with_children(|p| {
+            p.spawn(label("SCORES", 22.0, Color::srgb(0.6, 0.6, 0.7)));
+            p.spawn(Node {
+                column_gap: Val::Px(40.0),
+                align_items: AlignItems::FlexStart,
+                ..default()
+            })
+            .with_children(|t| {
+                table(t, Team::Red, r, &rows[0]);
+                table(t, Team::Blue, b, &rows[1]);
+            });
+        });
 }

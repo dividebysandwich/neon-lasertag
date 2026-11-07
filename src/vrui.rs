@@ -496,11 +496,20 @@ fn short(name: &str, n: usize) -> String {
     name.chars().take(n).collect::<String>().to_uppercase()
 }
 
-fn build_menu(b: &mut Builder, local: bool) -> Vec<Button> {
-    let size = Vec2::new(0.8, if local { 0.88 } else { 0.72 });
+fn build_menu(b: &mut Builder, game: &Game) -> Vec<Button> {
+    let local = game.is_local();
+    // The buttons, and under them the scores as they stand.
+    let rows = standings(game);
+    let n = rows[0].len() + rows[1].len();
+    let buttons_h = if local { 0.88 } else { 0.72 };
+    let scores_h = 2.0 * (0.12 + 0.02) + n as f32 * ROW + 0.04;
+    let size = Vec2::new(1.0, buttons_h + scores_h);
     b.backing(size, Hue::Magenta);
     let top = size.y / 2.0;
     b.title("MENU", 0.06, top - 0.1);
+    let [r, bl] = game.snap.scores;
+    let y = team_block(b, Team::Red, r, &rows[0], top - buttons_h, size.x);
+    team_block(b, Team::Blue, bl, &rows[1], y, size.x);
     let mut acts = vec![("RESUME", Act::Resume, Hue::Cyan)];
     if local {
         acts.push(("NEW MATCH", Act::NewMatch, Hue::Amber));
@@ -1063,7 +1072,7 @@ fn panels(
             };
             let (buttons, countdown_at) = match (kind, game.as_deref()) {
                 (Kind::Lobby, _) => (build_lobby(&mut b, &model), Vec3::ZERO),
-                (Kind::Menu, Some(g)) => (build_menu(&mut b, g.is_local()), Vec3::ZERO),
+                (Kind::Menu, Some(g)) => (build_menu(&mut b, g), Vec3::ZERO),
                 (Kind::End, Some(g)) => build_end(&mut b, g),
                 _ => (Vec::new(), Vec3::ZERO),
             };
