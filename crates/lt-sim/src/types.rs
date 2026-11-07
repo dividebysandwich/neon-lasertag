@@ -138,6 +138,23 @@ pub enum MatchPhase {
     Live,
 }
 
+/// What tagged a player out (`SimEvent::TaggedOut`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TagHow {
+    #[default]
+    Blaster,
+    Shotgun,
+    Beam,
+    Grenade,
+    Turret,
+    /// A laser gate.
+    Gate,
+    /// A Megatarget forcefield, or the room's time running out.
+    Field,
+    /// The enemy team's spawn pads.
+    Pad,
+}
+
 /// Something that happens to the whole arena for a while during a match.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ArenaEvent {
@@ -344,6 +361,8 @@ pub enum SimEvent {
         by: PlayerId,
         pos: Vec3,
         respawn_in: f32,
+        #[serde(default)]
+        how: TagHow,
     },
     Respawned {
         player: PlayerId,

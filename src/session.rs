@@ -203,6 +203,7 @@ fn dev_script(
                     by: me.id,
                     pos: e.feet,
                     respawn_in: game.rules.respawn_min,
+                    how: lt_sim::TagHow::Blaster,
                 },
             };
             events.write(crate::game::GameEvent(event));

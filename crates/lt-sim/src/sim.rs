@@ -1215,7 +1215,7 @@ impl Sim {
                 let p = &mut self.players[i];
                 p.feet = feet;
                 p.vy = vy;
-                self.zap(i);
+                self.zap(i, TagHow::Pad);
                 continue;
             }
             let p = &mut self.players[i];
@@ -1750,11 +1750,28 @@ impl Sim {
             p.mega_hits = 0;
             p.power = None;
             p.lose_powerups();
+            let how = if b.owner == HAZARD {
+                // (A gate's bolt stands still.)
+                if b.life <= 0.0 && b.vel == Vec3::ZERO {
+                    TagHow::Gate
+                } else {
+                    TagHow::Turret
+                }
+            } else if b.team.is_none() {
+                TagHow::Grenade
+            } else if b.extra.pierce {
+                TagHow::Beam
+            } else if self.player(b.owner).is_some_and(|s| s.shotgun) {
+                TagHow::Shotgun
+            } else {
+                TagHow::Blaster
+            };
             self.events.push(SimEvent::TaggedOut {
                 player: id,
                 by: b.owner,
                 pos: at,
                 respawn_in: wait,
+                how,
             });
             let hit_by = std::mem::take(&mut self.players[pi].hit_by);
             if b.owner_team != team && b.owner != HAZARD {
@@ -2099,7 +2116,7 @@ impl Sim {
                 zap = true;
             }
             if zap {
-                self.zap(i);
+                self.zap(i, TagHow::Field);
             }
         }
 
@@ -2231,7 +2248,7 @@ impl Sim {
     }
 
     /// Tags player `pi` out without a shooter (a forcefield, the room's timer).
-    fn zap(&mut self, pi: usize) {
+    fn zap(&mut self, pi: usize, how: TagHow) {
         let (team, feet) = (self.players[pi].team, self.players[pi].feet);
         let wait = self.respawn_time(team, feet);
         let p = &mut self.players[pi];
@@ -2248,6 +2265,7 @@ impl Sim {
             by: HAZARD,
             pos: p.eye() - Vec3::Y * 0.4,
             respawn_in: wait,
+            how,
         });
     }
 
@@ -2946,6 +2964,47 @@ mod tests {
         let p = sim.player(a).unwrap();
         assert_eq!((p.score, p.tags), (0, 0));
         assert!(matches!(sim.phase, MatchPhase::Countdown(_)));
+    }
+
+    #[test]
+    fn tag_outs_say_what_did_it() {
+        let (mut sim, a, b) = duel();
+        let how = |sim: &mut Sim, team: Option<Team>, pierce: bool| {
+            let bolt = Bolt {
+                id: 1,
+                owner: b,
+                owner_team: Team::Blue,
+                team,
+                pos: Vec3::ZERO,
+                vel: Vec3::X,
+                life: 1.0,
+                extra: BoltExtra {
+                    pierce,
+                    ..BoltExtra::default()
+                },
+            };
+            sim.players[0].respawn = None;
+            sim.players[0].cooldown = 0.0;
+            sim.players[0].protect = 0.0;
+            sim.players[0].hits = 2;
+            sim.drain_events();
+            sim.hit_player(0, &bolt, Vec3::ZERO);
+            sim.drain_events().into_iter().find_map(|e| match e {
+                SimEvent::TaggedOut { player, how, .. } if player == a => Some(how),
+                _ => None,
+            })
+        };
+        assert_eq!(
+            how(&mut sim, Some(Team::Blue), false),
+            Some(TagHow::Blaster)
+        );
+        assert_eq!(how(&mut sim, None, false), Some(TagHow::Grenade));
+        assert_eq!(how(&mut sim, Some(Team::Blue), true), Some(TagHow::Beam));
+        sim.give(b, PickupKind::Shotgun);
+        assert_eq!(
+            how(&mut sim, Some(Team::Blue), false),
+            Some(TagHow::Shotgun)
+        );
     }
 
     #[test]
