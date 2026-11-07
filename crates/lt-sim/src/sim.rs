@@ -704,6 +704,8 @@ pub struct Sim {
     pub event: Option<(ArenaEvent, f32)>,
     pub next_event: f32,
     pub double: bool,
+    /// The last arena event (the next is another).
+    last_event: Option<ArenaEvent>,
     /// Every player's hit-relevant state at the end of each of the last `HISTORY` ticks.
     history: std::collections::VecDeque<(u64, Vec<Ghost>)>,
     events: Vec<SimEvent>,
@@ -778,6 +780,7 @@ impl Sim {
             event: None,
             next_event: 0.0,
             double: false,
+            last_event: None,
             history: std::collections::VecDeque::with_capacity(HISTORY + 1),
             events: Vec::new(),
             rng: ChaCha8Rng::seed_from_u64(level.seed ^ 0x5EED),
@@ -1825,7 +1828,9 @@ impl Sim {
             Contact::Arena { q, n } => {
                 // A mirror: off it again (as many times as the rules allow), from where it
                 // struck.
-                if let Some(n) = crate::shot::bounce(&self.level, &self.rules, b, q, n) {
+                if let Some(n) =
+                    crate::shot::bounce(&self.level, &self.rules, b, q, n, self.storm())
+                {
                     self.events.push(SimEvent::Reflected {
                         pos: q,
                         normal: n,
@@ -1966,7 +1971,9 @@ impl Sim {
                     }
                 }
                 (Some((_, q, n)), _) => {
-                    if crate::shot::bounce(&self.level, &self.rules, &mut b, q, n).is_none() {
+                    if crate::shot::bounce(&self.level, &self.rules, &mut b, q, n, self.storm())
+                        .is_none()
+                    {
                         break;
                     }
                 }
@@ -2284,11 +2291,12 @@ impl Sim {
             && elapsed >= self.next_event
             && self.time_left > rules.event_quiet
         {
-            let kind = if self.rng.random_bool(0.5) {
-                ArenaEvent::Blackout
-            } else {
-                ArenaEvent::Overdrive
-            };
+            // (Any but the last one.)
+            let kinds: Vec<ArenaEvent> = ArenaEvent::ALL
+                .into_iter()
+                .filter(|k| Some(*k) != self.last_event)
+                .collect();
+            let kind = kinds[self.rng.random_range(0..kinds.len())];
             self.start_event(kind);
             let (lo, hi) = self.rules.event_every;
             self.next_event = elapsed + self.rng.random_range(lo..=hi.max(lo));
@@ -2300,13 +2308,20 @@ impl Sim {
         }
     }
 
+    /// A mirror storm going on.
+    pub fn storm(&self) -> bool {
+        matches!(self.event, Some((ArenaEvent::MirrorStorm, _)))
+    }
+
     /// Starts an arena event now (testing too).
     pub fn start_event(&mut self, kind: ArenaEvent) {
         if let Some((old, _)) = self.event.take() {
             self.events.push(SimEvent::EventEnd { kind: old });
         }
+        self.last_event = Some(kind);
         let length = match kind {
             ArenaEvent::Blackout => self.rules.blackout_time,
+            ArenaEvent::MirrorStorm => self.rules.storm_time,
             // (Over at once; the time is the announcement's.)
             ArenaEvent::Overdrive => {
                 for slot in &mut self.slots {
@@ -3819,23 +3834,27 @@ mod tests {
         let mut b = bolt(true);
         for k in 0..rules.ricochet_bounces {
             assert!(
-                crate::shot::bounce(&level, &rules, &mut b, q, Vec3::NEG_X).is_some(),
+                crate::shot::bounce(&level, &rules, &mut b, q, Vec3::NEG_X, false).is_some(),
                 "bounce {k}"
             );
         }
         assert!(
-            crate::shot::bounce(&level, &rules, &mut b, q, Vec3::NEG_X).is_none(),
+            crate::shot::bounce(&level, &rules, &mut b, q, Vec3::NEG_X, false).is_none(),
             "no more"
         );
         // A blaster bolt stops at a wall.
         let mut b = bolt(false);
-        assert!(crate::shot::bounce(&level, &rules, &mut b, q, Vec3::NEG_X).is_none());
+        assert!(crate::shot::bounce(&level, &rules, &mut b, q, Vec3::NEG_X, false).is_none());
+        // ... but not in a mirror storm: once.
+        let mut b = bolt(false);
+        assert!(crate::shot::bounce(&level, &rules, &mut b, q, Vec3::NEG_X, true).is_some());
+        assert!(crate::shot::bounce(&level, &rules, &mut b, q, Vec3::NEG_X, true).is_none());
         // A ricochet bolt stops at a target panel (and scores there).
         let t = level.targets[0];
         let mut b = bolt(true);
         let on_t = (t.min + t.max) / 2.0;
         assert!(level.scores_at(on_t));
-        assert!(crate::shot::bounce(&level, &rules, &mut b, on_t, Vec3::NEG_X).is_none());
+        assert!(crate::shot::bounce(&level, &rules, &mut b, on_t, Vec3::NEG_X, false).is_none());
 
         // Fired along a wall's normal, it comes back.
         sim.players[1].feet = Vec3::new(0.0, 0.0, 1000.0);
@@ -4218,6 +4237,26 @@ mod tests {
         }
         assert_eq!(sim.player(c).unwrap().hits, 0);
         assert_eq!(sim.player(a).unwrap().gadget, None);
+    }
+
+    #[test]
+    fn arena_events_never_come_twice_in_a_row() {
+        let mut sim = Sim::new(3, Rules::default());
+        let mut last = None;
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..40 {
+            sim.event = None;
+            sim.next_event = 0.0;
+            sim.step();
+            let kind = sim.event.expect("one started").0;
+            assert_ne!(Some(kind), last);
+            last = Some(kind);
+            seen.insert(kind);
+        }
+        assert_eq!(seen.len(), ArenaEvent::ALL.len(), "{seen:?}");
+        sim.start_event(ArenaEvent::MirrorStorm);
+        assert!(sim.storm());
+        assert_eq!(ArenaEvent::parse("storm"), Some(ArenaEvent::MirrorStorm));
     }
 
     #[test]

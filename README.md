@@ -59,8 +59,9 @@ off for 15 s.
 - **Mirrors** bounce a bolt once, so you can bank shots around corners.
 - **Jump pads** throw you up to the upper level.
 - **Laser gates** switch on and off; walking through one while it's on counts as a hit.
-- **Arena events** strike every few minutes: a **Blackout** turns out the lights for 20 s,
-  an **Overdrive** respawns every missing pickup at once.
+- **Arena events** strike every few minutes, never the same twice in a row: a **Blackout**
+  turns out the lights for 20 s, an **Overdrive** respawns every missing pickup at once, and a
+  **Mirror Storm** makes every wall bounce bolts back (once) for 20 s.
 
 ### Pickups
 

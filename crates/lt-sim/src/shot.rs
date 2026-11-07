@@ -341,9 +341,16 @@ pub fn on_box(q: Vec3, min: Vec3, max: Vec3) -> bool {
 }
 
 /// A bolt that struck the arena at `q` (normal `n`): off a mirror again if it struck one and may
-/// still bounce, or off any wall but a scoring panel for a ricochet bolt (the normal it bounced
-/// off), from where it struck.
-pub fn bounce(level: &Level, rules: &Rules, b: &mut Bolt, q: Vec3, n: Vec3) -> Option<Vec3> {
+/// still bounce, or off any wall but a scoring panel for a ricochet bolt or in a mirror storm
+/// (`storm`; the normal it bounced off), from where it struck.
+pub fn bounce(
+    level: &Level,
+    rules: &Rules,
+    b: &mut Bolt,
+    q: Vec3,
+    n: Vec3,
+    storm: bool,
+) -> Option<Vec3> {
     let n = if b.extra.ricochet {
         if b.extra.bounces >= rules.ricochet_bounces || level.scores_at(q) {
             return None;
@@ -353,11 +360,11 @@ pub fn bounce(level: &Level, rules: &Rules, b: &mut Bolt, q: Vec3, n: Vec3) -> O
         if b.extra.bounces >= rules.mirror_bounces {
             return None;
         }
-        level
-            .mirrors
-            .iter()
-            .find(|m| on_box(q, m.min, m.max))?
-            .normal
+        match level.mirrors.iter().find(|m| on_box(q, m.min, m.max)) {
+            Some(m) => m.normal,
+            None if storm && !level.scores_at(q) => n,
+            None => return None,
+        }
     };
     b.vel -= 2.0 * b.vel.dot(n) * n;
     // (The flight moves it on by a tick's worth after this.)

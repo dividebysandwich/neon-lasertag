@@ -311,14 +311,36 @@ pub enum ArenaEvent {
     Blackout,
     /// Every pickup missing from the arena comes back at once.
     Overdrive,
+    /// For `Rules::storm_time` every wall turns a bolt back like a mirror (once).
+    MirrorStorm,
 }
 
 impl ArenaEvent {
+    pub const ALL: [ArenaEvent; 3] = [
+        ArenaEvent::Blackout,
+        ArenaEvent::Overdrive,
+        ArenaEvent::MirrorStorm,
+    ];
+
     pub fn name(self) -> &'static str {
         match self {
             ArenaEvent::Blackout => "BLACKOUT",
             ArenaEvent::Overdrive => "OVERDRIVE",
+            ArenaEvent::MirrorStorm => "MIRROR STORM",
         }
+    }
+
+    /// A short name for scripts (`LT_DEV`).
+    pub fn id(self) -> &'static str {
+        match self {
+            ArenaEvent::Blackout => "blackout",
+            ArenaEvent::Overdrive => "overdrive",
+            ArenaEvent::MirrorStorm => "storm",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<ArenaEvent> {
+        Self::ALL.into_iter().find(|k| k.id() == s)
     }
 }
 

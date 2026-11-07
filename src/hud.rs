@@ -1096,6 +1096,10 @@ fn clock_events(snap: &lt_sim::sim::Snapshot) -> (String, Color) {
         parts.push(format!("BLACKOUT {:.0}", left.ceil()));
         color = Color::srgb(0.75, 0.78, 0.95);
     }
+    if let Some((lt_sim::ArenaEvent::MirrorStorm, left)) = snap.event {
+        parts.push(format!("MIRROR STORM {:.0}", left.ceil()));
+        color = Color::srgb(0.75, 0.95, 1.0);
+    }
     if snap.double {
         parts.push("2X POINTS".to_string());
     }
@@ -2291,6 +2295,19 @@ pub fn event_banner_for(e: &SimEvent, rules: &lt_sim::Rules) -> Option<Banner> {
             "EVERY GRENADE AND POWERUP RESPAWNED".to_string(),
             gold,
         )),
+        SimEvent::EventStart {
+            kind: lt_sim::ArenaEvent::MirrorStorm,
+        } => Some(banner(
+            "MIRROR STORM",
+            format!("EVERY WALL TURNS BOLTS BACK FOR {:.0} S", rules.storm_time),
+            Color::srgb(0.75, 0.95, 1.0),
+        )),
+        SimEvent::EventEnd {
+            kind: lt_sim::ArenaEvent::MirrorStorm,
+        } => Some(Banner {
+            time: 2.0,
+            ..banner("STORM OVER", String::new(), Color::srgb(0.75, 0.95, 1.0))
+        }),
         SimEvent::Countdown { n } => Some(Banner {
             time: 0.95,
             ..banner(

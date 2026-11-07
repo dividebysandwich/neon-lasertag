@@ -673,6 +673,20 @@ def sensor_pulse():
     return echoes(ping + under, [0.18, 0.36, 0.54], [0.4, 0.2, 0.1], 5000)
 
 
+def event_storm():
+    T = 2.2
+    x = seconds(T)
+    # Glass shimmering up: a cloud of bright rings sweeping upwards, over a rising whoosh.
+    out = np.zeros_like(x)
+    for k in range(9):
+        start = 0.08 * k
+        hz = 1400 * 2 ** (k / 6)
+        out += at(T, start, ring(T - start, [hz, hz * 1.5, hz * 2.1], [0.5, 0.35, 0.25],
+                                 [0.4, 0.25, 0.15])) * 0.35
+    whoosh = sweep_noise(T, 400, 9000) * env(T, 0.4, 0.6, hold=0.6) * 0.35
+    return echoes(out + whoosh, [0.12, 0.27], [0.35, 0.18], 7000)
+
+
 def headshot():
     T = 0.5
     x = seconds(T)
@@ -787,6 +801,7 @@ SOUNDS = {
     "event_blackout": (event_blackout, -15.0, 331),
     "event_overdrive": (event_overdrive, -16.0, 341),
     "event_double": (event_double, -16.0, 351),
+    "event_storm": (event_storm, -16.0, 361),
 }
 
 # Sounds played as loops.

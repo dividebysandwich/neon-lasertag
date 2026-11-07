@@ -57,6 +57,7 @@ struct Sounds {
     barrier_down: Handle<AudioSource>,
     event_blackout: Handle<AudioSource>,
     event_overdrive: Handle<AudioSource>,
+    event_storm: Handle<AudioSource>,
     event_double: Handle<AudioSource>,
     tick: Handle<AudioSource>,
     power_up: Handle<AudioSource>,
@@ -149,6 +150,7 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
         barrier_down: s("barrier_down"),
         event_blackout: s("event_blackout"),
         event_overdrive: s("event_overdrive"),
+        event_storm: s("event_storm"),
         event_double: s("event_double"),
         tick: s("power_tick"),
         power_up: s("power_up"),
@@ -492,6 +494,7 @@ fn play_events(
                 let sound = match kind {
                     lt_sim::ArenaEvent::Blackout => &sounds.event_blackout,
                     lt_sim::ArenaEvent::Overdrive => &sounds.event_overdrive,
+                    lt_sim::ArenaEvent::MirrorStorm => &sounds.event_storm,
                 };
                 play(&mut commands, gain, sound, None, 1.0, 1.0)
             }

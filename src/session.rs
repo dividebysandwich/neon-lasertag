@@ -529,9 +529,9 @@ fn dev_script(
                 p.shield = t;
             }
         }),
-        // Local games: start an arena event now (`blackout`, `overdrive`), or go to the last
-        // minute's double points (`double`).
-        "blackout" | "overdrive" | "double" => {
+        // Local games: start an arena event now (`blackout`, `overdrive`, `storm`...), or go to
+        // the last minute's double points (`double`).
+        a if a == "double" || lt_sim::ArenaEvent::parse(a).is_some() => {
             let action = action.clone();
             commands.queue(move |w: &mut World| {
                 let Some(mut game) = w.get_resource_mut::<Game>() else {
@@ -540,10 +540,9 @@ fn dev_script(
                 let Source::Local { sim, .. } = &mut game.source else {
                     return;
                 };
-                match action.as_str() {
-                    "blackout" => sim.start_event(lt_sim::ArenaEvent::Blackout),
-                    "overdrive" => sim.start_event(lt_sim::ArenaEvent::Overdrive),
-                    _ => sim.time_left = sim.time_left.min(sim.rules.double_last + 0.5),
+                match lt_sim::ArenaEvent::parse(&action) {
+                    Some(kind) => sim.start_event(kind),
+                    None => sim.time_left = sim.time_left.min(sim.rules.double_last + 0.5),
                 }
             });
         }

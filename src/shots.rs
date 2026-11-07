@@ -319,7 +319,14 @@ impl Shots {
                     }
                     Contact::Arena { q, n } => {
                         struck.push_back((clock, q));
-                        if let Some(n) = shot::bounce(level, rules, &mut f.bolt, q, n) {
+                        if let Some(n) = shot::bounce(
+                            level,
+                            rules,
+                            &mut f.bolt,
+                            q,
+                            n,
+                            matches!(snap.event, Some((lt_sim::ArenaEvent::MirrorStorm, _))),
+                        ) {
                             out.push(SimEvent::Reflected {
                                 pos: q,
                                 normal: n,
