@@ -445,6 +445,12 @@ fn play_events(
                     .flatten();
                 play(&mut commands, gain, &sounds.charge_full, at, 0.8, 1.0)
             }
+            SimEvent::DecoyOut { pos, .. } => {
+                play(&mut commands, gain, &sounds.power_up, Some(pos), 0.6, 1.4)
+            }
+            SimEvent::DecoyPopped { pos, .. } => {
+                play(&mut commands, gain, &sounds.other_hit, Some(pos), 1.0, 1.35)
+            }
             SimEvent::SensorThrown { pos, .. } => {
                 play(&mut commands, gain, &sounds.throw, Some(pos), 0.7, 1.3)
             }

@@ -2192,6 +2192,11 @@ pub fn pickup_banner(
             key(Action::Gadget, "GRIP OF THE FREE HAND"),
             rules.barrier_time
         ),
+        PickupKind::Decoy => format!(
+            "{}: A COPY OF YOU RUNS AHEAD FOR {:.0} S AND DRAWS FIRE",
+            key(Action::Gadget, "GRIP OF THE FREE HAND"),
+            rules.decoy_time
+        ),
         PickupKind::Sensor => format!(
             "{}: THROW IT - IT SHOWS ENEMIES WITHIN {:.0} M FOR {:.0} S",
             key(Action::Gadget, "GRIP OF THE FREE HAND"),

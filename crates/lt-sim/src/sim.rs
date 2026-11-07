@@ -396,6 +396,67 @@ pub struct Sensor {
     pub next_pulse: f32,
 }
 
+/// A decoy: a copy of player `owner` as it was when sent off (its `cmd`: head, hands, gun),
+/// running along `yaw` until popped or its time's up.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Decoy {
+    pub id: u32,
+    pub team: Team,
+    pub owner: PlayerId,
+    pub feet: Vec3,
+    pub vy: f32,
+    pub cmd: PlayerCmd,
+    pub left: f32,
+}
+
+impl Decoy {
+    pub fn eye(&self) -> Vec3 {
+        self.feet + crate::shot::head_offset(self.cmd.head.pos)
+    }
+
+    pub fn chest(&self) -> Vec3 {
+        self.eye() - Vec3::Y * (crate::hitbox::CHEST_DROP + crate::hitbox::CHEST_HALF.y)
+    }
+
+    /// As a bolt can meet it (as its owner: its own team's bolts pass).
+    pub fn target(&self) -> BoltTarget<'_> {
+        BoltTarget {
+            id: self.owner,
+            team: self.team,
+            alive: true,
+            feet: self.feet,
+            eye: self.eye(),
+            cmd: &self.cmd,
+        }
+    }
+
+    pub fn snap(&self) -> DecoySnap {
+        DecoySnap {
+            id: self.id,
+            team: self.team,
+            owner: self.owner,
+            feet: self.feet,
+            yaw: self.cmd.yaw,
+            head: self.cmd.head,
+            hands: self.cmd.hands,
+            gun_hand: self.cmd.gun_hand,
+        }
+    }
+}
+
+/// A decoy as a client draws it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DecoySnap {
+    pub id: u32,
+    pub team: Team,
+    pub owner: PlayerId,
+    pub feet: Vec3,
+    pub yaw: f32,
+    pub head: Pose,
+    pub hands: [Pose; 2],
+    pub gun_hand: Option<Hand>,
+}
+
 /// A barrier: a wall of hard light standing on the floor (`centre` at half its height),
 /// facing `normal` (the way its player looked from, horizontal).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -470,6 +531,9 @@ pub struct Snapshot {
     /// Pulse sensors thrown.
     #[serde(default)]
     pub sensors: Vec<Sensor>,
+    /// Decoys running.
+    #[serde(default)]
+    pub decoys: Vec<DecoySnap>,
     /// The arena event going on (seconds left), and whether points count double.
     pub event: Option<(ArenaEvent, f32)>,
     pub double: bool,
@@ -614,6 +678,8 @@ pub struct Sim {
     pub barriers: Vec<Barrier>,
     /// Pulse sensors thrown.
     pub sensors: Vec<Sensor>,
+    /// Decoys running.
+    pub decoys: Vec<Decoy>,
     /// The arena event going on, with its seconds left; when the next one comes (seconds into
     /// the match); and whether points count double now.
     pub event: Option<(ArenaEvent, f32)>,
@@ -689,6 +755,7 @@ impl Sim {
             }),
             barriers: Vec::new(),
             sensors: Vec::new(),
+            decoys: Vec::new(),
             event: None,
             next_event: 0.0,
             double: false,
@@ -860,6 +927,7 @@ impl Sim {
         self.grenades.clear();
         self.barriers.clear();
         self.sensors.clear();
+        self.decoys.clear();
         self.event = None;
         self.double = false;
         self.time_left = self.rules.match_time;
@@ -939,6 +1007,7 @@ impl Sim {
         self.step_grenades();
         self.step_barriers();
         self.step_sensors();
+        self.step_decoys();
         self.step_pickups();
         self.record();
     }
@@ -1402,6 +1471,34 @@ impl Sim {
                     pos: from,
                 });
             }
+            if press && let Some((Gadget::Decoy, _)) = self.players[i].gadget {
+                let p = &mut self.players[i];
+                p.use_gadget();
+                let (owner, team, feet) = (p.id, p.team, p.feet);
+                let cmd = PlayerCmd {
+                    yaw: p.cmd.yaw,
+                    head: p.cmd.head,
+                    hands: p.cmd.hands,
+                    gun_hand: p.cmd.gun_hand,
+                    muzzle: p.cmd.muzzle,
+                    ..PlayerCmd::default()
+                };
+                let id = self.id();
+                self.decoys.push(Decoy {
+                    id,
+                    team,
+                    owner,
+                    feet,
+                    vy: 0.0,
+                    cmd,
+                    left: rules.decoy_time,
+                });
+                self.events.push(SimEvent::DecoyOut {
+                    id,
+                    player: owner,
+                    pos: feet,
+                });
+            }
             let p = &mut self.players[i];
 
             // A pulse sensor's showing running out.
@@ -1589,13 +1686,24 @@ impl Sim {
     /// panels) and the players it meets, the players as they are now or as they were at the
     /// end of the recorded tick `past`. Applies the hit; true if the bolt is used up.
     fn bolt_tick(&mut self, b: &mut Bolt, past: Option<usize>) -> bool {
+        // (The decoys after the players, as they are now.)
+        let n = self.players.len();
+        let decoys = self
+            .decoys
+            .iter()
+            .enumerate()
+            .map(|(k, d)| (n + k, d.target()));
         let contact = match past {
             None => bolt_contact(
                 &self.world,
                 &self.barriers,
                 &self.rules,
                 b,
-                self.players.iter().map(|p| p.target()).enumerate(),
+                self.players
+                    .iter()
+                    .map(|p| p.target())
+                    .enumerate()
+                    .chain(decoys),
             ),
             Some(h) => {
                 let players = &self.players;
@@ -1615,7 +1723,13 @@ impl Sim {
                         },
                     ))
                 });
-                bolt_contact(&self.world, &self.barriers, &self.rules, b, ghosts)
+                bolt_contact(
+                    &self.world,
+                    &self.barriers,
+                    &self.rules,
+                    b,
+                    ghosts.chain(decoys),
+                )
             }
         };
         if b.extra.lance {
@@ -1656,6 +1770,19 @@ impl Sim {
                     id: self.barriers[index].id,
                     pos: at,
                 });
+                true
+            }
+            Contact::Player { index, at, .. } if index >= n => {
+                let d = self.decoys.swap_remove(index - n);
+                self.events.push(SimEvent::DecoyPopped {
+                    id: d.id,
+                    by: b.owner,
+                    pos: at,
+                });
+                if b.extra.pierce {
+                    b.extra.struck |= 1u64 << (d.owner % 64);
+                    return self.bolt_tick(b, past);
+                }
                 true
             }
             Contact::Player { index, at, part } => {
@@ -2244,6 +2371,28 @@ impl Sim {
         }
     }
 
+    /// Decoys: running on ahead at a player's pace (stopped by walls) until their time is up.
+    fn step_decoys(&mut self) {
+        let speed = self.rules.move_speed;
+        for d in &mut self.decoys {
+            let ahead = Quat::from_rotation_y(d.cmd.yaw) * Vec3::NEG_Z;
+            let delta = Vec2::new(ahead.x, ahead.z) * speed * TICK;
+            (d.feet, d.vy) = self.world.move_body(d.feet, delta, d.vy, TICK);
+            d.left -= TICK;
+        }
+        let events = &mut self.events;
+        self.decoys.retain(|d| {
+            let keep = d.left > 0.0 && d.feet.y > -20.0;
+            if !keep {
+                events.push(SimEvent::DecoyGone {
+                    id: d.id,
+                    pos: d.feet,
+                });
+            }
+            keep
+        });
+    }
+
     fn step_barriers(&mut self) {
         for b in &mut self.barriers {
             b.left -= TICK;
@@ -2761,6 +2910,7 @@ impl Sim {
                 .collect(),
             barriers: self.barriers.clone(),
             sensors: self.sensors.clone(),
+            decoys: self.decoys.iter().map(|d| d.snap()).collect(),
             event: self.event,
             double: self.double,
             phase: self.phase,
@@ -3812,6 +3962,85 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, SimEvent::SensorDown { .. }))
         );
+    }
+
+    #[test]
+    fn decoys_run_ahead_and_pop_at_an_enemy_bolt() {
+        let (mut sim, a, b) = duel();
+        sim.give(a, PickupKind::Decoy);
+        let fa = sim.player(a).unwrap().feet;
+        // Sent off along -z (towards b), into the open.
+        sim.players[1].feet = fa + Vec3::new(30.0, 0.0, 0.0);
+        sim.set_cmd(
+            a,
+            PlayerCmd {
+                yaw: 0.0,
+                gadget: true,
+                ..Default::default()
+            },
+        );
+        sim.step();
+        assert_eq!(sim.decoys.len(), 1);
+        for _ in 0..20 {
+            sim.step();
+        }
+        let d = sim.decoys[0];
+        assert!(d.feet.z < fa.z - 0.5, "ran ahead: {:?} from {fa:?}", d.feet);
+        assert!(
+            sim.snapshot()
+                .decoys
+                .iter()
+                .any(|s| s.id == d.id && s.owner == a)
+        );
+        // A's own bolt passes it; b's pops it.
+        let bolt = |owner, team| Bolt {
+            id: 9,
+            owner,
+            owner_team: team,
+            team: Some(team),
+            pos: d.chest() + Vec3::new(0.8, 0.0, 0.0),
+            vel: Vec3::new(-40.0, 0.0, 0.0),
+            life: 0.2,
+            extra: BoltExtra::default(),
+        };
+        sim.drain_events();
+        sim.bolts.push(bolt(a, Team::Red));
+        for _ in 0..4 {
+            sim.step();
+        }
+        assert_eq!(sim.decoys.len(), 1);
+        let d = sim.decoys[0];
+        sim.bolts.push(Bolt {
+            pos: d.chest() + Vec3::new(0.8, 0.0, 0.0),
+            ..bolt(b, Team::Blue)
+        });
+        for _ in 0..4 {
+            sim.step();
+        }
+        assert!(sim.decoys.is_empty());
+        assert!(
+            sim.drain_events()
+                .iter()
+                .any(|e| matches!(e, SimEvent::DecoyPopped { by, .. } if *by == b))
+        );
+        assert_eq!(sim.player(a).unwrap().hits, 0);
+        // Another runs out of time.
+        sim.give(a, PickupKind::Decoy);
+        sim.set_cmd(a, PlayerCmd::default());
+        sim.step();
+        sim.set_cmd(
+            a,
+            PlayerCmd {
+                gadget: true,
+                ..Default::default()
+            },
+        );
+        sim.step();
+        assert_eq!(sim.decoys.len(), 1);
+        for _ in 0..(sim.rules.decoy_time / TICK) as usize + 1 {
+            sim.step();
+        }
+        assert!(sim.decoys.is_empty());
     }
 
     #[test]

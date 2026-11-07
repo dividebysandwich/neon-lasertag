@@ -103,6 +103,8 @@ pub struct Rules {
     pub sensor_range: f32,
     pub sensor_reveal: f32,
     pub sensor_speed: f32,
+    /// Seconds a decoy runs.
+    pub decoy_time: f32,
     pub barrier_dist: f32,
     pub barrier_w: f32,
     pub barrier_h: f32,
@@ -214,6 +216,7 @@ impl Default for Rules {
             sensor_range: 10.0,
             sensor_reveal: 2.5,
             sensor_speed: 14.0,
+            decoy_time: 6.0,
             barrier_time: 8.0,
             barrier_dist: 1.5,
             barrier_w: 2.4,

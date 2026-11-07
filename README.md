@@ -81,6 +81,7 @@ gadget at a time; a new one replaces the old.
 | Barrier | Put up a wall of light for 8 s that blocks enemy bolts but lets your team's through. |
 | Mirror | Put up a mirror for 15 s that turns back every bolt, anyone's. |
 | Pulse sensor | Throw it; it sticks where it lands and for 20 s marks every enemy within 10 m for your team, through walls and cloaks. |
+| Decoy | Send a copy of yourself running ahead for 6 s; bots take it for you, and a bolt pops it. |
 | Speed boost | Run 50% faster for 15 s. |
 
 ### Controls

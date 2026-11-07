@@ -425,6 +425,34 @@ const BEAM_LIGHT: f32 = 40_000.0;
 /// A bolt's light (lumens).
 const BOLT_LIGHT: f32 = 60_000.0;
 
+/// The players of `snap`, and its decoys as their players look (ids from 224 up: a sim has at
+/// most 32 players, numbered from 0).
+fn with_decoys(snap: &lt_sim::Snapshot) -> Vec<PlayerSnap> {
+    let decoys = snap.decoys.iter().filter_map(|d| {
+        let o = snap.players.iter().find(|p| p.id == d.owner)?;
+        Some(PlayerSnap {
+            id: 224u8.wrapping_add((d.id % 32) as u8),
+            team: d.team,
+            feet: d.feet,
+            yaw: d.yaw,
+            head: d.head,
+            hands: d.hands,
+            gun_hand: d.gun_hand,
+            grenade_hand: None,
+            hits: 0,
+            cooldown: 0.0,
+            protect: 0.0,
+            respawn: None,
+            shield: 0.0,
+            cloak: 0.0,
+            decloak: 0.0,
+            charging: 0.0,
+            ..o.clone()
+        })
+    });
+    snap.players.iter().cloned().chain(decoys).collect()
+}
+
 fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
     let d = (b - a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
     a + d * t
@@ -459,16 +487,13 @@ fn sync_players(
             commands.entity(v.grenade).despawn();
         }
     }
+    // (The decoys drawn as their players, under ids no player has.)
+    let players = with_decoys(&game.snap);
+    let prev_players = with_decoys(&game.prev);
     let gone: Vec<PlayerId> = views
         .players
         .iter()
-        .filter(|(id, v)| {
-            !game
-                .snap
-                .players
-                .iter()
-                .any(|p| p.id == **id && p.team == v.team)
-        })
+        .filter(|(id, v)| !players.iter().any(|p| p.id == **id && p.team == v.team))
         .map(|(id, _)| *id)
         .collect();
     for id in gone {
@@ -487,11 +512,11 @@ fn sync_players(
             .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
             .map(|p| p.feet + p.head.pos)
     };
-    for p in &game.snap.players {
+    for p in &players {
         let v = views.players.entry(p.id).or_insert_with(|| {
             spawn_avatar(&mut commands, p, &models, &palette, &meshes, &mut glows)
         });
-        let prev = game.prev.players.iter().find(|q| q.id == p.id);
+        let prev = prev_players.iter().find(|q| q.id == p.id);
         let feet = prev.map_or(p.feet, |q| q.feet.lerp(p.feet, a));
         let yaw = prev.map_or(p.yaw, |q| lerp_angle(q.yaw, p.yaw, a));
         let me = Some(p.id) == game.me;
@@ -1335,6 +1360,26 @@ fn effects(
                     14,
                     4.0,
                     0.03,
+                    seed,
+                );
+            }
+            // A decoy popped: it bursts into sparks of its team's colour.
+            SimEvent::DecoyPopped { id, pos, .. } => {
+                let team = game
+                    .prev
+                    .decoys
+                    .iter()
+                    .chain(&game.snap.decoys)
+                    .find(|d| d.id == id)
+                    .map(|d| d.team);
+                burst(
+                    &mut commands,
+                    &meshes,
+                    palette.bolt_for(team),
+                    pos,
+                    24,
+                    4.0,
+                    0.035,
                     seed,
                 );
             }

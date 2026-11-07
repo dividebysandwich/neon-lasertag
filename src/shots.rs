@@ -162,15 +162,43 @@ impl Shots {
         out: &mut Vec<SimEvent>,
     ) {
         let cmds: Vec<PlayerCmd> = snap.players.iter().map(snap_cmd).collect();
-        let targets = || {
-            snap.players.iter().zip(&cmds).map(|(p, cmd)| BoltTarget {
-                id: p.id,
-                team: p.team,
-                alive: p.respawn.is_none(),
-                feet: p.feet,
-                eye: p.feet + p.head.pos,
-                cmd,
+        let decoy_cmds: Vec<PlayerCmd> = snap
+            .decoys
+            .iter()
+            .map(|d| PlayerCmd {
+                yaw: d.yaw,
+                head: d.head,
+                hands: d.hands,
+                gun_hand: d.gun_hand,
+                ..Default::default()
             })
+            .collect();
+        // (The decoys after the players: a bolt stops at one, the server pops it.)
+        let targets = || {
+            snap.players
+                .iter()
+                .zip(&cmds)
+                .map(|(p, cmd)| BoltTarget {
+                    id: p.id,
+                    team: p.team,
+                    alive: p.respawn.is_none(),
+                    feet: p.feet,
+                    eye: p.feet + p.head.pos,
+                    cmd,
+                })
+                .chain(
+                    snap.decoys
+                        .iter()
+                        .zip(&decoy_cmds)
+                        .map(|(d, cmd)| BoltTarget {
+                            id: d.owner,
+                            team: d.team,
+                            alive: true,
+                            feet: d.feet,
+                            eye: d.feet + shot::head_offset(d.head.pos),
+                            cmd,
+                        }),
+                )
         };
         let Shots {
             bolts,
@@ -232,6 +260,9 @@ impl Shots {
                             id: snap.barriers[index].id,
                             pos: at,
                         });
+                        gone = true;
+                    }
+                    Contact::Player { index, .. } if index >= snap.players.len() => {
                         gone = true;
                     }
                     Contact::Player { index, at, part } => {

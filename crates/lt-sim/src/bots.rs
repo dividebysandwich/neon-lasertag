@@ -2336,8 +2336,24 @@ impl Controller for Bot {
         let eye = p.eye();
         let body = Quat::from_rotation_y(yaw_of(Vec3::new(self.aim.x, 0.0, self.aim.z)));
         let muzzle = feet + body * Vec3::new(0.18, EYE - 0.25, -0.35);
-        let shoot_at = match target {
-            Some((id, d, point, ok)) => {
+        // An enemy decoy in sight, nearer than the enemy (if any): the bot takes it for one.
+        let fwd = Vec2::new(self.aim.x, self.aim.z).normalize_or_zero();
+        let decoy = sim
+            .decoys
+            .iter()
+            .filter(|d| d.team != p.team)
+            .map(|d| (d.chest(), d.chest().distance(eye)))
+            .filter(|&(c, d)| {
+                let to = c - eye;
+                d < SIGHT
+                    && (d < SENSE || fwd.dot(Vec2::new(to.x, to.z).normalize_or_zero()) > FOV_COS)
+                    && clear(&sim.world, eye, c)
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .filter(|&(_, d)| target.is_none_or(|t| d < t.1));
+        let shoot_at = match (decoy, target) {
+            (Some((c, _)), _) => Some((c, self.seen_for >= self.reaction || target.is_none())),
+            (None, Some((id, d, point, ok))) => {
                 let vel = self
                     .memory
                     .iter()
@@ -2346,7 +2362,7 @@ impl Controller for Bot {
                 let lead = vel * (d / sim.rules.blaster_bolt_speed) * (0.4 + 0.6 * self.skill);
                 Some((point + lead, ok && self.seen_for >= self.reaction))
             }
-            None => self.panel_in_reach(sim, p, eye, muzzle).map(|c| (c, true)),
+            (None, None) => self.panel_in_reach(sim, p, eye, muzzle).map(|c| (c, true)),
         };
         let want = match shoot_at {
             Some((pt, _)) => apply_error((pt - muzzle).normalize_or(self.aim), self.shot_err),
@@ -2405,6 +2421,8 @@ impl Controller for Bot {
         let gadget = match p.gadget_kind() {
             // (A mirror too: it turns their bolts back at them.)
             Some(Gadget::Barrier | Gadget::Mirror) => p.cooldown > 0.0 && target.is_some(),
+            // A decoy runs off to draw fire when hit in a fight.
+            Some(Gadget::Decoy) => p.cooldown > 0.0 && target.is_some(),
             // A sensor goes out ahead, now and then, when no enemy's in sight.
             Some(Gadget::Sensor) => target.is_none() && self.rng.random::<f32>() < TICK / 4.0,
             None => false,

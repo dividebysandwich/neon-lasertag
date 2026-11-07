@@ -82,13 +82,16 @@ pub enum PickupKind {
     /// `Rules::sensor_time` shows the enemies within `Rules::sensor_range` to its team every
     /// `Rules::sensor_every` seconds, through walls and cloaks.
     Sensor,
+    /// A gadget: a copy of its player (`PlayerCmd::gadget`) that runs on ahead for
+    /// `Rules::decoy_time`, drawing fire (a bolt pops it).
+    Decoy,
     /// A gadget, carried until put up (`PlayerCmd::gadget`): a wall of hard light in front of the
     /// player for `Rules::barrier_time`, stopping every bolt but its team's.
     Barrier,
 }
 
 impl PickupKind {
-    pub const ALL: [PickupKind; 12] = [
+    pub const ALL: [PickupKind; 13] = [
         PickupKind::Grenade,
         PickupKind::Rapid,
         PickupKind::Shield,
@@ -101,9 +104,10 @@ impl PickupKind {
         PickupKind::Lance,
         PickupKind::Mirror,
         PickupKind::Sensor,
+        PickupKind::Decoy,
     ];
     /// The powerups (everything but the grenade).
-    pub const POWERUPS: [PickupKind; 11] = [
+    pub const POWERUPS: [PickupKind; 12] = [
         PickupKind::Rapid,
         PickupKind::Shield,
         PickupKind::Shotgun,
@@ -115,6 +119,7 @@ impl PickupKind {
         PickupKind::Lance,
         PickupKind::Mirror,
         PickupKind::Sensor,
+        PickupKind::Decoy,
     ];
 
     pub fn name(self) -> &'static str {
@@ -131,6 +136,7 @@ impl PickupKind {
             PickupKind::Lance => "prism lance",
             PickupKind::Mirror => "mirror",
             PickupKind::Sensor => "pulse sensor",
+            PickupKind::Decoy => "decoy",
         }
     }
 
@@ -149,6 +155,7 @@ impl PickupKind {
             PickupKind::Lance => "lance",
             PickupKind::Mirror => "mirror",
             PickupKind::Sensor => "sensor",
+            PickupKind::Decoy => "decoy",
         }
     }
 
@@ -163,7 +170,9 @@ impl PickupKind {
             PickupKind::Shotgun | PickupKind::Charge | PickupKind::Ricochet | PickupKind::Lance => {
                 Some(Pool::Weapon)
             }
-            PickupKind::Barrier | PickupKind::Mirror | PickupKind::Sensor => Some(Pool::Gadget),
+            PickupKind::Barrier | PickupKind::Mirror | PickupKind::Sensor | PickupKind::Decoy => {
+                Some(Pool::Gadget)
+            }
             PickupKind::Rapid | PickupKind::Shield | PickupKind::Cloak | PickupKind::Speed => {
                 Some(Pool::Power)
             }
@@ -187,6 +196,7 @@ impl PickupKind {
             PickupKind::Barrier => Some(Gadget::Barrier),
             PickupKind::Mirror => Some(Gadget::Mirror),
             PickupKind::Sensor => Some(Gadget::Sensor),
+            PickupKind::Decoy => Some(Gadget::Decoy),
             _ => None,
         }
     }
@@ -211,6 +221,7 @@ pub enum Gadget {
     Barrier,
     Mirror,
     Sensor,
+    Decoy,
 }
 
 impl Gadget {
@@ -219,6 +230,7 @@ impl Gadget {
             Gadget::Barrier => "barrier",
             Gadget::Mirror => "mirror",
             Gadget::Sensor => "pulse sensor",
+            Gadget::Decoy => "decoy",
         }
     }
 }
@@ -465,6 +477,22 @@ pub enum SimEvent {
         seen: u64,
     },
     SensorDown {
+        id: u32,
+        pos: Vec3,
+    },
+    /// A decoy sent off (`Sim::decoys`), popped by a bolt (`by` its shooter), and gone with
+    /// its time up.
+    DecoyOut {
+        id: u32,
+        player: PlayerId,
+        pos: Vec3,
+    },
+    DecoyPopped {
+        id: u32,
+        by: PlayerId,
+        pos: Vec3,
+    },
+    DecoyGone {
         id: u32,
         pos: Vec3,
     },
