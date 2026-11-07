@@ -555,6 +555,30 @@ impl Renderer {
             for item in &list.glows {
                 stats.draws += self.draw_neon(&self.glow, item) as u32;
             }
+            // The overlays (the menus) over everything: depth cleared, and no event pulses on
+            // them (as neon.wgsl's OVERLAY).
+            if !list.overlay_accents.is_empty() || !list.overlay_glows.is_empty() {
+                let none: Vec<f32> = [0.0, 0.0, 0.0, -1.0].repeat(n.pulse_pos.len());
+                for p in [&self.accent, &self.glow] {
+                    gl.use_program(Some(p.program));
+                    gl.uniform_4_f32_slice(p.pulse_pos.as_ref(), &none);
+                }
+                gl.depth_mask(true);
+                gl.clear(glow::DEPTH_BUFFER_BIT);
+                gl.disable(glow::BLEND);
+                gl.enable(glow::CULL_FACE);
+                gl.use_program(Some(self.accent.program));
+                for item in &list.overlay_accents {
+                    stats.draws += self.draw_neon(&self.accent, item) as u32;
+                }
+                gl.enable(glow::BLEND);
+                gl.depth_mask(false);
+                gl.disable(glow::CULL_FACE);
+                gl.use_program(Some(self.glow.program));
+                for item in &list.overlay_glows {
+                    stats.draws += self.draw_neon(&self.glow, item) as u32;
+                }
+            }
             gl.disable(glow::BLEND);
             gl.depth_mask(true);
             gl.enable(glow::CULL_FACE);

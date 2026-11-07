@@ -152,7 +152,7 @@ struct UiMats {
     glow: [Handle<GlowMaterial>; 3],
     /// One's own row (red, blue, white).
     mine: [Handle<GlowMaterial>; 3],
-    back: Handle<StandardMaterial>,
+    back: Handle<AccentMaterial>,
     flash: Vec<Handle<GlowMaterial>>,
     /// A unit cube (strips, lasers) and a unit square of even glow.
     cube: Handle<Mesh>,
@@ -211,16 +211,18 @@ fn make_mats(
     mut commands: Commands,
     mut accents: ResMut<Assets<AccentMaterial>>,
     mut glows: ResMut<Assets<GlowMaterial>>,
-    mut std: ResMut<Assets<StandardMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
+    // (All drawn over the world: the panels, their pointers, the banners and flashes.)
     let fixed = |accents: &mut Assets<AccentMaterial>, c: Vec3, i: f32| {
         accents.add(AccentMaterial {
+            overlay: true,
             neon: NeonUniform::fixed(c, i),
         })
     };
     let glow = |glows: &mut Assets<GlowMaterial>, c: Vec3, i: f32| {
         glows.add(GlowMaterial {
+            overlay: true,
             neon: NeonUniform::fixed(c, i),
         })
     };
@@ -242,12 +244,7 @@ fn make_mats(
         team: teams.map(|t| fixed(&mut accents, team_color(t), 3.5)),
         glow: teams.map(|t| glow(&mut glows, team_color(t), 1.5)),
         mine: teams.map(|t| glow(&mut glows, team_color(t), 2.0)),
-        back: std.add(StandardMaterial {
-            base_color: Color::linear_rgb(0.004, 0.004, 0.012),
-            perceptual_roughness: 1.0,
-            reflectance: 0.0,
-            ..default()
-        }),
+        back: fixed(&mut accents, Vec3::new(0.004, 0.004, 0.012), 1.0),
         flash: (0..SECTORS)
             .map(|_| glow(&mut glows, Vec3::new(1.0, 0.04, 0.02), 0.0))
             .collect(),
@@ -1690,6 +1687,7 @@ fn view_tint(
     let (root, mat) = ring
         .get_or_insert_with(|| {
             let mat = glows.add(GlowMaterial {
+                overlay: true,
                 neon: NeonUniform::fixed(Vec3::ONE, 0.0),
             });
             let root = commands

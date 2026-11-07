@@ -141,6 +141,7 @@ fn make_meshes(
     crate::scenery::cone(&mut beam, top, Vec3::NEG_Y, BEAM_HEIGHT, 0.12, 0.3, 16);
     let c = crate::materials::pickup_color(PickupKind::Shield);
     let beam_mat = glows.add(GlowMaterial {
+        overlay: false,
         neon: crate::materials::NeonUniform::fixed(c, 1.4).volume(),
     });
     commands.insert_resource(ActorMeshes {
@@ -250,6 +251,7 @@ fn spawn_avatar(
 ) -> AvatarParts {
     let team = Some(p.team);
     let ghost_mat = glows.add(GlowMaterial {
+        overlay: false,
         neon: crate::materials::NeonUniform::fixed(CLOAK_TINT, CLOAK_GLOW).cloak(),
     });
     let (mut solid, mut ghost) = (Vec::new(), Vec::new());

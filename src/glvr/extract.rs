@@ -70,6 +70,9 @@ pub struct DrawList {
     pub lit: Vec<LitItem>,
     pub accents: Vec<NeonItem>,
     pub glows: Vec<NeonItem>,
+    /// Overlays (the VR menus: `materials::NeonKey`), drawn last over everything.
+    pub overlay_accents: Vec<NeonItem>,
+    pub overlay_glows: Vec<NeonItem>,
     /// Point lights: position and range (w), colour times strength at 1 m (rgb).
     pub points: Vec<(Vec4, Vec3)>,
     pub culled: u32,
@@ -301,7 +304,12 @@ impl Extractor {
             if !self.take(&frusta, &mut list, meshes, &common) {
                 continue;
             }
-            list.accents.push(NeonItem {
+            let to = if m.overlay {
+                &mut list.overlay_accents
+            } else {
+                &mut list.accents
+            };
+            to.push(NeonItem {
                 mesh: common.0.0.id(),
                 model: common.1.to_matrix(),
                 colour: m.neon.color,
@@ -317,7 +325,12 @@ impl Extractor {
             if !self.take(&frusta, &mut list, meshes, &common) {
                 continue;
             }
-            list.glows.push(NeonItem {
+            let to = if m.overlay {
+                &mut list.overlay_glows
+            } else {
+                &mut list.glows
+            };
+            to.push(NeonItem {
                 mesh: common.0.0.id(),
                 model: common.1.to_matrix(),
                 colour: m.neon.color,

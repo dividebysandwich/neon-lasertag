@@ -59,6 +59,7 @@ const HAZE: f32 = 0.3;
 
 fn glow(glows: &mut Assets<GlowMaterial>, c: Vec3, i: f32) -> Handle<GlowMaterial> {
     glows.add(GlowMaterial {
+        overlay: false,
         neon: NeonUniform::fixed(c, i),
     })
 }
@@ -197,6 +198,7 @@ pub fn spawn(
         floor_ring(&mut floor, *r + Vec3::Y * 0.045, 0.78, 1.7, 24);
     }
     let col_mat = glows.add(GlowMaterial {
+        overlay: false,
         neon: NeonUniform::fixed(WHITE, STATION_COLUMN).volume(),
     });
     let floor_mat = glow(glows, WHITE, STATION_FLOOR);
@@ -254,6 +256,7 @@ pub fn spawn(
     }
     for (k, (colour, m)) in shafts.into_iter().enumerate() {
         let mat = glows.add(GlowMaterial {
+            overlay: false,
             neon: NeonUniform::fixed(colour, SHAFT).volume().dimmable(),
         });
         let b = Breathe {
@@ -280,6 +283,7 @@ pub fn spawn(
             0.55,
         );
         let mat = glows.add(GlowMaterial {
+            overlay: false,
             neon: NeonUniform::fixed(colour, HAZE).haze().dimmable(),
         });
         let b = Breathe {
@@ -315,6 +319,7 @@ pub fn spawn(
             mote(&mut m, p, 0.012 + rand() * 0.014);
         }
         let mat = accents.add(AccentMaterial {
+            overlay: false,
             neon: NeonUniform::fixed(colour, 2.2).dimmable(),
         });
         commands.spawn((

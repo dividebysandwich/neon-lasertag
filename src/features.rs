@@ -144,6 +144,7 @@ pub fn spawn(
         ..default()
     });
     let frame = accents.add(AccentMaterial {
+        overlay: false,
         neon: NeonUniform::fixed(MIRROR, 1.8),
     });
     let bar = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
@@ -162,6 +163,7 @@ pub fn spawn(
         ));
         // A faint tint over the glass.
         let sheen = glows.add(GlowMaterial {
+            overlay: false,
             neon: NeonUniform::fixed(MIRROR, SHEEN),
         });
         commands.spawn((
@@ -173,6 +175,7 @@ pub fn spawn(
         let rot = Quat::from_mat3(&Mat3::from_cols(along, Vec3::Y, n));
         // Glints: diagonal streaks across the glass.
         let streak = accents.add(AccentMaterial {
+            overlay: false,
             neon: NeonUniform::fixed(MIRROR, STREAK),
         });
         let tilt = rot * Quat::from_rotation_z(0.6);
@@ -235,21 +238,26 @@ fn spawn_pads(
     let inner_mesh = meshes.add(Torus::new(0.3, 0.34));
     let disc = meshes.add(Circle::new(PAD_RADIUS - 0.06));
     let disc_mat = glows.add(GlowMaterial {
+        overlay: false,
         neon: NeonUniform::fixed(PAD, 0.5),
     });
     let inner_mat = accents.add(AccentMaterial {
+        overlay: false,
         neon: NeonUniform::fixed(PAD, 1.8),
     });
     // A chevron: two bars in a V, pointing along +Z.
     let bar = meshes.add(Cuboid::new(0.06, 0.03, 0.5));
     let chevron_mat = accents.add(AccentMaterial {
+        overlay: false,
         neon: NeonUniform::fixed(PAD, 3.5),
     });
     for p in &level.pads {
         let ring = accents.add(AccentMaterial {
+            overlay: false,
             neon: NeonUniform::fixed(PAD, 4.0),
         });
         let column = glows.add(GlowMaterial {
+            overlay: false,
             neon: NeonUniform::fixed(PAD, 0.5).volume(),
         });
         let up = p.pos + Vec3::Y * 0.02;
@@ -333,12 +341,15 @@ fn spawn_gates(
         let len = size.dot(across);
         let color = crate::arena::zone_color(level, c);
         let beams = accents.add(AccentMaterial {
+            overlay: false,
             neon: NeonUniform::fixed(color, 6.0),
         });
         let glow = glows.add(GlowMaterial {
+            overlay: false,
             neon: NeonUniform::fixed(color, 1.5),
         });
         let posts = accents.add(AccentMaterial {
+            overlay: false,
             neon: NeonUniform::fixed(color, 3.0),
         });
         let beam = across * len + (Vec3::ONE - across - Vec3::Y) * 0.025 + Vec3::Y * 0.025;
@@ -428,9 +439,11 @@ fn sync_barriers(
         let v = views.0.entry(b.id).or_insert_with(|| {
             let color = team_color(Some(b.team));
             let sheet_mat = glows.add(GlowMaterial {
+                overlay: false,
                 neon: NeonUniform::fixed(color, 2.0).shield(),
             });
             let posts = accents.add(AccentMaterial {
+                overlay: false,
                 neon: NeonUniform::fixed(color, 4.0),
             });
             let rot = Quat::from_rotation_arc(Vec3::Z, b.normal);

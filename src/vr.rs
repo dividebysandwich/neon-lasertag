@@ -669,9 +669,11 @@ fn spawn_holster(
         .spawn((Transform::IDENTITY, Visibility::default(), ChildOf(root)))
         .id();
     let dim = accents.add(AccentMaterial {
+        overlay: false,
         neon: NeonUniform::fixed(team_color(None), 0.5),
     });
     let bright = accents.add(AccentMaterial {
+        overlay: false,
         neon: NeonUniform::fixed(team_color(None), 2.5),
     });
     // A thin ring around the blaster's grip, level with the floor.

@@ -121,6 +121,8 @@ fn neon_color(world: vec3<f32>, uv: vec2<f32>, tint: vec4<f32>) -> vec3<f32> {
         base = neon.color.rgb * (0.45 + 2.2 * pulse);
     }
     var col = base * neon.color.a;
+#ifndef OVERLAY
+    // (Not on overlays: the VR menus don't flash with what happens in the arena.)
     for (var i = 0; i < 8; i++) {
         let p = neon.pulse_pos[i];
         if (p.w < 0.0) {
@@ -135,6 +137,7 @@ fn neon_color(world: vec3<f32>, uv: vec2<f32>, tint: vec4<f32>) -> vec3<f32> {
         let ring = exp(-d * d / 1.2) * (1.0 - age / 2.5);
         col += neon.pulse_color[i].rgb * ring * 8.0;
     }
+#endif
     return col;
 }
 
@@ -194,8 +197,32 @@ fn cloak(world: vec3<f32>, n: vec3<f32>, to_eye: vec3<f32>, t: f32) -> f32 {
     return clamp((0.03 + 0.55 * rim) * (0.5 + 0.9 * crawl) * (0.75 + 0.25 * ripple), 0.0, 1.0);
 }
 
+// Overlays (src/materials.rs NeonKey: the VR menus) are drawn over the world: their depth is
+// squeezed into the sliver next to the near plane (reversed depth, 1 there), keeping their
+// own order, so only what is within OVERLAY_DEPTH of the near plane comes in front.
+#ifdef OVERLAY
+const OVERLAY_DEPTH: f32 = 0.01;
+
+struct OverlayOut {
+    @location(0) color: vec4<f32>,
+    @builtin(frag_depth) depth: f32,
+};
+
+@fragment
+fn fragment(in: VertexOutput) -> OverlayOut {
+    var o: OverlayOut;
+    o.color = shade(in);
+    o.depth = 1.0 - (1.0 - in.position.z) * OVERLAY_DEPTH;
+    return o;
+}
+#else
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+    return shade(in);
+}
+#endif
+
+fn shade(in: VertexOutput) -> vec4<f32> {
     var uv = vec2<f32>(0.5, 0.5);
 #ifdef VERTEX_UVS_A
     uv = in.uv;

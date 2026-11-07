@@ -147,6 +147,7 @@ fn make_materials(
     });
     let mut accent = |c: Vec3, i: f32| {
         accents.add(AccentMaterial {
+            overlay: false,
             neon: NeonUniform::fixed(c, i).dimmable(),
         })
     };
@@ -156,6 +157,7 @@ fn make_materials(
     let stack = STACK_COLORS.map(|c| accent(c, 4.0));
     let mut glow = |c: Vec3, i: f32| {
         glows.add(GlowMaterial {
+            overlay: false,
             neon: NeonUniform::fixed(c, i).dimmable(),
         })
     };
@@ -163,6 +165,7 @@ fn make_materials(
     let stack_glow = STACK_COLORS.map(|c| glow(c, 2.2));
     let mut volume = |c: Vec3, i: f32| {
         glows.add(GlowMaterial {
+            overlay: false,
             neon: NeonUniform::fixed(c, i).volume().dimmable(),
         })
     };

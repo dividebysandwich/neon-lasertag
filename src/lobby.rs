@@ -106,11 +106,13 @@ fn make(
         .iter()
         .map(|&c| {
             accents.add(AccentMaterial {
+                overlay: false,
                 neon: NeonUniform::fixed(c, 9.0),
             })
         })
         .collect();
     let rocket = accents.add(AccentMaterial {
+        overlay: false,
         neon: NeonUniform::fixed(Vec3::new(1.0, 0.8, 0.5), 6.0),
     });
     // A disc of halo (uv.y 0 in the middle, 1 at the rim) for the flashes.
@@ -252,6 +254,7 @@ fn fireworks(
             ));
         }
         let mat = glows.add(GlowMaterial {
+            overlay: false,
             neon: NeonUniform::fixed(COLORS[r.colors[0]], 2.5),
         });
         commands.spawn((

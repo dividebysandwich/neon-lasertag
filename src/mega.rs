@@ -96,6 +96,7 @@ struct Climber(Vec3, Vec3, f32);
 
 fn accent(accents: &mut Assets<AccentMaterial>, c: Vec3, i: f32) -> Handle<AccentMaterial> {
     accents.add(AccentMaterial {
+        overlay: false,
         neon: NeonUniform::fixed(c, i),
     })
 }
@@ -205,6 +206,7 @@ fn spawn_core(
         16,
     );
     let shaft_mat = glows.add(GlowMaterial {
+        overlay: false,
         neon: NeonUniform::fixed(CORE, 0.9).volume(),
     });
     commands.spawn((
@@ -216,6 +218,7 @@ fn spawn_core(
     let mut floor = MeshData::default();
     disc(&mut floor, Vec3::new(c.x, 0.03, c.z), 0.3, 1.6, 32);
     let floor_mat = glows.add(GlowMaterial {
+        overlay: false,
         neon: NeonUniform::fixed(CORE, 1.6),
     });
     commands.spawn((
@@ -547,6 +550,7 @@ fn spawn_shields(
         }
         sheet.idx.extend([0, 1, 2, 0, 2, 3]);
         let sheet_mat = glows.add(GlowMaterial {
+            overlay: false,
             neon: NeonUniform::fixed(FIELD, 2.4).shield(),
         });
         let posts_mat = accent(accents, FIELD, 6.0);

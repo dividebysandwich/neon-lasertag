@@ -156,10 +156,40 @@ impl NeonUniform {
     }
 }
 
+/// How deep overlays draw: the world's depth from the near plane to this far is kept in front
+/// of them (reversed depth, 1 at the near plane), in step with neon.wgsl's OVERLAY_DEPTH.
+pub const OVERLAY_DEPTH: f32 = 0.01;
+
+/// The variant of a neon material's pipeline: an overlay (the VR menus, scoreboards and the
+/// pointers at them) is drawn over the world, never hidden behind it, and event pulses don't
+/// light it up. The GL headset renderer draws overlays last, after clearing the depth.
+#[repr(C)]
+#[derive(Eq, PartialEq, Hash, Copy, Clone)]
+pub struct NeonKey {
+    overlay: bool,
+}
+
+fn specialize_neon(descriptor: &mut RenderPipelineDescriptor, key: NeonKey) {
+    if key.overlay
+        && let Some(fragment) = descriptor.fragment.as_mut()
+    {
+        fragment.shader_defs.push("OVERLAY".into());
+    }
+}
+
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
+#[bind_group_data(NeonKey)]
 pub struct AccentMaterial {
     #[uniform(0)]
     pub neon: NeonUniform,
+    /// Drawn over the world (`NeonKey`).
+    pub overlay: bool,
+}
+
+impl From<&AccentMaterial> for NeonKey {
+    fn from(m: &AccentMaterial) -> Self {
+        NeonKey { overlay: m.overlay }
+    }
 }
 
 impl Material for AccentMaterial {
@@ -170,12 +200,31 @@ impl Material for AccentMaterial {
     fn enable_shadows() -> bool {
         false
     }
+
+    fn specialize(
+        _pipeline: &MaterialPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        key: MaterialPipelineKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        specialize_neon(descriptor, key.bind_group_data);
+        Ok(())
+    }
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
+#[bind_group_data(NeonKey)]
 pub struct GlowMaterial {
     #[uniform(0)]
     pub neon: NeonUniform,
+    /// Drawn over the world (`NeonKey`).
+    pub overlay: bool,
+}
+
+impl From<&GlowMaterial> for NeonKey {
+    fn from(m: &GlowMaterial) -> Self {
+        NeonKey { overlay: m.overlay }
+    }
 }
 
 impl Material for GlowMaterial {
@@ -199,8 +248,9 @@ impl Material for GlowMaterial {
         _pipeline: &MaterialPipeline,
         descriptor: &mut RenderPipelineDescriptor,
         _layout: &MeshVertexBufferLayoutRef,
-        _key: MaterialPipelineKey<Self>,
+        key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
+        specialize_neon(descriptor, key.bind_group_data);
         descriptor.primitive.cull_mode = None;
         if let Some(fragment) = descriptor.fragment.as_mut() {
             for target in fragment.targets.iter_mut().flatten() {
@@ -351,39 +401,48 @@ fn make_palette(
         suit,
         fur,
         arena_accent: accents.add(AccentMaterial {
+            overlay: false,
             neon: NeonUniform::team_zoned(3.0).dimmable(),
         }),
         arena_glow: glows.add(GlowMaterial {
+            overlay: false,
             neon: NeonUniform::team_zoned(2.0).dimmable(),
         }),
         border_accent: accents.add(AccentMaterial {
+            overlay: false,
             neon: fixed(RED, BORDER_ACCENT).dimmable(),
         }),
         border_glow: glows.add(GlowMaterial {
+            overlay: false,
             neon: fixed(RED, BORDER_GLOW).dimmable(),
         }),
         accent: colors.map(|c| {
             accents.add(AccentMaterial {
+                overlay: false,
                 neon: fixed(c, 3.0),
             })
         }),
         glow: colors.map(|c| {
             glows.add(GlowMaterial {
+                overlay: false,
                 neon: fixed(c, 2.0),
             })
         }),
         bolt: colors.map(|c| {
             accents.add(AccentMaterial {
+                overlay: false,
                 neon: fixed(c, 9.0),
             })
         }),
         eyes: colors.map(|c| {
             accents.add(AccentMaterial {
+                overlay: false,
                 neon: fixed(c, 7.0),
             })
         }),
         flow: colors.map(|c| {
             accents.add(AccentMaterial {
+                overlay: false,
                 neon: NeonUniform::flow(c, 3.0, 0.8),
             })
         }),
@@ -392,9 +451,11 @@ fn make_palette(
             .map(|&k| {
                 let c = pickup_color(k);
                 let accent = accents.add(AccentMaterial {
+                    overlay: false,
                     neon: fixed(c, 4.0),
                 });
                 let glow = glows.add(GlowMaterial {
+                    overlay: false,
                     neon: fixed(c, 2.0),
                 });
                 (k, (accent, glow))
