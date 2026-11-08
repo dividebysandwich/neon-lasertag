@@ -32,7 +32,7 @@ src=target/openxr-build/OpenXR-SDK-release-$VERSION
 
 if [ ! -d "$src" ]; then
     mkdir -p target/openxr-build
-    curl -fsSL "https://github.com/KhronosGroup/OpenXR-SDK/archive/refs/tags/release-$VERSION.tar.gz" \
+    curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors "https://github.com/KhronosGroup/OpenXR-SDK/archive/refs/tags/release-$VERSION.tar.gz" \
         | tar xz -C target/openxr-build
 fi
 

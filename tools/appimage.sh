@@ -123,11 +123,11 @@ mkdir -p "$tools"
 tool=$tools/appimagetool-$APPIMAGETOOL_VERSION-$host.AppImage
 runtime=$tools/runtime-$APPIMAGE_RUNTIME_VERSION-$arch
 if [ ! -x "$tool" ]; then
-    curl -fsSL -o "$tool.part" "https://github.com/AppImage/appimagetool/releases/download/$APPIMAGETOOL_VERSION/appimagetool-$host.AppImage"
+    curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o "$tool.part" "https://github.com/AppImage/appimagetool/releases/download/$APPIMAGETOOL_VERSION/appimagetool-$host.AppImage"
     chmod +x "$tool.part" && mv "$tool.part" "$tool"
 fi
 if [ ! -e "$runtime" ]; then
-    curl -fsSL -o "$runtime.part" "https://github.com/AppImage/type2-runtime/releases/download/$APPIMAGE_RUNTIME_VERSION/runtime-$arch"
+    curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o "$runtime.part" "https://github.com/AppImage/type2-runtime/releases/download/$APPIMAGE_RUNTIME_VERSION/runtime-$arch"
     mv "$runtime.part" "$runtime"
 fi
 update=()
