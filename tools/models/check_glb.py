@@ -12,7 +12,9 @@ torso and both hands by exact mesh name, only the avatar
 materials, hit_1..3 on the torso, and size sanity (heads within +-0.35 m of the eye point in X/Z
 and at most 0.6 m tall, torso top at y = 0, hands within 0.15 m of the palm centre, body segments
 hanging their length down -Y from the joint); the eyeball has `eyes` and `sclera`, every part
-`flow`. reload.glb: one mesh `reload_station` inside its
+`flow`. Each animal's tail: pieces `tail_<animal>_<k>` from k = 0, each with its joint node
+`tail_<animal>_j<k>` and one more at the tip, reaching along -Z from the joint to the next one
+(within 0.12 m in X and Y of it). reload.glb: one mesh `reload_station` inside its
 2 m cell (|x|, |z| <= 1), on the floor, with nothing between 0.04 m and 2.25 m (walkable).
 Halo materials (`glow`, `eye_glow`, `halo_white`) and `flow` must have UV V within 0..1 and
 `flow` UV U >= 0 (arc length). structures.glb: every structure of tools/models/structures.json
@@ -280,7 +282,35 @@ def check_avatars(ck):
         print("%-4s avatars.glb/%-12s %4d tris, extent %s .. %s, materials %s" % (
             "ok" if ok else "BAD", name, tris, [round(v, 3) for v in mn],
             [round(v, 3) for v in mx], ",".join(sorted(used[name]))))
-    extra = set(meshes) - set(heads) - set(segments) - set(eyeballs) - {
+    tails = []
+    for animal in AVATAR_HEADS:
+        k = 0
+        while "tail_%s_%d" % (animal, k) in meshes:
+            name = "tail_%s_%d" % (animal, k)
+            tails.append(name)
+            a = nodes.get("tail_%s_j%d" % (animal, k))
+            b = nodes.get("tail_%s_j%d" % (animal, k + 1))
+            pts, _, tris = meshes[name]
+            mn, mx = extent(pts)
+            ok = a is not None and b is not None
+            if not ok:
+                ck.err("avatars.glb/%s: no joint nodes j%d and j%d" % (name, k, k + 1))
+            else:
+                ta, tb = a.get("translation", [0, 0, 0]), b.get("translation", [0, 0, 0])
+                piece = sum((u - v) ** 2 for u, v in zip(ta, tb)) ** 0.5
+                if not (mn[2] < -0.6 * piece and mx[2] < 0.06):
+                    ck.err("avatars.glb/%s: does not reach %.2f m along -Z" % (name, piece))
+                    ok = False
+                if max(abs(mn[0]), mx[0], abs(mn[1]), mx[1]) > 0.12 or mn[2] < -piece - 0.12:
+                    ck.err("avatars.glb/%s: wider or longer than its piece" % name)
+                    ok = False
+            print("%-4s avatars.glb/%-12s %4d tris, extent %s .. %s, materials %s" % (
+                "ok" if ok else "BAD", name, tris, [round(v, 3) for v in mn],
+                [round(v, 3) for v in mx], ",".join(sorted(used[name]))))
+            k += 1
+        if k == 0:
+            ck.err("avatars.glb: no tail for %s" % animal)
+    extra = set(meshes) - set(heads) - set(segments) - set(eyeballs) - set(tails) - {
         "torso", "hand_left", "hand_right", "eyelid"}
     if extra:
         ck.err("avatars.glb: unexpected meshes %s" % sorted(extra))

@@ -43,6 +43,10 @@ struct AvatarParts {
     arms: [[Entity; 2]; 2],
     legs: [[Entity; 3]; 2],
     gait: crate::rig::Gait,
+    /// The tail's pieces (from the pelvis), its animal (`Models::heads`) and how it swings.
+    tail: Vec<Entity>,
+    animal: usize,
+    swing: crate::tail::Tail,
     /// Chest lights (hits left).
     bars: Vec<(Entity, u8)>,
     /// The weapon in hand: the blaster or the shotgun (children of `gun`), and their hit
@@ -341,7 +345,8 @@ fn spawn_avatar(
             ChildOf(root),
         ))
         .id();
-    let animal = &models.heads[p.id as usize % models.heads.len()];
+    let animal_index = p.id as usize % models.heads.len();
+    let animal = &models.heads[animal_index];
     // Grown about the skull top, so the bigger head reaches down towards the chest, not up (and
     // hit as big: lt_sim::hitbox).
     use lt_sim::hitbox::{HEAD_CROWN, HEAD_SCALE};
@@ -403,6 +408,12 @@ fn spawn_avatar(
     let pelvis = part(&b.pelvis);
     let arms = [0, 1].map(|_| [part(&b.upper_arm), part(&b.forearm)]);
     let legs = [0, 1].map(|_| [part(&b.thigh), part(&b.shin), part(&b.boot)]);
+    let tail = animal
+        .tail
+        .iter()
+        .flat_map(|t| &t.pieces)
+        .map(&mut part)
+        .collect();
     let gun = commands
         .spawn((Transform::IDENTITY, Visibility::default()))
         .id();
@@ -509,6 +520,9 @@ fn spawn_avatar(
         arms,
         legs,
         gait: default(),
+        tail,
+        animal: animal_index,
+        swing: default(),
         bars,
         gun,
         blaster,
@@ -594,6 +608,7 @@ fn sync_players(
     meshes: Res<ActorMeshes>,
     mut glows: ResMut<Assets<GlowMaterial>>,
     free: Option<Res<crate::freecam::FreeCam>>,
+    mut events: MessageReader<GameEvent>,
 ) {
     let vr = xr.is_some();
     // (The free camera sees one's own avatar from outside too.)
@@ -625,6 +640,15 @@ fn sync_players(
             commands.entity(v.gun).despawn();
             commands.entity(v.gun2).despawn();
             commands.entity(v.grenade).despawn();
+        }
+    }
+    // Tagging someone out sets a canine's tail wagging.
+    for GameEvent(e) in events.read() {
+        if let SimEvent::TaggedOut { player, by, .. } = *e
+            && by != player
+            && let Some(v) = views.players.get_mut(&by)
+        {
+            v.swing.wag();
         }
     }
     let blink = (real.elapsed_secs() * 8.0).fract() < 0.5;
@@ -742,8 +766,22 @@ fn sync_players(
                 place_part(v.legs[i][1], legs.shin[i], !me || vr);
                 place_part(v.legs[i][2], legs.boot[i], !me || vr);
             }
+            // The tail swings from the pelvis (in the world, so it lags as the player moves).
+            if let Some(model) = models.heads.get(v.animal).and_then(|h| h.tail.as_ref()) {
+                let pelvis = Transform::from_translation(base + legs.pelvis.translation)
+                    .with_rotation(legs.pelvis.rotation);
+                let poses = v.swing.update(model, real.delta_secs(), &pelvis);
+                for (&e, pose) in v.tail.iter().zip(&poses) {
+                    let t = Transform::from_translation(pose.translation - base)
+                        .with_rotation(pose.rotation);
+                    place_part(e, t, !me || vr);
+                }
+            }
         } else {
-            for e in std::iter::once(v.pelvis).chain(v.legs.iter().flatten().copied()) {
+            for e in std::iter::once(v.pelvis)
+                .chain(v.legs.iter().flatten().copied())
+                .chain(v.tail.iter().copied())
+            {
                 set_vis(&mut vis, e, !me || vr);
             }
         }

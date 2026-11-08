@@ -16,6 +16,8 @@ legs, boots) that the game poses by IK every frame.
   runtime.
 - `neck`, `pelvis`, `upper_arm`, `forearm`, `thigh`, `shin`, `boot`: rigid body segments, each
   hanging from its joint (the origin) down -Y, front -Z; one mesh serves both sides.
+- `tail_<animal>_<k>`: each animal's tail, a chain of pieces from the pelvis's back that the game
+  swings about their joints, placed at rest by the empties `tail_<animal>_j<k>` (see TAILS).
 
 Materials: `body` (near-black), `fur_light` (mid grey: muzzles, cheeks, facial discs so the
 faces read in the dark), `accent` (noses, ear inners, trim; recoloured to the team colour by the
@@ -1285,6 +1287,176 @@ SEGMENTS = (("neck", neck), ("pelvis", pelvis), ("upper_arm", upper_arm), ("fore
 
 
 # ---------------------------------------------------------------------------------------------
+# Tails: chains of rigid pieces the game swings about their joints (src/tail.rs). Each piece
+# `tail_<animal>_<k>` runs from its joint (the origin) along -Z, +Y its top, X mirror symmetric,
+# and reaches a little back into the piece before (rounded), so no gap opens as a joint bends.
+# The empties `tail_<animal>_j<k>` place joint k on the pelvis at rest (in the pelvis's frame:
+# top centre, front -Z), the last one at the tip.
+
+# Where a tail leaves the pelvis: low on its back.
+TAIL_ROOT = (0.0, -0.125, 0.075)
+
+# Per animal: the pieces' lengths and the angles (degrees above the horizontal) they leave
+# backwards at; the radius along the tail [(arc fraction, m)]; the section's width and height
+# per radius; a point at the tip (else rounded); accent bands (arc fractions); a light line down
+# the top; and the material by arc fraction.
+TAILS = {
+    "wolf": dict(lengths=(0.1, 0.11, 0.11, 0.1), angles=(-35, -55, -68, -76),
+                 radius=((0, 0.022), (0.4, 0.042), (0.8, 0.032), (1, 0.0)), pointy=True,
+                 bands=(0.1,), flow=True),
+    "fox": dict(lengths=(0.11, 0.12, 0.12, 0.12), angles=(-22, -34, -30, -14),
+                radius=((0, 0.024), (0.5, 0.058), (0.85, 0.042), (1, 0.0)), pointy=True,
+                bands=(0.1,), flow=True, mat=lambda s: "fur_light" if s > 0.78 else "body"),
+    "cat": dict(lengths=(0.095,) * 6, angles=(-30, -55, -72, -62, -30, 15),
+                radius=((0, 0.018), (0.3, 0.015), (1, 0.011)),
+                bands=(0.22, 0.42, 0.62, 0.82), mat=lambda s: "accent" if s > 0.95 else "body"),
+    "deer": dict(lengths=(0.11,), angles=(35,), radius=((0, 0.024), (0.5, 0.03), (1, 0.012)),
+                 aspect=(1.3, 0.55), flow=True, belly="fur_light"),
+    "bear": dict(lengths=(0.05,), angles=(-15,), ball=(0.025, 0.036), mat=lambda s: "body",
+                 band=True),
+    "rabbit": dict(lengths=(0.06,), angles=(5,), ball=(0.03, 0.042),
+                   mat=lambda s: "fur_light"),
+    "owl": dict(lengths=(0.17,), angles=(-55,), fan=True),
+    "boar": dict(lengths=(0.06, 0.06, 0.055), angles=(-25, -80, -140),
+                 radius=((0, 0.011), (1, 0.006)), bands=(0.15,), tuft=True),
+    "dragon": dict(lengths=(0.14, 0.14, 0.13, 0.12, 0.11, 0.1), angles=(-30, -45, -50, -40, -25, -10),
+                   radius=((0, 0.055), (0.35, 0.04), (1, 0.012)), aspect=(1.0, 0.9), spikes=True,
+                   spade=True),
+}
+
+
+def tail_joints(spec):
+    pts = [TAIL_ROOT]
+    for l, a in zip(spec["lengths"], spec["angles"]):
+        a = math.radians(a)
+        pts.append(add(pts[-1], (0.0, l * math.sin(a), l * math.cos(a))))
+    return pts
+
+
+def profile(prof, f):
+    """Piecewise linear [(x, y)] at x = f (clamped)."""
+    f = min(max(f, prof[0][0]), prof[-1][0])
+    for (xa, ya), (xb, yb) in zip(prof, prof[1:]):
+        if xa <= f <= xb:
+            return ya + (yb - ya) * (f - xa) / max(xb - xa, 1e-9)
+    return prof[-1][1]
+
+
+def tail_ring(t, r, aspect):
+    hx, hy = r * aspect[0], r * aspect[1]
+    return [(x, y, -t) for x, y in L.octagon_xz(hx, hy, 0.55 * min(hx, hy))]
+
+
+def ball_piece(c, R, mat):
+    """A round puff centred `c` along the piece, `R` across, sunk a little into the pelvis."""
+    g = L.Geo()
+    rings = [tail_ring(c - R * math.cos(math.radians(a)), R * math.sin(math.radians(a)), (1, 1))
+             for a in (20, 50, 80, 110, 140, 165)]
+    loft(g, rings, mat=mat)
+    return g
+
+
+def fan_piece():
+    """An owl's tail: five flat feathers fanned out sideways, layered from the middle up."""
+    g = L.Geo()
+    loft(g, [tail_ring(t, r, (1.2, 0.8)) for t, r in ((-0.02, 0.012), (0.0, 0.026), (0.03, 0.02))])
+    for i in (-2, -1, 0, 1, 2):
+        a = math.radians(16.0 * i)
+        d = (math.sin(a), 0.0, -math.cos(a))
+        u = (math.cos(a), 0.0, math.sin(a))
+        lift = 0.004 * abs(i)
+        lf = 0.17 - 0.015 * abs(i)
+        rings = [box_ring(add((0.0, lift, 0.0), mul(d, t)), u, Y, hu, 0.005, ch=0.002)
+                 for t, hu in ((0.0, 0.011), (0.6 * lf, 0.022), (0.9 * lf, 0.018))]
+        rings.append([add((0.0, lift, 0.0), mul(d, lf + 0.02))])
+        loft(g, rings, mat=["body", "body", "accent"])
+    return g
+
+
+def tail_pieces(spec):
+    """The pieces of one tail (Geos, each in its own joint's frame)."""
+    lengths = spec["lengths"]
+    total = sum(lengths)
+    if spec.get("fan"):
+        return [fan_piece()]
+    if "ball" in spec:
+        c, R = spec["ball"]
+        g = ball_piece(c, R, spec["mat"](0.0))
+        if spec.get("band"):
+            loft(g, [tail_ring(c + dt, R * 0.72 + 0.003, (1, 1)) for dt in (0.012, 0.022)],
+                 mat="accent", cap0=None, cap1=None)
+        return [g]
+    prof, aspect = spec["radius"], spec.get("aspect", (1.0, 1.0))
+    matf = spec.get("mat", lambda s: "body")
+    rad = lambda s: profile(prof, s / total)
+    pieces, s0 = [], 0.0
+    for k, L_ in enumerate(lengths):
+        last = k == len(lengths) - 1
+        g = L.Geo()
+        r0 = rad(s0)
+        ts = [(-0.5 * r0, 0.55 * r0), (-0.22 * r0, 0.92 * r0)]
+        ts += [(L_ * i / 3.0, rad(s0 + L_ * i / 3.0)) for i in range(4)]
+        apex = last and spec.get("pointy")
+        if last and not apex and not spec.get("spade") and not spec.get("tuft"):
+            re = rad(total)
+            ts += [(L_ + 0.3 * re, 0.85 * re), (L_ + 0.55 * re, 0.45 * re)]
+        rings = [tail_ring(t, max(r, 0.003), aspect) for t, r in ts]
+        if apex:
+            rings[-1] = [(0.0, 0.0, -L_)]
+        mats = [matf((s0 + max(0.0, (ta + tb) / 2)) / total)
+                for (ta, _), (tb, _) in zip(ts, ts[1:])]
+        belly = spec.get("belly")
+        paint = (lambda fc, out, seg: belly if out[1] < -0.35 else None) if belly else None
+        loft(g, rings, mat=mats, cap0=mats[0], cap1=mats[-1], paint=paint)
+        for f in spec.get("bands", ()):
+            t = f * total - s0
+            if 0.01 <= t <= L_ - 0.02:
+                loft(g, [tail_ring(tt, rad(s0 + tt) + 0.003, aspect) for tt in (t, t + 0.012)],
+                     mat="accent", cap0=None, cap1=None)
+        if spec.get("flow"):
+            solid = L.Geo()
+            solid.faces = [f for f in g.faces if f[1] in SOLID]
+            t1 = L_ * (0.7 if apex else 0.95)
+            n0 = len(g.faces)
+            ray_strip(g, [solid], [(0.0, 0.0, -0.01), (0.0, 0.0, -t1)],
+                      lambda p: ((0.0, 0.4, p[2]), NY), 0.005, step=0.02, mid=True)
+            # And down each side, so it reads from beside the player too.
+            for sx in (-1, 1):
+                ray_strip(g, [solid], [(0.0, 0.0, -0.01), (0.0, 0.0, -t1)],
+                          lambda p, sx=sx: ((sx * 0.4, 0.0, p[2]), (-sx, 0.0, 0.0)), 0.005,
+                          step=0.02)
+            # Arc length along the whole tail, so the pulses run on from piece to piece.
+            g.faces[n0:] = [(p, m, [(u + s0, v) for u, v in uv]) if m == "flow" else (p, m, uv)
+                            for p, m, uv in g.faces[n0:]]
+        if spec.get("spikes"):
+            t, r = 0.5 * L_, rad(s0 + 0.5 * L_)
+            top = r * aspect[1] - 0.002
+            w, l, h = 0.3 * r, 0.5 * r, 0.9 * r
+            pyramid(g, [(-w, top, -t + l), (w, top, -t + l), (w, top, -t - l), (-w, top, -t - l)],
+                    (0.0, top + h, -t - 1.4 * l), mat="accent", base_mat="accent")
+        if last and spec.get("spade"):
+            loft(g, [box_ring((0.0, 0.0, -t), X, Y, hu, 0.006, ch=0.002)
+                     for t, hu in ((L_ - 0.01, 0.009), (L_ + 0.03, 0.045))]
+                 + [[(0.0, 0.0, -(L_ + 0.09))]], mat="accent")
+        if last and spec.get("tuft"):
+            re = rad(total)
+            loft(g, [tail_ring(L_ - 0.005, re, aspect), tail_ring(L_ + 0.012, 2.3 * re, aspect),
+                     [(0.0, 0.0, -(L_ + 0.045))]], mat="fur_light")
+        pieces.append(g)
+        s0 += L_
+    return pieces
+
+
+def tail_nodes(name, joints):
+    """The joint empties: each at its joint, -Z along its piece, +Y its top."""
+    for k, p in enumerate(joints):
+        a, b = (p, joints[k + 1]) if k + 1 < len(joints) else (joints[k - 1], p)
+        d = norm(sub(b, a))
+        top = cross(mul(d, -1), NX)
+        L.make_empty("%s_j%d" % (name, k), p, fwd=d, up=top)
+
+
+# ---------------------------------------------------------------------------------------------
 
 def main():
     L.reset_scene()
@@ -1307,6 +1479,10 @@ def main():
     left = hand_left()
     pieces += [("hand_left", left), ("hand_right", mirrored(left))]
     pieces += [(name, build()) for name, build in SEGMENTS]
+    for n in HEADS:
+        spec = TAILS[n]
+        pieces += [("tail_%s_%d" % (n, k), g) for k, g in enumerate(tail_pieces(spec))]
+        tail_nodes("tail_" + n, tail_joints(spec))
     for name, g in pieces:
         if not name.startswith(("hand_", "eyeball")) and name != "eyelid":
             bad = g.mirror_errors()

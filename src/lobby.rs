@@ -328,6 +328,11 @@ fn fireworks(
     }
 }
 
+/// The animal (of `heads` in `Models::heads`) of the squad's `i`th player.
+fn animal_of(i: usize, heads: usize) -> usize {
+    (i * 7 + 3) % heads.max(1)
+}
+
 /// The players in a circle around the middle, facing it, red on the red half (+z), blue on
 /// the blue one: at ease, the blaster hanging in the right hand pointed at the floor, the left
 /// hand at the side.
@@ -362,7 +367,7 @@ fn spawn_squad(commands: &mut Commands, models: &Models, palette: &Palette) {
                     ChildOf(head),
                 ))
                 .id();
-            let animal = &models.heads[(i * 7 + 3) % models.heads.len()];
+            let animal = &models.heads[animal_of(i, models.heads.len())];
             spawn_model(commands, grown, &animal.model, palette, team);
             crate::eyes::spawn_eyes(
                 commands, grown, animal, models, palette, team, i as u64, None,
@@ -407,6 +412,16 @@ fn spawn_squad(commands: &mut Commands, models: &Models, palette: &Palette) {
             segment(commands, &b.thigh, legs.thigh[i]);
             segment(commands, &b.shin, legs.shin[i]);
             segment(commands, &b.boot, legs.boot[i]);
+        }
+        // The tail at rest.
+        if let Some(tail) = models
+            .heads
+            .get(animal_of(i, models.heads.len()))
+            .and_then(|h| h.tail.as_ref())
+        {
+            for (piece, joint) in tail.pieces.iter().zip(tail.rest()) {
+                segment(commands, piece, legs.pelvis * joint);
+            }
         }
         commands.entity(root).insert(Idler {
             head,

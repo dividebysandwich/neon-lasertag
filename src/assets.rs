@@ -264,6 +264,8 @@ pub struct HeadModel {
     /// How wide open the eyes rest: the upper and the lower lid's edge, radians above and
     /// below the eye's forward point.
     pub lids: [f32; 2],
+    /// The animal's tail (`tail_<animal>_<k>` and its joints), if the model has one.
+    pub tail: Option<crate::tail::TailModel>,
 }
 
 /// The animals, with how wide open their eyes rest (the upper and the lower lid's edge, in
@@ -299,6 +301,34 @@ fn powerup_mesh(kind: lt_sim::PickupKind) -> &'static str {
         lt_sim::PickupKind::Medbeam => "medbeam",
         lt_sim::PickupKind::Dual => "dual",
     }
+}
+
+/// An animal's tail in avatars.glb: its pieces `tail_<animal>_<k>` and their joints
+/// `tail_<animal>_j<k>` (one more, the tip).
+fn load_tail(
+    f: &GlbFile,
+    animal: &str,
+    meshes: &mut Assets<Mesh>,
+) -> Option<crate::tail::TailModel> {
+    let mut tail = crate::tail::TailModel {
+        swing: crate::tail::swing(animal),
+        ..default()
+    };
+    for k in 0.. {
+        let piece = format!("tail_{animal}_{k}");
+        let (Some(j), Some(_)) = (
+            f.xforms.get(&format!("tail_{animal}_j{k}")),
+            f.meshes.get(&piece),
+        ) else {
+            break;
+        };
+        tail.joints.push(*j);
+        tail.pieces.push(Model::from_glb(f, Some(&piece), meshes));
+    }
+    let n = tail.pieces.len();
+    let tip = f.xforms.get(&format!("tail_{animal}_j{n}"))?;
+    tail.joints.push(*tip);
+    Some(tail)
 }
 
 pub fn load_models(meshes: &mut Assets<Mesh>) -> Models {
@@ -340,6 +370,7 @@ pub fn load_models(meshes: &mut Assets<Mesh>) -> Models {
                             .contains_key(&own)
                             .then(|| Model::from_glb(&f, Some(&own), meshes)),
                         lids: [top.to_radians(), bottom.to_radians()],
+                        tail: load_tail(&f, a, meshes),
                     });
                 }
             }
