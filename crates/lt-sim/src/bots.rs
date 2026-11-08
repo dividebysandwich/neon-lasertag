@@ -1295,8 +1295,9 @@ impl Bot {
         now: f64,
     ) -> Option<(usize, Vec3)> {
         let Some(me) = self.me else { return dest };
-        // (Megatarget: the objectives are on both sides, nothing to push into.)
-        if self.role != Role::Offense || sim.level.mega.is_some() {
+        // (Megatarget: the objectives are on both sides, nothing to push into. Infection: the
+        // phantoms hunt on their own, and the survivors aren't attacking anything.)
+        if self.role != Role::Offense || sim.level.mega.is_some() || sim.infection() {
             return dest;
         }
         let side = p.team.side();
@@ -1891,6 +1892,10 @@ impl Bot {
         // Nobody known: patrol (attackers into the enemy half, defenders around the middle).
         let here = g.nearest(&sim.world, p.feet)?;
         if self.patrol.is_none_or(|n| g.pos[n].distance(p.feet) < 1.5) {
+            if sim.infection() && p.team == Team::Red {
+                self.patrol = self.phantom_patrol(sim, g, p, here);
+                return self.patrol.map(|n| (n, g.pos[n]));
+            }
             let enemy = p.team.other();
             let mut pick = None;
             for k in 0..60 {
@@ -1911,6 +1916,57 @@ impl Bot {
             self.patrol = pick;
         }
         self.patrol.map(|n| (n, g.pos[n]))
+    }
+
+    /// Infection: a phantom's next place to search. The survivors may be anywhere, so the
+    /// whole arena is combed: a far-off node, away from where the other phantoms are and are
+    /// heading (their claims), a little towards the survivors' half; claimed, so the pack
+    /// spreads out instead of gathering in one place.
+    fn phantom_patrol(
+        &mut self,
+        sim: &Sim,
+        g: &BotGraph,
+        p: &Player,
+        here: usize,
+    ) -> Option<usize> {
+        let mates: Vec<Vec3> = {
+            let s = lock(&self.shared);
+            s.claims
+                .iter()
+                .filter(|(id, (team, _))| Some(**id) != self.me && *team == p.team)
+                .map(|(_, (_, pos))| *pos)
+                .chain(
+                    sim.players
+                        .iter()
+                        .filter(|o| o.id != p.id && o.team == p.team && o.alive())
+                        .map(|o| o.feet),
+                )
+                .collect()
+        };
+        let survivors = p.team.other().side();
+        let mut best: Option<(f32, usize)> = None;
+        for _ in 0..40 {
+            let n = self.rng.random_range(0..g.pos.len());
+            if !g.connected(here, n) || sim.level.reloads_at(g.pos[n]) {
+                continue;
+            }
+            let pos = g.pos[n];
+            let apart = mates
+                .iter()
+                .map(|m| m.distance(pos))
+                .fold(f32::MAX, f32::min)
+                .min(16.0);
+            let s = apart
+                + 0.25 * pos.distance(p.feet).min(24.0)
+                + 0.1 * pos.z * survivors
+                + self.rng.random::<f32>() * 4.0;
+            if best.is_none_or(|b| s > b.0) {
+                best = Some((s, n));
+            }
+        }
+        let n = best?.1;
+        self.claim(p.team, g.pos[n]);
+        Some(n)
     }
 
     /// Gives up the current goal after it turned out unreachable.
@@ -2088,6 +2144,11 @@ impl Bot {
             })
         };
         let mut cands: Vec<(PlayerId, f32, Vec3)> = self.visible.clone();
+        // (A phantom's bolts fly short: closer first.)
+        if sim.infected && p.team == Team::Red {
+            let reach = sim.rules.phantom_range - 1.0;
+            cands.retain(|c| c.1 < reach);
+        }
         cands.sort_by(|a, b| {
             // (A bounty first, then the one already fought.)
             let key = |c: &(PlayerId, f32, Vec3)| {
@@ -3191,6 +3252,98 @@ mod tests {
         assert!(infected >= 4, "infected {infected}");
     }
 
+    /// Phantoms comb the arena on their own instead of gathering somewhere and waiting: over
+    /// a match, phantoms with nobody in sight are seldom bunched up, and they keep moving.
+    #[test]
+    fn phantom_bots_spread_out_and_keep_moving() {
+        let (mut samples, mut bunched, mut still) = (0usize, 0usize, 0usize);
+        for seed in [11u64, 12, 13] {
+            let mut sim = Sim::new(
+                seed,
+                Rules {
+                    mode: level::GameMode::Infection,
+                    match_time: 180.0,
+                    ..Rules::default()
+                },
+            );
+            let mut bots = Bots::default();
+            bots.fill(&mut sim, 8, 0.6);
+            let mut last: HashMap<PlayerId, (Vec3, u32)> = HashMap::new();
+            for _ in 0..(180.0 / TICK) as usize {
+                bots.think(&mut sim);
+                sim.step();
+                sim.drain_events();
+                if sim.over || !sim.infected {
+                    if sim.over {
+                        break;
+                    }
+                    continue;
+                }
+                // A second apart.
+                if !sim.tick.is_multiple_of(60) {
+                    continue;
+                }
+                let phantoms: Vec<&crate::sim::Player> = sim
+                    .players
+                    .iter()
+                    .filter(|p| p.team == Team::Red && p.alive())
+                    .collect();
+                if phantoms.len() < 2 {
+                    continue;
+                }
+                samples += 1;
+                // Two or more phantoms within 3 m of each other, away from any survivor (and
+                // not just respawned at the base together).
+                let base = sim.level.base_centre(Team::Red);
+                let near_survivor = |p: &crate::sim::Player| {
+                    p.feet.distance(base) < 8.0
+                        || sim.players.iter().any(|o| {
+                            o.team == Team::Blue && o.alive() && o.feet.distance(p.feet) < 15.0
+                        })
+                };
+                let pairs = phantoms
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(i, a)| phantoms[i + 1..].iter().map(move |b| (a, b)))
+                    .filter(|(a, b)| {
+                        a.feet.distance(b.feet) < 3.0 && !near_survivor(a) && !near_survivor(b)
+                    })
+                    .count();
+                if pairs > 0 {
+                    bunched += 1;
+                }
+                // A phantom that hasn't moved 2 m in 8 s with nobody around is waiting.
+                for p in &phantoms {
+                    let e = last.entry(p.id).or_insert((p.feet, 0));
+                    if p.feet.distance(e.0) > 2.0 {
+                        *e = (p.feet, 0);
+                    } else {
+                        e.1 += 1;
+                        if e.1 >= 8 && !near_survivor(p) {
+                            still += 1;
+                        }
+                    }
+                }
+            }
+            println!(
+                "seed {seed}: {} s, phantoms {}",
+                sim.tick as f32 * TICK,
+                sim.players.iter().filter(|p| p.team == Team::Red).count()
+            );
+        }
+        println!("samples {samples}, bunched {bunched}, still {still}");
+        assert!(samples >= 20, "samples {samples}");
+        assert!(
+            bunched * 3 <= samples,
+            "phantoms bunched up in {bunched} of {samples} samples"
+        );
+        assert!(
+            still * 10 <= samples,
+            "phantoms stood waiting {still} times over {samples} samples"
+        );
+    }
+
+    #[test]
     #[test]
     fn bots_go_for_the_megatarget() {
         let mut totals = [0usize; 6];

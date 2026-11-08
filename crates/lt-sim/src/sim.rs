@@ -239,8 +239,12 @@ impl Player {
         move_speed(rules, self.speed > 0.0, self.cmd.crouch)
     }
 
-    /// Whether walking over a pickup of this kind would take it.
+    /// Whether walking over a pickup of this kind would take it (Infection's phantoms take
+    /// none).
     pub fn wants(&self, kind: PickupKind, rules: &Rules) -> bool {
+        if rules.mode == GameMode::Infection && self.team == Team::Red {
+            return false;
+        }
         match kind {
             PickupKind::Grenade => self.grenades < rules.grenade_max,
             PickupKind::Rapid => !self.rapid,
