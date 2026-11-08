@@ -119,7 +119,7 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
     commands.insert_resource(Sounds {
         fire: s("laser_fire"),
         fire_red: s("laser_fire_red"),
-        lance_fire: s("lance_fire"),
+        lance_fire: s("prismrifle"),
         headshot: s("headshot"),
         sensor_pulse: s("sensor_pulse"),
         shotgun: s("shotgun"),
