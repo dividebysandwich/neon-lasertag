@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use lt_sim::Team;
 use lt_sim::hitbox::{CHEST_DROP, HEAD_CROWN, HEAD_SCALE};
 use lt_sim::level::{ArenaSize, Level};
-use lt_sim::sim::{EYE, eye_on_neck, neck_of, yaw_of};
+use lt_sim::sim::{EYE, eye_on_neck, yaw_of};
 
 use crate::actors::spawn_model;
 use crate::arena::{ArenaPart, Kit};
@@ -425,7 +425,7 @@ fn idle(time: Res<Time>, idlers: Query<&Idler>, mut transforms: Query<&mut Trans
             let pitch = -0.1 + 0.08 * (t * 0.23 + i.phase * 1.9).sin();
             h.rotation = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
             h.translation = eye_on_neck(Vec3::Y * EYE, h.rotation);
-            let neck = crate::rig::neck(neck_of(h.translation, h.rotation), CHEST, h.rotation);
+            let neck = crate::rig::neck(h.translation, h.rotation);
             if let Ok(mut n) = transforms.get_mut(i.neck) {
                 *n = neck;
             }

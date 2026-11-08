@@ -705,11 +705,7 @@ fn sync_players(
         };
         let chest = Transform::from_translation(lt_sim::sim::chest_top(head.pos, head.rot))
             .with_rotation(Quat::from_rotation_y(yaw));
-        let neck = crate::rig::neck(
-            lt_sim::sim::neck_of(head.pos, head.rot),
-            chest.translation,
-            head.rot,
-        );
+        let neck = crate::rig::neck(head.pos, head.rot);
         place_part(v.neck, neck, !me);
         for (i, side) in [-1.0, 1.0].into_iter().enumerate() {
             let glove = Transform::from_translation(hands[i].pos).with_rotation(hands[i].rot);

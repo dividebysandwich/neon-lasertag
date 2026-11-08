@@ -8,8 +8,8 @@ use glam::{Quat, Vec3};
 use crate::collide::ray_box;
 use crate::types::PlayerCmd;
 
-/// How far below the eyes the floating chest's top is, looking straight ahead (it hangs from
-/// the neck: `sim::chest_top`).
+/// How far below the eyes the floating chest's top is, looking straight ahead (the neck
+/// stands on it: `sim::chest_top`).
 pub const CHEST_DROP: f32 = 0.3;
 /// How much bigger than its model a head is drawn (src/actors.rs), grown about the skull top
 /// (this high above the eyes), so it reaches down towards the chest rather than up.

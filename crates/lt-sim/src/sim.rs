@@ -3702,29 +3702,47 @@ pub fn yaw_of(dir: Vec3) -> f32 {
     (-dir.x).atan2(-dir.z)
 }
 
-/// Where the eyes are from the neck, looking straight ahead: in front of and above it.
+/// Where the eyes are from the top of the neck, looking straight ahead: in front of and above it.
 const NECK_TO_EYE: Vec3 = Vec3::new(0.0, 0.1, -0.08);
+/// The neck's length, from the chest's top up to the head.
+const NECK: f32 = crate::hitbox::CHEST_DROP - NECK_TO_EYE.y;
+/// How far the neck tilts (pitch and roll, radians); the head bends the rest at its top.
+const NECK_BEND: f32 = 0.7;
 
-/// The eyes of a head turned to `rot` on its neck, which sits above the body's middle (the
-/// feet, for a desktop player or a bot): `level` is the height of the eyes looking straight
-/// ahead. A head pitches and turns about the neck, so looking down brings the eyes forward and
-/// down and turning swings them round, the skull staying over the shoulders (pivoted about the
-/// eyes, it would swing back). Tracked heads move so by themselves.
-pub fn eye_on_neck(level: Vec3, rot: Quat) -> Vec3 {
-    let (yaw, pitch, _) = rot.to_euler(glam::EulerRot::YXZ);
-    level - Vec3::Y * NECK_TO_EYE.y
-        + Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch) * NECK_TO_EYE
+/// The neck's rotation under a head turned to `rot`: turned with it, tilted with it up to
+/// [`NECK_BEND`]. It stands on the chest's top and carries the head at its top, so the two move
+/// as one.
+pub fn neck_rot(rot: Quat) -> Quat {
+    let (yaw, pitch, roll) = rot.to_euler(glam::EulerRot::YXZ);
+    Quat::from_euler(
+        glam::EulerRot::YXZ,
+        yaw,
+        pitch.clamp(-NECK_BEND, NECK_BEND),
+        roll.clamp(-NECK_BEND, NECK_BEND),
+    )
 }
 
-/// The neck under the eyes at `eye` of a head turned to `rot` (any head, tracked or not).
+/// The eyes of a head turned to `rot` on its neck, which stands on the chest above the body's
+/// middle (the feet, for a desktop player or a bot): `level` is the height of the eyes looking
+/// straight ahead. The neck tilts from its base, so looking down brings the eyes forward and
+/// down and turning swings them round, the chest staying over the feet. Tracked heads move so
+/// by themselves.
+pub fn eye_on_neck(level: Vec3, rot: Quat) -> Vec3 {
+    let (yaw, pitch, _) = rot.to_euler(glam::EulerRot::YXZ);
+    let rot = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
+    level - Vec3::Y * crate::hitbox::CHEST_DROP + neck_rot(rot) * Vec3::Y * NECK + rot * NECK_TO_EYE
+}
+
+/// The top of the neck under the eyes at `eye` of a head turned to `rot` (any head, tracked or
+/// not): where the head sits on it.
 pub fn neck_of(eye: Vec3, rot: Quat) -> Vec3 {
     eye - rot * NECK_TO_EYE
 }
 
-/// The top of the floating chest, hanging below the neck of the eyes at `eye` turned to `rot`
+/// The top of the floating chest, at the neck's base under the eyes at `eye` turned to `rot`
 /// (`CHEST_DROP` below the eyes when they look straight ahead).
 pub fn chest_top(eye: Vec3, rot: Quat) -> Vec3 {
-    neck_of(eye, rot) + Vec3::Y * (NECK_TO_EYE.y - crate::hitbox::CHEST_DROP)
+    neck_of(eye, rot) - neck_rot(rot) * Vec3::Y * NECK
 }
 
 /// The rotation looking along `dir`.
@@ -3812,7 +3830,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn heads_turn_on_a_still_neck() {
+    fn heads_turn_on_a_tilting_neck() {
         let level = Vec3::Y * EYE;
         let straight = eye_on_neck(level, Quat::IDENTITY);
         assert!((straight.y - EYE).abs() < 1e-6, "{straight}");

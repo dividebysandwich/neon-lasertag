@@ -10,8 +10,6 @@
 use bevy::prelude::*;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
-/// The neck, from the head's pivot down into the vest's collar (its mesh's length).
-pub const NECK: f32 = 0.2;
 /// The shoulder joints in the chest's frame (top centre, front -Z); X mirrored on the left.
 pub const SHOULDER: Vec3 = Vec3::new(0.2, -0.08, 0.0);
 pub const UPPER_ARM: f32 = 0.27;
@@ -84,9 +82,11 @@ pub fn segment(a: Vec3, b: Vec3, nominal: f32, side: Vec3) -> Transform {
     }
 }
 
-/// The neck from the head's pivot (`lt_sim::sim::neck_of`) down to the chest's top.
-pub fn neck(pivot: Vec3, chest_top: Vec3, head_rot: Quat) -> Transform {
-    segment(pivot, chest_top, NECK, head_rot * Vec3::X)
+/// The neck of the eyes at `eye` turned to `rot`: hanging from the head
+/// (`lt_sim::sim::neck_of`) down to the chest's top, tilted with it (`lt_sim::sim::neck_rot`).
+pub fn neck(eye: Vec3, rot: Quat) -> Transform {
+    Transform::from_translation(lt_sim::sim::neck_of(eye, rot))
+        .with_rotation(lt_sim::sim::neck_rot(rot))
 }
 
 /// An arm's upper arm and forearm, from the shoulder of the chest at `chest` (`side` -1 left,
