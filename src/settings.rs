@@ -1,5 +1,6 @@
 //! The player's settings: the flat screen's key bindings, mouse sensitivity, inverted mouse
-//! look, field of view, crouching (held or toggled), head bob and reflections, and the volumes of the sound effects and the music (in VR too).
+//! look, field of view, crouching (held or toggled), head bob and reflections, and the volumes of the sound effects and the music (in VR too);
+//! VR: the controller buttons of the actions that aren't gestures (`VrAction`).
 //! Changed in the options screen (src/options.rs) and kept in `settings.ron` in the user's
 //! config directory (`$XDG_CONFIG_HOME/lasertag`, `~/.config/lasertag`, `%APPDATA%\lasertag`).
 
@@ -104,6 +105,166 @@ impl Action {
             Action::Zoom => [Some(Key(KeyCode::KeyZ)), Some(Wheel)],
             Action::Scores => [Some(Key(KeyCode::Tab)), None],
         }
+    }
+}
+
+/// A VR action on a controller button (the VR controls panel, src/vrui.rs). Firing (the
+/// blaster hand's trigger), drawing (gripping at the holster), moving and turning (the sticks)
+/// stay as they are.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum VrAction {
+    Jump,
+    Dash,
+    /// Crouching on (and off again), besides crouching for real.
+    Crouch,
+    /// Held to take a grenade into that hand, let go to throw.
+    Grenade,
+    Shield,
+    Gadget,
+    /// Held a second (without a grenade in that hand): the menu, for controllers without a
+    /// right menu button.
+    Menu,
+}
+
+impl VrAction {
+    pub const ALL: [VrAction; 7] = [
+        VrAction::Jump,
+        VrAction::Dash,
+        VrAction::Crouch,
+        VrAction::Grenade,
+        VrAction::Shield,
+        VrAction::Gadget,
+        VrAction::Menu,
+    ];
+
+    /// As the panel names it (capitals: VR's font).
+    pub fn name(self) -> &'static str {
+        match self {
+            VrAction::Jump => "JUMP",
+            VrAction::Dash => "DASH",
+            VrAction::Crouch => "CROUCH (ON / OFF)",
+            VrAction::Grenade => "GRENADE (HOLD)",
+            VrAction::Shield => "SHIELD",
+            VrAction::Gadget => "GADGET",
+            VrAction::Menu => "MENU (HOLD)",
+        }
+    }
+
+    fn id(self) -> &'static str {
+        match self {
+            VrAction::Jump => "jump",
+            VrAction::Dash => "dash",
+            VrAction::Crouch => "crouch",
+            VrAction::Grenade => "grenade",
+            VrAction::Shield => "shield",
+            VrAction::Gadget => "gadget",
+            VrAction::Menu => "menu",
+        }
+    }
+
+    pub fn default_button(self) -> VrButton {
+        match self {
+            VrAction::Jump => VrButton::Primary,
+            VrAction::Dash => VrButton::LeftStick,
+            VrAction::Crouch => VrButton::StickDown,
+            VrAction::Grenade => VrButton::Secondary,
+            VrAction::Shield => VrButton::FreeTrigger,
+            VrAction::Gadget => VrButton::FreeGrip,
+            VrAction::Menu => VrButton::Secondary,
+        }
+    }
+
+    /// The buttons it can be put on, in the order the panel steps through them (the menu
+    /// always on one: some controllers have no other way to it; it is held, so not on the
+    /// free hand's trigger or grip, which other things use).
+    pub fn choices(self) -> &'static [VrButton] {
+        use VrButton::*;
+        match self {
+            VrAction::Menu => &[Primary, Secondary, LeftStick, RightStick],
+            _ => &[
+                Primary,
+                Secondary,
+                LeftStick,
+                RightStick,
+                StickDown,
+                FreeTrigger,
+                FreeGrip,
+                Unbound,
+            ],
+        }
+    }
+
+    /// Another action whose sharing a button with this one is meant (the menu is held on the
+    /// grenade's button: with grenades, holding it takes one instead).
+    fn shares_with(self, other: VrAction) -> bool {
+        matches!(
+            (self, other),
+            (VrAction::Menu, VrAction::Grenade) | (VrAction::Grenade, VrAction::Menu)
+        )
+    }
+}
+
+/// A controller input a `VrAction` can be on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum VrButton {
+    /// A or X (either controller).
+    Primary,
+    /// B or Y.
+    Secondary,
+    /// Clicking the left stick (the left controller's trackpad), or the right one.
+    LeftStick,
+    RightStick,
+    /// The right stick pulled down.
+    StickDown,
+    /// The trigger and grip of the hand without the blaster (gripping near the holster draws
+    /// it instead).
+    FreeTrigger,
+    FreeGrip,
+    Unbound,
+}
+
+impl VrButton {
+    const ALL: [VrButton; 8] = [
+        VrButton::Primary,
+        VrButton::Secondary,
+        VrButton::LeftStick,
+        VrButton::RightStick,
+        VrButton::StickDown,
+        VrButton::FreeTrigger,
+        VrButton::FreeGrip,
+        VrButton::Unbound,
+    ];
+
+    /// As the panel and the hints name it (capitals: VR's font).
+    pub fn name(self) -> &'static str {
+        match self {
+            VrButton::Primary => "A OR X",
+            VrButton::Secondary => "B OR Y",
+            VrButton::LeftStick => "LEFT STICK CLICK",
+            VrButton::RightStick => "RIGHT STICK CLICK",
+            VrButton::StickDown => "RIGHT STICK DOWN",
+            VrButton::FreeTrigger => "FREE HAND TRIGGER",
+            VrButton::FreeGrip => "FREE HAND GRIP",
+            VrButton::Unbound => "NOT BOUND",
+        }
+    }
+
+    fn id(self) -> &'static str {
+        match self {
+            VrButton::Primary => "primary",
+            VrButton::Secondary => "secondary",
+            VrButton::LeftStick => "left_stick",
+            VrButton::RightStick => "right_stick",
+            VrButton::StickDown => "stick_down",
+            VrButton::FreeTrigger => "free_trigger",
+            VrButton::FreeGrip => "free_grip",
+            VrButton::Unbound => "none",
+        }
+    }
+
+    /// On the free hand: with dual pistols both hands hold one.
+    pub fn free_hand(self) -> bool {
+        matches!(self, VrButton::FreeTrigger | VrButton::FreeGrip)
     }
 }
 
@@ -292,6 +453,8 @@ pub struct Settings {
     pub music_volume: f32,
     /// Per action (in `Action::ALL` order): two bindings.
     pub bindings: Vec<(Action, [Option<Binding>; 2])>,
+    /// VR: each `VrAction`'s button (in `VrAction::ALL` order).
+    pub vr_buttons: [VrButton; 7],
     /// How often each kind of pickup (by its `PickupKind::id`) was taken so far, counted up to
     /// `EXPLAINED`: its announcement says what it does until then.
     pub taken: Vec<(String, u32)>,
@@ -347,6 +510,7 @@ impl Default for Settings {
             sound_volume: 1.0,
             music_volume: 1.0,
             bindings: Action::ALL.iter().map(|&a| (a, a.defaults())).collect(),
+            vr_buttons: VrAction::ALL.map(VrAction::default_button),
             taken: Vec::new(),
             hints: Vec::new(),
         }
@@ -442,6 +606,61 @@ impl Settings {
         }
     }
 
+    /// The button `a` is on in VR.
+    pub fn vr(&self, a: VrAction) -> VrButton {
+        self.vr_buttons[VrAction::ALL.iter().position(|&x| x == a).unwrap_or(0)]
+    }
+
+    pub fn set_vr(&mut self, a: VrAction, b: VrButton) {
+        if let Some(k) = VrAction::ALL.iter().position(|&x| x == a) {
+            self.vr_buttons[k] = b;
+        }
+    }
+
+    /// `a`'s button one step on (or back) among its choices.
+    pub fn step_vr(&mut self, a: VrAction, forward: bool) {
+        let c = a.choices();
+        let k = c.iter().position(|&b| b == self.vr(a)).unwrap_or(0);
+        let n = c.len();
+        let k = if forward {
+            (k + 1) % n
+        } else {
+            (k + n - 1) % n
+        };
+        self.set_vr(a, c[k]);
+    }
+
+    /// Another VR action on `a`'s button that isn't meant to share it.
+    pub fn vr_clash(&self, a: VrAction) -> Option<VrAction> {
+        let b = self.vr(a);
+        (b != VrButton::Unbound)
+            .then(|| {
+                VrAction::ALL
+                    .into_iter()
+                    .find(|&o| o != a && !a.shares_with(o) && self.vr(o) == b)
+            })
+            .flatten()
+    }
+
+    /// The button `a` is on with dual pistols, where both hands hold one: the shield on the
+    /// dash's button, the gadget on the grenade's (no grenades then), if they were on the free
+    /// hand (the dash moves to a quick second jump then).
+    pub fn vr_dual(&self, a: VrAction) -> VrButton {
+        let own = self.vr(a);
+        let instead = match a {
+            VrAction::Shield => VrAction::Dash,
+            VrAction::Gadget => VrAction::Grenade,
+            _ => return own,
+        };
+        if !own.free_hand() {
+            return own;
+        }
+        match self.vr(instead) {
+            b if b.free_hand() || b == VrButton::Unbound => instead.default_button(),
+            b => b,
+        }
+    }
+
     fn any(&self, a: Action, f: impl Fn(Binding) -> bool) -> bool {
         self.get(a).iter().flatten().any(|&b| f(b))
     }
@@ -526,6 +745,14 @@ impl Settings {
                 s.music_volume = saved.music_volume.clamp(0.0, 1.0);
                 s.taken = saved.taken;
                 s.hints = saved.hints;
+                for (id, name) in saved.vr_buttons {
+                    if let Some(&a) = VrAction::ALL.iter().find(|a| a.id() == id)
+                        && let Some(&b) = VrButton::ALL.iter().find(|b| b.id() == name)
+                        && a.choices().contains(&b)
+                    {
+                        s.set_vr(a, b);
+                    }
+                }
                 for (id, names) in saved.bindings {
                     if let Some(a) = Action::ALL.iter().find(|a| a.id() == id)
                         && let Some((_, bs)) = s.bindings.iter_mut().find(|(x, _)| x == a)
@@ -571,6 +798,10 @@ impl Settings {
                     )
                 })
                 .collect(),
+            vr_buttons: VrAction::ALL
+                .iter()
+                .map(|&a| (a.id().to_string(), self.vr(a).id().to_string()))
+                .collect(),
             taken: self.taken.clone(),
             hints: self.hints.clone(),
         };
@@ -609,6 +840,7 @@ struct Saved {
     sound_volume: f32,
     music_volume: f32,
     bindings: Vec<(String, Vec<Option<String>>)>,
+    vr_buttons: Vec<(String, String)>,
     taken: Vec<(String, u32)>,
     hints: Vec<String>,
 }
@@ -634,6 +866,7 @@ impl Default for Saved {
             sound_volume: 1.0,
             music_volume: 1.0,
             bindings: Vec::new(),
+            vr_buttons: Vec::new(),
             taken: Vec::new(),
             hints: Vec::new(),
         }
@@ -661,5 +894,34 @@ mod tests {
         s.set(Action::Fire, 1, Some(Binding::Key(KeyCode::KeyW)));
         assert_eq!(s.get(Action::Forward)[0], None);
         assert_eq!(s.get(Action::Fire)[1], Some(Binding::Key(KeyCode::KeyW)));
+    }
+
+    #[test]
+    fn vr_buttons_step_and_clash() {
+        let mut s = Settings::default();
+        // The menu shares the grenade's button by default: no clash.
+        assert!(VrAction::ALL.iter().all(|&a| s.vr_clash(a).is_none()));
+        s.step_vr(VrAction::Jump, true);
+        assert_eq!(s.vr(VrAction::Jump), VrButton::Secondary);
+        assert_eq!(s.vr_clash(VrAction::Jump), Some(VrAction::Grenade));
+        s.step_vr(VrAction::Jump, false);
+        assert_eq!(s.vr(VrAction::Jump), VrButton::Primary);
+        // Stepping back from the first choice wraps round; the menu is never unbound.
+        s.step_vr(VrAction::Menu, false);
+        assert_eq!(s.vr(VrAction::Menu), VrButton::Primary);
+        s.step_vr(VrAction::Menu, false);
+        assert_eq!(s.vr(VrAction::Menu), VrButton::RightStick);
+        assert!(!VrAction::Menu.choices().contains(&VrButton::Unbound));
+    }
+
+    #[test]
+    fn dual_pistols_move_the_free_hand_actions() {
+        let mut s = Settings::default();
+        assert_eq!(s.vr_dual(VrAction::Shield), VrButton::LeftStick);
+        assert_eq!(s.vr_dual(VrAction::Gadget), VrButton::Secondary);
+        s.set_vr(VrAction::Dash, VrButton::RightStick);
+        assert_eq!(s.vr_dual(VrAction::Shield), VrButton::RightStick);
+        s.set_vr(VrAction::Shield, VrButton::Primary);
+        assert_eq!(s.vr_dual(VrAction::Shield), VrButton::Primary);
     }
 }

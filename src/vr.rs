@@ -29,7 +29,7 @@ use crate::assets::Models;
 use crate::game::{Game, GameEvent, InputSet, LocalCmd, Mover, PredictSet};
 use crate::materials::{AccentMaterial, NeonUniform, Palette, team_color};
 use crate::segtext::{self, Align};
-use crate::settings::Settings;
+use crate::settings::{Settings, VrAction, VrButton};
 use crate::sevenseg::{Digit, show, spawn_digits};
 
 /// The holster, from the eyes (along the body's facing; x to the gun side). `LT_HOLSTER=x,y,z`
@@ -150,13 +150,11 @@ pub struct VrState {
     gripping: [bool; 2],
     menu_held: [bool; 2],
     hold: [(f32, bool); 2],
-    /// A / X held (last frame): pressing jumps; the left stick clicked: dashes.
-    primary_held: [bool; 2],
-    stick_held: bool,
-    /// Crouching with the right stick: on, the stick held down (last frame), and how far down
-    /// the eyes are (0..1, eased).
+    /// Each `VrAction`'s button held last frame (jumping, dashing and crouching go on a press).
+    held: [bool; 7],
+    /// Crouching with a button (the right stick pulled down): on, and how far down the eyes
+    /// are (0..1, eased).
     stick_crouch: bool,
-    stick_down: bool,
     pub crouch: f32,
     /// Times the menu was asked for (src/vrui.rs takes them).
     pub menu_requests: u32,
@@ -524,12 +522,32 @@ fn read_controls(
         vr.yaw -= t.signum() * (t.abs() - 0.2) / 0.8 * 2.4 * dt;
         vr.turning = true;
     }
-    // Right stick pulled down: crouch, or stand up again (not while turning hard).
-    let down = input.hands[1].stick.y < -0.7 && t.abs() < 0.5;
-    if down && !vr.stick_down && !vr.ui {
+    // Dual pistols: both hands hold one, so what was on the free hand moves
+    // (`Settings::vr_dual`).
+    let dual = game
+        .me
+        .and_then(|me| game.snap.players.iter().find(|p| p.id == me))
+        .is_some_and(|p| p.weapon == Weapon::Dual);
+    let button = |a: VrAction| {
+        if dual {
+            settings.vr_dual(a)
+        } else {
+            settings.vr(a)
+        }
+    };
+    // The actions pressed this frame (`press`) and held (`down`), the hand without the
+    // blaster being the free one.
+    let free = if vr.gun == Some(Hand::Left) { 1 } else { 0 };
+    let down = VrAction::ALL.map(|a| held(&input, button(a), None, free, vr.near));
+    let (before, ui) = (vr.held, vr.ui);
+    let press = |a: VrAction| {
+        let k = VrAction::ALL.iter().position(|&x| x == a).unwrap_or(0);
+        down[k] && !before[k] && !ui
+    };
+    // Crouch (the right stick pulled down), or stand up again.
+    if press(VrAction::Crouch) {
         vr.stick_crouch = !vr.stick_crouch;
     }
-    vr.stick_down = down;
     let alive = game
         .me
         .and_then(|me| game.snap.players.iter().find(|p| p.id == me))
@@ -540,31 +558,21 @@ fn read_controls(
     let want = if vr.stick_crouch { 1.0 } else { 0.0 };
     vr.crouch += (want - vr.crouch) * (1.0 - (-dt / STICK_CROUCH_TIME).exp());
     local.cmd.yaw = vr.yaw + input.head.map_or(0.0, |h| flat_yaw(h.rotation));
-    // Dual pistols: the left stick's click is the shield, so a quick second jump press dashes.
-    let dual = game
-        .me
-        .and_then(|me| game.snap.players.iter().find(|p| p.id == me))
-        .is_some_and(|p| p.weapon == Weapon::Dual);
+    // Dual pistols, the shield on the dash's button: a quick second jump press dashes.
+    let dash_moved = dual && button(VrAction::Shield) == settings.vr(VrAction::Dash);
     vr.since_jump += dt;
-    // A or X: jump.
-    for i in 0..2 {
-        let down = input.hands[i].primary;
-        if down && !vr.primary_held[i] && !vr.ui {
-            if dual && vr.since_jump < DOUBLE_TAP {
-                local.cmd.dashes = local.cmd.dashes.wrapping_add(1);
-                vr.since_jump = DOUBLE_TAP;
-            } else {
-                local.cmd.jumps = local.cmd.jumps.wrapping_add(1);
-                vr.since_jump = 0.0;
-            }
+    if press(VrAction::Jump) {
+        if dash_moved && vr.since_jump < DOUBLE_TAP {
+            local.cmd.dashes = local.cmd.dashes.wrapping_add(1);
+            vr.since_jump = DOUBLE_TAP;
+        } else {
+            local.cmd.jumps = local.cmd.jumps.wrapping_add(1);
+            vr.since_jump = 0.0;
         }
-        vr.primary_held[i] = down;
     }
-    let click = input.hands[0].stick_click;
-    if click && !vr.stick_held && !vr.ui && !dual {
+    if press(VrAction::Dash) && !dash_moved {
         local.cmd.dashes = local.cmd.dashes.wrapping_add(1);
     }
-    vr.stick_held = click;
 
     // The holster: at the hip on the gun side, turned with the body (which follows the head's
     // facing slowly).
@@ -662,46 +670,37 @@ fn read_controls(
         local.fire2_latch = true;
     }
 
-    // The shield: the trigger of the hand without the blaster (the left one, unless it holds
-    // the blaster).
-    let free = if vr.gun == Some(Hand::Left) {
-        Hand::Right
-    } else {
-        Hand::Left
-    };
-    local.cmd.shield = alive && !blocked && input.hands[free.index()].trigger > 0.75;
-    // The gadget: gripping with that hand away from the holster.
-    local.cmd.gadget =
-        alive && !blocked && !vr.near[free.index()] && input.hands[free.index()].squeeze > 0.75;
-    // Dual pistols: both hands full; the shield on the left stick's click, the gadget on B or Y
-    // held.
-    if dual {
-        local.cmd.shield = alive && !blocked && input.hands[0].stick_click;
-        local.cmd.gadget =
-            alive && !blocked && (input.hands[0].secondary || input.hands[1].secondary);
-    }
+    // The shield (by default the trigger of the hand without the blaster) and the gadget (its
+    // grip, away from the holster): as the blaster may have changed hands, asked again.
+    let free = if vr.gun == Some(Hand::Left) { 1 } else { 0 };
+    let near = vr.near;
+    let now = |a: VrAction| held(&input, button(a), None, free, near);
+    local.cmd.shield = alive && !blocked && now(VrAction::Shield);
+    local.cmd.gadget = alive && !blocked && now(VrAction::Gadget);
 
-    // The menu (its button: `menu_buttons`), or B / Y held without taking a grenade (not with
-    // dual pistols: B / Y is the gadget).
+    // The menu (its button: `menu_buttons`), or its button held without taking a grenade (not
+    // with dual pistols where that's the gadget's).
+    let menu = button(VrAction::Menu);
+    let menu_free = !(dual && menu == button(VrAction::Gadget));
     for i in 0..2 {
-        let hand = &input.hands[i];
-        let (held, opened) = vr.hold[i];
-        if hand.secondary && vr.grenade != Some(hand_of(i)) && !dual {
-            let held = held + dt;
-            let open = held >= MENU_HOLD && !opened;
+        let (secs, opened) = vr.hold[i];
+        if menu_free && held(&input, menu, Some(i), free, near) && vr.grenade != Some(hand_of(i)) {
+            let secs = secs + dt;
+            let open = secs >= MENU_HOLD && !opened;
             if open {
                 vr.menu_requests += 1;
                 rumble.play(i, 0.0, 0.03, 0.5);
             }
-            vr.hold[i] = (held, opened || open);
+            vr.hold[i] = (secs, opened || open);
         } else {
             vr.hold[i] = (0.0, false);
         }
     }
 
-    // The grenade: B or Y, on the hand not holding the blaster.
+    // The grenade: its button, on a hand not holding the blaster (let go: thrown).
+    let grenade = settings.vr(VrAction::Grenade);
     match vr.grenade {
-        Some(h) if !input.hands[h.index()].secondary => {
+        Some(h) if !held(&input, grenade, Some(h.index()), h.index(), [false; 2]) => {
             vr.grenade = None;
             vr.threw = Some(h);
             // Thrown with the hand's speed over the last 80 ms.
@@ -733,7 +732,7 @@ fn read_controls(
                 // (Not while B / Y is held for the menu, nor with a panel up.)
                 if has
                     && !dual
-                    && input.hands[h.index()].secondary
+                    && held(&input, grenade, Some(h.index()), free, near)
                     && vr.gun != Some(h)
                     && vr.hold[h.index()].0 < 0.25
                     && !blocked
@@ -746,6 +745,24 @@ fn read_controls(
         _ => {}
     }
     local.cmd.grenade_hand = vr.grenade;
+    vr.held = down;
+}
+
+/// Whether VR button `b` is held: by hand `hand` (None: either), `free` being the hand without
+/// the blaster; its grip counts only away from the holster (`near`: there, it draws).
+fn held(input: &XrInput, b: VrButton, hand: Option<usize>, free: usize, near: [bool; 2]) -> bool {
+    let by = |i: usize| hand.is_none_or(|h| h == i);
+    let h = &input.hands;
+    match b {
+        VrButton::Primary => (0..2).any(|i| by(i) && h[i].primary),
+        VrButton::Secondary => (0..2).any(|i| by(i) && h[i].secondary),
+        VrButton::LeftStick => by(0) && h[0].stick_click,
+        VrButton::RightStick => by(1) && h[1].stick_click,
+        VrButton::StickDown => by(1) && h[1].stick.y < -0.7 && h[1].stick.x.abs() < 0.5,
+        VrButton::FreeTrigger => by(free) && h[free].trigger > 0.75,
+        VrButton::FreeGrip => by(free) && !near[free] && h[free].squeeze > 0.75,
+        VrButton::Unbound => false,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

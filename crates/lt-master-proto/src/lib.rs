@@ -54,6 +54,9 @@ pub struct ServerReport {
     pub players: Vec<ReportPlayer>,
     pub max_players: u16,
     pub bots: u16,
+    /// Bots fill the free places (a player who joins takes a bot's: `bots` may be 0 on a
+    /// full server that has them). Servers from before this was reported leave it false.
+    pub bots_enabled: bool,
     /// Red's and blue's scores.
     pub scores: [u32; 2],
     /// Seconds left in the round.

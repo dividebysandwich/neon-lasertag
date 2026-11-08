@@ -2719,6 +2719,12 @@ impl Bots {
         lock(&self.shared).solo = !on;
     }
 
+    /// Bots play in this game (were ever added to it: players who join take their places,
+    /// and they come back when those leave).
+    pub fn enabled(&self) -> bool {
+        self.skill.is_some()
+    }
+
     /// The skill of this game's bots: the one last given to `fill` or `fill_team`, Normal's
     /// before that.
     pub fn skill(&self) -> f32 {

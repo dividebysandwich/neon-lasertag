@@ -2385,9 +2385,11 @@ pub fn pickup_banner(
     controls: Controls,
     explain: bool,
 ) -> Banner {
-    let key = |a: Action, vr: &str| match controls {
+    use crate::settings::VrAction;
+    let vr_button = |a: VrAction| settings.vr(a).name();
+    let key = |a: Action, vr: VrAction| match controls {
         Controls::Keys => format!("PRESS {}", key_hint(settings, a)),
-        Controls::Vr => vr.to_string(),
+        Controls::Vr => vr_button(vr).to_string(),
     };
     let sub = match kind {
         PickupKind::Grenade => format!(
@@ -2397,7 +2399,7 @@ pub fn pickup_banner(
                     "HOLD {} AND LET GO TO THROW",
                     key_hint(settings, Action::Grenade)
                 ),
-                Controls::Vr => "HOLD B OR Y - THROW - LET GO".to_string(),
+                Controls::Vr => format!("HOLD {} - THROW - LET GO", vr_button(VrAction::Grenade)),
             }
         ),
         PickupKind::Rapid => {
@@ -2405,7 +2407,7 @@ pub fn pickup_banner(
         }
         PickupKind::Shield => format!(
             "{}: NO BOLT HURTS YOU FOR {:.0} S",
-            key(Action::Shield, "TRIGGER OF THE FREE HAND"),
+            key(Action::Shield, VrAction::Shield),
             rules.shield_time
         ),
         PickupKind::Shotgun => format!(
@@ -2427,39 +2429,41 @@ pub fn pickup_banner(
         ),
         PickupKind::Barrier => format!(
             "{}: A WALL THAT STOPS ENEMY BOLTS FOR {:.0} S",
-            key(Action::Gadget, "GRIP OF THE FREE HAND"),
+            key(Action::Gadget, VrAction::Gadget),
             rules.barrier_time
         ),
         PickupKind::Dual => format!(
             "A PISTOL IN EACH HAND{}",
             match controls {
                 Controls::Keys => " - THEY FIRE IN TURN".to_string(),
-                Controls::Vr => {
-                    " - GRIP THE OTHER ONE - SHIELD: LEFT STICK - GADGET: HOLD B OR Y".to_string()
-                }
+                Controls::Vr => format!(
+                    " - GRIP THE OTHER ONE - SHIELD: {} - GADGET: HOLD {}",
+                    settings.vr_dual(VrAction::Shield).name(),
+                    settings.vr_dual(VrAction::Gadget).name()
+                ),
             }
         ),
         PickupKind::Medbeam => format!(
             "HOLD {} ON A TEAM MATE: IT HEALS THEIR HITS AND REFILLS THEIR BLASTER",
             match controls {
                 Controls::Keys => key_hint(settings, Action::Gadget),
-                Controls::Vr => "THE GRIP OF THE FREE HAND".to_string(),
+                Controls::Vr => vr_button(VrAction::Gadget).to_string(),
             }
         ),
         PickupKind::Decoy => format!(
             "{}: A COPY OF YOU RUNS AHEAD FOR {:.0} S AND DRAWS FIRE",
-            key(Action::Gadget, "GRIP OF THE FREE HAND"),
+            key(Action::Gadget, VrAction::Gadget),
             rules.decoy_time
         ),
         PickupKind::Sensor => format!(
             "{}: THROW IT - IT SHOWS ENEMIES WITHIN {:.0} M FOR {:.0} S",
-            key(Action::Gadget, "GRIP OF THE FREE HAND"),
+            key(Action::Gadget, VrAction::Gadget),
             rules.sensor_range,
             rules.sensor_time
         ),
         PickupKind::Mirror => format!(
             "{}: A MIRROR THAT TURNS BACK EVERY BOLT FOR {:.0} S",
-            key(Action::Gadget, "GRIP OF THE FREE HAND"),
+            key(Action::Gadget, VrAction::Gadget),
             rules.mirror_time
         ),
         PickupKind::Lance => format!(

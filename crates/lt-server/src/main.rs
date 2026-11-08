@@ -184,7 +184,7 @@ fn main() {
             }
         }
         if last_report.elapsed() > Duration::from_secs(2) {
-            let report = server.report(&sim, args.port, true);
+            let report = server.report(&sim, &bots, args.port, true);
             if let Some(l) = &lan {
                 l.update(report.clone());
             }

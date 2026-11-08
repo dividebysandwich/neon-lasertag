@@ -126,6 +126,26 @@ pub fn team_name(team: Option<Team>) -> &'static str {
     }
 }
 
+/// A server's players as the lists show them: "3 / 32" (just "3" from servers that don't say
+/// how many fit).
+pub fn players_text(r: &lt_net::ServerReport) -> String {
+    if r.max_players > 0 {
+        format!("{} / {}", r.players.len(), r.max_players)
+    } else {
+        r.players.len().to_string()
+    }
+}
+
+/// Whether a server has bots, as the lists show it: "BOTS ON (3)", "BOTS ON" (all their
+/// places taken by players), "NO BOTS".
+pub fn bots_text(r: &lt_net::ServerReport) -> String {
+    match (r.bots_enabled || r.bots > 0, r.bots) {
+        (true, 0) => "BOTS ON".into(),
+        (true, n) => format!("BOTS ON ({n})"),
+        (false, _) => "NO BOTS".into(),
+    }
+}
+
 /// What an act leads to beyond the menu.
 pub enum Outcome {
     Stay,
@@ -397,7 +417,15 @@ impl Plugin for MenuPlugin {
             .add_systems(
                 Update,
                 (
-                    dev_pick, keys, buttons, build, show_lists, live, selected, tips,
+                    dev_pick,
+                    keys,
+                    buttons,
+                    build,
+                    show_lists,
+                    scroll_list,
+                    live,
+                    selected,
+                    tips,
                 )
                     .chain()
                     .before(crate::options::OptionsSet)
@@ -413,9 +441,26 @@ struct MenuRoot;
 #[derive(Component)]
 struct Page(Screen);
 
-/// The server list's box.
+/// The server list's box (scrolled with the mouse wheel), and its scroll bar's track and thumb.
 #[derive(Component)]
 struct ServerList;
+
+#[derive(Component)]
+struct ScrollTrack;
+
+#[derive(Component)]
+struct ScrollThumb;
+
+/// The server list's columns' widths: players, bots, score, time left.
+const COLUMNS: [(&str, f32); 4] = [
+    ("PLAYERS", 100.0),
+    ("BOTS", 130.0),
+    ("SCORE", 80.0),
+    ("TIME", 64.0),
+];
+/// The list's height, and its scroll bar's width.
+const LIST_H: f32 = 300.0;
+const BAR_W: f32 = 6.0;
 
 /// Texts that follow the model.
 #[derive(Component, Clone, Copy, PartialEq)]
@@ -848,16 +893,86 @@ fn page(p: &mut ChildSpawnerCommands, model: &MenuModel) {
                             neonui::button(r, "REFRESH", MenuAct::Refresh, n, None, 15.0);
                         }
                     });
-                    p.spawn((
-                        ServerList,
-                        Node {
-                            width: Val::Percent(100.0),
-                            flex_direction: FlexDirection::Column,
-                            row_gap: Val::Px(6.0),
-                            min_height: Val::Px(290.0),
+                    // The columns' heads (over the rows' right parts: the rows' padding, and the
+                    // scroll bar beside them).
+                    p.spawn(Node {
+                        width: Val::Percent(100.0),
+                        padding: UiRect {
+                            left: Val::Px(18.0),
+                            right: Val::Px(18.0 + BAR_W + 8.0),
                             ..default()
                         },
-                    ));
+                        column_gap: Val::Px(12.0),
+                        ..default()
+                    })
+                    .with_children(|h| {
+                        h.spawn(Node {
+                            flex_grow: 1.0,
+                            ..default()
+                        })
+                        .with_child(neonui::text_w(
+                            "SERVER",
+                            12.0,
+                            neonui::DIM,
+                            700,
+                        ));
+                        for (name, w) in COLUMNS {
+                            h.spawn(Node {
+                                width: Val::Px(w),
+                                justify_content: JustifyContent::FlexEnd,
+                                ..default()
+                            })
+                            .with_child(neonui::text_w(
+                                name,
+                                12.0,
+                                neonui::DIM,
+                                700,
+                            ));
+                        }
+                    });
+                    p.spawn(Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Px(LIST_H),
+                        column_gap: Val::Px(8.0),
+                        ..default()
+                    })
+                    .with_children(|r| {
+                        r.spawn((
+                            ServerList,
+                            Node {
+                                flex_grow: 1.0,
+                                min_width: Val::Px(0.0),
+                                height: Val::Percent(100.0),
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(6.0),
+                                overflow: Overflow::scroll_y(),
+                                ..default()
+                            },
+                            ScrollPosition::default(),
+                            bevy::ui::RelativeCursorPosition::default(),
+                        ));
+                        r.spawn((
+                            ScrollTrack,
+                            Node {
+                                width: Val::Px(BAR_W),
+                                height: Val::Percent(100.0),
+                                border_radius: BorderRadius::all(Val::Px(3.0)),
+                                ..default()
+                            },
+                            BackgroundColor(color.with_alpha(0.12)),
+                            Visibility::Hidden,
+                        ))
+                        .with_child((
+                            ScrollThumb,
+                            Node {
+                                position_type: PositionType::Absolute,
+                                width: Val::Percent(100.0),
+                                border_radius: BorderRadius::all(Val::Px(3.0)),
+                                ..default()
+                            },
+                            BackgroundColor(color.with_alpha(0.8)),
+                        ));
+                    });
                     p.spawn(neonui::row(12.0)).with_children(|r| {
                         field(r, "JOIN ADDRESS", Live::Address, 360.0);
                         let n = NeonButton::new(neonui::GREEN);
@@ -934,7 +1049,8 @@ fn build(
         .with_children(|p| page(p, &model));
 }
 
-/// One server: a button to join it (greyed, not a button, if it speaks another protocol).
+/// One server: a button to join it (greyed, not a button, if it speaks another protocol): its
+/// name over its mode and arena, then the columns (`COLUMNS`): players, bots, score, time left.
 fn server_row(
     commands: &mut Commands,
     parent: Entity,
@@ -942,24 +1058,6 @@ fn server_row(
     r: &lt_net::ServerReport,
     joinable: bool,
 ) {
-    let what = if r.mode.is_empty() {
-        String::new()
-    } else {
-        format!("{}  {}  /  ", r.mode.to_uppercase(), r.arena.to_uppercase())
-    };
-    let right = if joinable {
-        format!(
-            "{what}{} + {} bots  /  {} : {}  /  {}:{:02}",
-            r.players.len(),
-            r.bots,
-            r.scores[0],
-            r.scores[1],
-            r.time_left_s / 60,
-            r.time_left_s % 60
-        )
-    } else {
-        format!("another version ({})", r.game_version)
-    };
     let color = if joinable { neonui::CYAN } else { neonui::DIM };
     let mut row = commands.spawn((
         ChildOf(parent),
@@ -971,20 +1069,125 @@ fn server_row(
     ));
     row.insert(Node {
         width: Val::Percent(100.0),
-        padding: UiRect::axes(Val::Px(16.0), Val::Px(8.0)),
+        // (Kept whole in the scrolled box.)
+        flex_shrink: 0.0,
+        padding: UiRect::axes(Val::Px(16.0), Val::Px(6.0)),
         border: UiRect::all(Val::Px(2.0)),
         border_radius: BorderRadius::all(Val::Px(6.0)),
-        justify_content: JustifyContent::SpaceBetween,
+        column_gap: Val::Px(12.0),
         align_items: AlignItems::Center,
         ..default()
     });
     if !joinable {
         row.remove::<(Button, MenuAct)>();
     }
+    let what = if r.mode.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "{}  /  {} ARENA",
+            r.mode.to_uppercase(),
+            r.arena.to_uppercase()
+        )
+    };
     row.with_children(|b| {
-        b.spawn(neonui::text_w(r.name.clone(), 18.0, neonui::TEXT, 700));
-        b.spawn(neonui::text(right, 14.0, neonui::DIM));
+        b.spawn(Node {
+            flex_grow: 1.0,
+            min_width: Val::Px(0.0),
+            flex_direction: FlexDirection::Column,
+            overflow: Overflow::clip_x(),
+            ..default()
+        })
+        .with_children(|n| {
+            n.spawn(neonui::text_w(r.name.clone(), 17.0, neonui::TEXT, 700));
+            n.spawn(neonui::text(what, 12.0, neonui::DIM));
+        });
+        if !joinable {
+            b.spawn(neonui::text(
+                format!("another version ({})", r.game_version),
+                14.0,
+                neonui::DIM,
+            ));
+            return;
+        }
+        let bots_on = r.bots_enabled || r.bots > 0;
+        let cells = [
+            (crate::menu::players_text(r), neonui::TEXT),
+            (
+                bots_text(r),
+                if bots_on { neonui::CYAN } else { neonui::DIM },
+            ),
+            (format!("{} : {}", r.scores[0], r.scores[1]), neonui::DIM),
+            (
+                format!("{}:{:02}", r.time_left_s / 60, r.time_left_s % 60),
+                neonui::DIM,
+            ),
+        ];
+        for ((text, c), (_, w)) in cells.into_iter().zip(COLUMNS) {
+            b.spawn(Node {
+                width: Val::Px(w),
+                flex_shrink: 0.0,
+                justify_content: JustifyContent::FlexEnd,
+                ..default()
+            })
+            .with_child(neonui::text(text, 14.0, c));
+        }
     });
+}
+
+/// The server list: the mouse wheel over it scrolls it; its scroll bar shows when it has more
+/// than fits.
+#[allow(clippy::type_complexity)]
+fn scroll_list(
+    wheel: Res<bevy::input::mouse::AccumulatedMouseScroll>,
+    mut list: Query<
+        (
+            &ComputedNode,
+            &mut ScrollPosition,
+            &bevy::ui::RelativeCursorPosition,
+        ),
+        With<ServerList>,
+    >,
+    mut track: Query<&mut Visibility, With<ScrollTrack>>,
+    mut thumb: Query<&mut Node, With<ScrollThumb>>,
+) {
+    use bevy::input::mouse::MouseScrollUnit;
+    let Ok((node, mut pos, cursor)) = list.single_mut() else {
+        return;
+    };
+    let scale = node.inverse_scale_factor();
+    let seen = node.size().y * scale;
+    let content = node.content_size().y * scale;
+    let room = (content - seen).max(0.0);
+    if cursor.cursor_over() && wheel.delta.y != 0.0 {
+        let dy = match wheel.unit {
+            MouseScrollUnit::Line => wheel.delta.y * 40.0,
+            MouseScrollUnit::Pixel => wheel.delta.y,
+        };
+        pos.y = (pos.y - dy).clamp(0.0, room);
+    } else if pos.y > room {
+        pos.y = room;
+    }
+    let shows = room > 0.5;
+    if let Ok(mut v) = track.single_mut() {
+        let want = if shows {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *v != want {
+            *v = want;
+        }
+    }
+    if shows && let Ok(mut t) = thumb.single_mut() {
+        let h = (seen / content * 100.0).clamp(10.0, 100.0);
+        let top = pos.y / room * (100.0 - h);
+        let (h, top) = (Val::Percent(h), Val::Percent(top));
+        if t.height != h || t.top != top {
+            t.height = h;
+            t.top = top;
+        }
+    }
 }
 
 /// Fills the server list when it changes.
@@ -1017,7 +1220,7 @@ fn show_lists(
             let s = "searching the network...".to_string();
             say(&mut commands, s, neonui::DIM);
         }
-        for s in model.lan_servers.iter().take(7) {
+        for s in &model.lan_servers {
             server_row(&mut commands, parent, &s.addr, &s.report, s.joinable());
         }
         return;
@@ -1036,7 +1239,7 @@ fn show_lists(
             say(&mut commands, s, neonui::DIM);
         }
         InternetList::Listed(l) => {
-            for s in l.iter().take(7) {
+            for s in l {
                 let joinable = s.report.protocol == lt_net::protocol::PROTOCOL;
                 server_row(&mut commands, parent, &s.addr, &s.report, joinable);
             }

@@ -8,7 +8,9 @@
 //!   games: the next match on a new arena), Options, Main menu and Quit, floating in front of
 //!   the player; where the game allows it, Red and Blue buttons to change sides.
 //! - The options (from the start menu or the menu): volumes, the blaster's tilt, the holster's
-//!   height and side, vibration, where the stick moves, and the height calibration.
+//!   height and side, vibration, where the stick moves, and the height calibration; under
+//!   them the controls: which button jumps, dashes, crouches, takes a grenade, switches on the
+//!   shield, uses the gadget and (held) opens the menu.
 //! - A panel stays where it was placed (in front of the eyes when it opened; the start menu keeps
 //!   its place as its levels change) until the left menu button recenters it.
 //! - The end of a match: the winner, the scores and each team's players with their score,
@@ -19,7 +21,8 @@
 //! - Hits: a red glow at the edge of the view on the side the shot came from (ahead: top,
 //!   behind: bottom), fading.
 //!
-//! `LT_VR_MENU=1` opens the menu at the start, `LT_VR_MENU=options` the options (testing).
+//! `LT_VR_MENU=1` opens the menu at the start, `LT_VR_MENU=options` the options, `controls` the
+//! controls (testing).
 
 use bevy::prelude::*;
 use lt_sim::bots::Difficulty;
@@ -83,6 +86,8 @@ enum Kind {
     End,
     /// The VR options (from the start menu or the menu).
     Options,
+    /// The VR controls' buttons (from the options).
+    Controls,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -100,6 +105,14 @@ enum Act {
     Opt(VrOpt),
     /// Play on this team.
     Team(Team),
+    /// The controls panel: open it, step an action's button on (true) or back, all back to
+    /// the defaults, back to the options.
+    Controls,
+    Bind(crate::settings::VrAction, bool),
+    ResetControls,
+    ControlsBack,
+    /// The server list scrolled by rows.
+    Scroll(i32),
 }
 
 /// The VR options' buttons (`build_options`).
@@ -135,9 +148,10 @@ type LobbyKey = (
     Option<Team>,
     bool,
     u32,
+    usize,
 );
 
-fn lobby_key(m: &MenuModel) -> LobbyKey {
+fn lobby_key(m: &MenuModel, list_top: usize) -> LobbyKey {
     (
         m.screen,
         m.bots,
@@ -147,6 +161,7 @@ fn lobby_key(m: &MenuModel) -> LobbyKey {
         m.team,
         m.team_switch,
         m.rev,
+        list_top,
     )
 }
 
@@ -178,8 +193,13 @@ struct Panel {
 #[derive(Resource, Default)]
 struct VrUi {
     menu: bool,
-    /// The options are up (over the start menu or the menu).
+    /// The options are up (over the start menu or the menu), and the controls over them.
     options: bool,
+    controls: bool,
+    /// The start menu's server list: the first row shown, and whether a stick was pushed up
+    /// or down (last frame).
+    list_top: usize,
+    list_flick: bool,
     panel: Option<Panel>,
     lasers: Option<[Entity; 2]>,
     /// Per hand: the trigger held, the button pointed at.
@@ -557,6 +577,28 @@ impl Builder<'_, '_, '_> {
         }
     }
 
+    /// A triangle pointing up or down (the list's arrows).
+    fn triangle(&mut self, c: Vec2, half: Vec2, up: bool) {
+        let mut m = MeshData::default();
+        let pts = if up {
+            [(-half.x, -half.y), (half.x, -half.y), (0.0, half.y)]
+        } else {
+            [(half.x, half.y), (-half.x, half.y), (0.0, -half.y)]
+        };
+        for (x, y) in pts {
+            m.pos.push([x, y, 0.0]);
+            m.nrm.push([0.0, 0.0, 1.0]);
+            m.uv.push([0.0, 0.0]);
+        }
+        m.idx.extend([0, 1, 2]);
+        self.commands.spawn((
+            Mesh3d(self.meshes.add(m.to_mesh())),
+            MeshMaterial3d(self.mats.white.clone()),
+            Transform::from_translation(c.extend(0.004)),
+            ChildOf(self.root),
+        ));
+    }
+
     /// A tooltip: `s` in small dim text, wrapped to `w`, its first line's middle at `at`;
     /// hidden until shown (`Button::tip`).
     fn tip(&mut self, s: &str, at: Vec2, w: f32) -> Entity {
@@ -599,7 +641,7 @@ fn short(name: &str, n: usize) -> String {
     name.chars().take(n).collect::<String>().to_uppercase()
 }
 
-fn build_menu(b: &mut Builder, game: &Game) -> Vec<Button> {
+fn build_menu(b: &mut Builder, game: &Game, settings: &crate::settings::Settings) -> Vec<Button> {
     let local = game.is_local();
     let teams = game.can_switch_team();
     // The buttons (and the team row), and under them the scores as they stand.
@@ -629,7 +671,7 @@ fn build_menu(b: &mut Builder, game: &Game) -> Vec<Button> {
         mats: b.mats,
         root: help,
     };
-    build_help(&mut h, game, size.y);
+    build_help(&mut h, game, settings, size.y);
     let mut acts = vec![("RESUME", Act::Resume, Hue::Cyan)];
     if local {
         acts.push(("NEW MATCH", Act::NewMatch, Hue::Amber));
@@ -684,21 +726,31 @@ fn build_menu(b: &mut Builder, game: &Game) -> Vec<Button> {
 /// The help panel's width (m).
 const HELP_W: f32 = 0.9;
 
-/// The VR controls.
-const VR_CONTROLS: [&str; 12] = [
-    "Move: left stick, or walk",
-    "Turn: right stick",
-    "Jump: A or X",
-    "Dash: click the left stick",
-    "Crouch: right stick down (or crouch)",
-    "Blaster: grip it at your hip",
-    "Fire: trigger",
-    "Grenade: hold B or Y, throw, let go",
-    "Shield: trigger of the free hand",
-    "Gadget: grip of the free hand",
-    "Menu: right menu button",
-    "Recenter: left menu button",
-];
+/// The VR controls (as bound: `Settings::vr`).
+fn vr_controls(s: &crate::settings::Settings) -> Vec<(&'static str, String)> {
+    use crate::settings::VrAction;
+    let b = |a: VrAction| s.vr(a).name().to_lowercase();
+    vec![
+        ("Move", "left stick, or walk".into()),
+        ("Turn", "right stick".into()),
+        ("Jump", b(VrAction::Jump)),
+        ("Dash", b(VrAction::Dash)),
+        ("Crouch", format!("{} (or crouch)", b(VrAction::Crouch))),
+        ("Blaster", "grip it at your hip".into()),
+        ("Fire", "trigger".into()),
+        (
+            "Grenade",
+            format!("hold {}, throw, let go", b(VrAction::Grenade)),
+        ),
+        ("Shield", b(VrAction::Shield)),
+        ("Gadget", b(VrAction::Gadget)),
+        (
+            "Menu",
+            format!("right menu button, or hold {}", b(VrAction::Menu)),
+        ),
+        ("Recenter", "left menu button".into()),
+    ]
+}
 
 /// `s` broken into lines at most `w` wide (in text `h` high).
 fn wrap(s: &str, h: f32, w: f32) -> Vec<String> {
@@ -716,7 +768,7 @@ fn wrap(s: &str, h: f32, w: f32) -> Vec<String> {
 }
 
 /// The help panel, `height` high: the controls and the rules in short.
-fn build_help(b: &mut Builder, game: &Game, height: f32) {
+fn build_help(b: &mut Builder, game: &Game, settings: &crate::settings::Settings, height: f32) {
     b.backing(Vec2::new(HELP_W, height), Hue::Violet);
     let violet = b.tint(Hue::Violet).text.clone();
     let white = b.mats.white.clone();
@@ -734,11 +786,10 @@ fn build_help(b: &mut Builder, game: &Game, height: f32) {
         None,
     );
     y -= 0.05;
-    for line in VR_CONTROLS {
-        let (what, how) = line.split_once(": ").unwrap_or((line, ""));
+    for (what, how) in vr_controls(settings) {
         b.text(what, lh, Vec2::new(left, y), Align::Left, &dim, None);
         b.text(
-            how,
+            &how,
             lh,
             Vec2::new(left + 0.24, y),
             Align::Left,
@@ -889,10 +940,50 @@ fn lobby_choices(b: &mut Builder, buttons: &mut Vec<Button>, m: &MenuModel, mut 
     y - 0.16
 }
 
-/// A server list's rows (at most `ROWS`), from `y` down.
-fn lobby_list(b: &mut Builder, buttons: &mut Vec<Button>, m: &MenuModel, y: f32, width: f32) {
-    const ROWS: usize = 6;
+/// Server rows the start menu's list shows at once.
+const LIST_ROWS: usize = 6;
+
+/// The servers the start menu's list shows (those that speak this game's protocol), with
+/// their addresses.
+fn list_servers(m: &MenuModel) -> Vec<(&lt_net::ServerReport, &str)> {
+    match m.screen {
+        Screen::Lan => m
+            .lan_servers
+            .iter()
+            .filter(|s| s.joinable())
+            .map(|s| (&s.report, s.addr.as_str()))
+            .collect(),
+        Screen::Internet => match &m.internet {
+            InternetList::Listed(l) => l
+                .iter()
+                .filter(|s| s.report.protocol == lt_net::protocol::PROTOCOL)
+                .map(|s| (&s.report, s.addr.as_str()))
+                .collect(),
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
+/// The first row the list can start at (the last rows filling it).
+fn list_max_top(m: &MenuModel) -> usize {
+    list_servers(m).len().saturating_sub(LIST_ROWS)
+}
+
+/// A server list's rows (`LIST_ROWS` of them from row `first`), from `y` down: each server's
+/// name and players, its mode and arena, and whether it has bots; with arrows beside them to
+/// scroll when there are more.
+fn lobby_list(
+    b: &mut Builder,
+    buttons: &mut Vec<Button>,
+    m: &MenuModel,
+    y: f32,
+    width: f32,
+    first: usize,
+) {
     let dim = b.mats.dim.clone();
+    let white = b.mats.white.clone();
+    let cyan = b.tint(Hue::Cyan).text.clone();
     let say = |b: &mut Builder, s: &str| {
         b.text(
             s,
@@ -903,60 +994,131 @@ fn lobby_list(b: &mut Builder, buttons: &mut Vec<Button>, m: &MenuModel, y: f32,
             None,
         );
     };
-    let mut rows: Vec<(String, String)> = Vec::new();
-    let row = |r: &lt_net::ServerReport| {
-        let mode = if r.mode.is_empty() {
-            String::new()
-        } else {
-            format!(" {}", r.mode.to_uppercase())
-        };
-        format!(
-            "{}  {}+{}{mode}",
-            short(&r.name, 20),
-            r.players.len(),
-            r.bots
-        )
-    };
     if m.screen == Screen::Lan {
         if m.lan_error.is_some() {
             say(b, "CAN'T LISTEN ON THE NETWORK");
         } else if m.lan_servers.is_empty() {
             say(b, "SEARCHING THE NETWORK...");
         }
-        for s in m.lan_servers.iter().filter(|s| s.joinable()).take(ROWS) {
-            rows.push((row(&s.report), s.addr.clone()));
-        }
     } else {
         match &m.internet {
             InternetList::Idle | InternetList::Asking => say(b, "ASKING THE MASTER SERVER..."),
             InternetList::Failed(_) => say(b, "SERVER LIST UNAVAILABLE"),
             InternetList::Listed(l) if l.is_empty() => say(b, "NO SERVERS: HOST ONE!"),
-            InternetList::Listed(l) => {
-                for s in l
-                    .iter()
-                    .filter(|s| s.report.protocol == lt_net::protocol::PROTOCOL)
-                    .take(ROWS)
-                {
-                    rows.push((row(&s.report), s.addr.clone()));
-                }
-            }
+            InternetList::Listed(_) => {}
         }
     }
-    for (k, (text, addr)) in rows.into_iter().enumerate() {
+    let servers = list_servers(m);
+    let scrolls = servers.len() > LIST_ROWS;
+    let first = first.min(servers.len().saturating_sub(LIST_ROWS));
+    // (Scrolling: the rows narrower, the arrows on their right.)
+    let (w, x) = if scrolls {
+        (width - 0.1, -0.05)
+    } else {
+        (width, 0.0)
+    };
+    let (row_h, pitch) = (0.08, 0.088);
+    let row_y = |k: usize| y - 0.05 - k as f32 * pitch;
+    for (k, (r, addr)) in servers.iter().skip(first).take(LIST_ROWS).enumerate() {
+        let c = Vec2::new(x, row_y(k));
         buttons.push(b.button(
-            &text,
-            menu(MenuAct::Join(addr)),
-            Vec2::new(0.0, y - 0.05 - k as f32 * 0.085),
-            Vec2::new(width, 0.075),
+            "",
+            menu(MenuAct::Join(addr.to_string())),
+            c,
+            Vec2::new(w, row_h),
             Hue::Cyan,
             false,
         ));
+        let (l, rt) = (c.x - w / 2.0 + 0.02, c.x + w / 2.0 - 0.02);
+        let (top, bottom) = (c.y + 0.015, c.y - 0.021);
+        // The name (as much as fits) over the mode and arena, the players and the bots.
+        let mut name = short(&r.name, 40);
+        while name.chars().count() > 1 && vfont::width(&name, 0.026, BOLD) > w - 0.04 {
+            name.pop();
+        }
+        b.text_w(
+            &name,
+            0.026,
+            BOLD,
+            Vec2::new(l, top),
+            Align::Left,
+            &white,
+            None,
+        );
+        // Under it: the mode and arena's size, the players and the bots (smaller if they
+        // don't fit).
+        let what = if r.mode.is_empty() {
+            String::new()
+        } else {
+            format!("{} - {}", r.mode.to_uppercase(), r.arena.to_uppercase())
+        };
+        let bots = crate::menu::bots_text(r);
+        let on = r.bots_enabled || r.bots > 0;
+        let players = format!("{} PLAYERS  -", crate::menu::players_text(r));
+        let wide = |s: &str| vfont::width(s, 1.0, TEXT);
+        let total = wide(&what) + wide(&players) + wide(&bots);
+        let h = 0.018f32.min((w - 0.04 - 0.05) / total.max(0.01));
+        b.text(&what, h, Vec2::new(l, bottom), Align::Left, &dim, None);
+        b.text(
+            &bots,
+            h,
+            Vec2::new(rt, bottom),
+            Align::Right,
+            if on { &cyan } else { &dim },
+            None,
+        );
+        let at = rt - wide(&bots) * h - h * 0.6;
+        b.text(
+            &players,
+            h,
+            Vec2::new(at, bottom),
+            Align::Right,
+            &white,
+            None,
+        );
+    }
+    if scrolls {
+        let ax = x + w / 2.0 + 0.05;
+        let size = Vec2::new(0.07, 0.17);
+        let last = row_y(LIST_ROWS - 1);
+        let up = Vec2::new(ax, row_y(0) - (size.y - row_h) / 2.0);
+        let down = Vec2::new(ax, last + (size.y - row_h) / 2.0);
+        buttons.push(b.button("", Act::Scroll(-1), up, size, Hue::Violet, first > 0));
+        if first > 0 {
+            b.triangle(up, Vec2::new(0.034, 0.03), true);
+        }
+        let more = first + LIST_ROWS < servers.len();
+        buttons.push(b.button("", Act::Scroll(1), down, size, Hue::Violet, more));
+        if more {
+            b.triangle(down, Vec2::new(0.034, 0.03), false);
+        }
+        // Where in the list.
+        let n = servers.len();
+        let at = format!("{}-{}", first + 1, (first + LIST_ROWS).min(n));
+        let mid = (up.y + down.y) / 2.0;
+        b.text_w(
+            &at,
+            0.02,
+            BOLD,
+            Vec2::new(ax, mid + 0.014),
+            Align::Center,
+            &white,
+            None,
+        );
+        b.text(
+            &format!("OF {n}"),
+            0.018,
+            Vec2::new(ax, mid - 0.018),
+            Align::Center,
+            &dim,
+            None,
+        );
     }
 }
 
 /// The start menu (src/menu.rs's levels; no typing, so no join by address and the server's
 /// name as it is).
-fn build_lobby(b: &mut Builder, m: &MenuModel) -> Vec<Button> {
+fn build_lobby(b: &mut Builder, m: &MenuModel, list_top: usize) -> Vec<Button> {
     // (The screens with the game's choices are taller.)
     let height = match m.screen {
         Screen::Botmatch => 1.5,
@@ -1039,7 +1201,7 @@ fn build_lobby(b: &mut Builder, m: &MenuModel) -> Vec<Button> {
         }
         Screen::Internet | Screen::Lan => {
             let internet = m.screen == Screen::Internet;
-            lobby_list(b, &mut buttons, m, top - 0.22, 0.96);
+            lobby_list(b, &mut buttons, m, top - 0.22, 0.96, list_top);
             if internet {
                 buttons.push(b.button(
                     "REFRESH",
@@ -1448,14 +1610,99 @@ fn build_options(b: &mut Builder, s: &crate::settings::Settings, vignette: bool)
         &dim,
         None,
     );
-    buttons.push(b.button(
-        "BACK",
-        Act::Opt(VrOpt::Back),
-        Vec2::new(0.0, top - 1.306),
-        Vec2::new(0.46, 0.09),
-        Hue::Violet,
-        false,
-    ));
+    button_row(
+        b,
+        &mut buttons,
+        vec![
+            ("CONTROLS".into(), Act::Controls, Hue::Cyan, false),
+            ("BACK".into(), Act::Opt(VrOpt::Back), Hue::Violet, false),
+        ],
+        top - 1.306,
+        0.46,
+        0.09,
+    );
+    buttons
+}
+
+/// The VR controls panel: each `VrAction`'s button, stepped through with < and > (one on a
+/// button another action is on too shows amber), and what can't be changed.
+fn build_controls(b: &mut Builder, s: &crate::settings::Settings) -> Vec<Button> {
+    use crate::settings::VrAction;
+    let rows = VrAction::ALL.len();
+    let size = Vec2::new(1.1, 0.5 + rows as f32 * 0.092 + 0.3);
+    b.backing(size, Hue::Cyan);
+    let top = size.y / 2.0;
+    b.title("CONTROLS", 0.058, top - 0.085);
+    let (white, dim) = (b.mats.white.clone(), b.mats.dim.clone());
+    let amber = b.tint(Hue::Amber).text.clone();
+    let mut buttons = Vec::new();
+    let row_y = |k: usize| top - 0.24 - k as f32 * 0.092;
+    let (vx, bw) = (0.22, Vec2::new(0.07, 0.07));
+    for (k, &a) in VrAction::ALL.iter().enumerate() {
+        let y = row_y(k);
+        b.text_w(
+            a.name(),
+            0.024,
+            BOLD,
+            Vec2::new(-0.48, y),
+            Align::Left,
+            &white,
+            None,
+        );
+        buttons.push(b.button(
+            "<",
+            Act::Bind(a, false),
+            Vec2::new(vx - 0.21, y),
+            bw,
+            Hue::Cyan,
+            false,
+        ));
+        let name = s.vr(a).name();
+        let h = 0.022f32.min(0.32 / vfont::width(name, 1.0, TEXT).max(0.01));
+        let mat = if s.vr_clash(a).is_some() {
+            &amber
+        } else {
+            &white
+        };
+        b.text(name, h, Vec2::new(vx, y), Align::Center, mat, None);
+        buttons.push(b.button(
+            ">",
+            Act::Bind(a, true),
+            Vec2::new(vx + 0.21, y),
+            bw,
+            Hue::Cyan,
+            false,
+        ));
+    }
+    let mut y = row_y(rows) + 0.02;
+    let clash = VrAction::ALL
+        .iter()
+        .find_map(|&a| s.vr_clash(a).map(|o| (a, o)));
+    if let Some((a, o)) = clash {
+        let note = format!("{} AND {} SHARE A BUTTON", a.name(), o.name());
+        b.text(&note, 0.018, Vec2::new(0.0, y), Align::Center, &amber, None);
+    }
+    y -= 0.05;
+    for line in [
+        "FIRE: TRIGGER OF THE BLASTER HAND - DRAW: GRIP AT THE HIP",
+        "MOVE AND TURN: THE STICKS - RECENTER: LEFT MENU BUTTON",
+        "WITH DUAL PISTOLS THE FREE HAND'S SHIELD AND GADGET MOVE",
+        "TO THE DASH'S AND THE GRENADE'S BUTTONS",
+    ] {
+        b.text(line, 0.016, Vec2::new(0.0, y), Align::Center, &dim, None);
+        y -= 0.032;
+    }
+    button_row(
+        b,
+        &mut buttons,
+        vec![
+            ("DEFAULTS".into(), Act::ResetControls, Hue::Amber, false),
+            ("BACK".into(), Act::ControlsBack, Hue::Violet, false),
+        ],
+        -top + 0.09,
+        0.46,
+        0.09,
+    );
     buttons
 }
 
@@ -1525,14 +1772,16 @@ fn panels(
     if !ui.started {
         ui.started = true;
         let v = std::env::var("LT_VR_MENU").unwrap_or_default();
-        ui.menu = v == "1" || v == "options";
-        ui.options = v == "options";
+        ui.menu = v == "1" || v == "options" || v == "controls";
+        ui.options = v == "options" || v == "controls";
+        ui.controls = v == "controls";
     }
     if vr.menu_requests > 0 {
         vr.menu_requests = 0;
         // (The menu button closes the options too.)
         if ui.options {
             ui.options = false;
+            ui.controls = false;
         } else {
             ui.menu = !ui.menu;
         }
@@ -1542,7 +1791,11 @@ fn panels(
     if !(lobby || ui.menu) {
         ui.options = false;
     }
+    if !ui.options {
+        ui.controls = false;
+    }
     let want = match game.as_deref() {
+        _ if ui.controls => Some(Kind::Controls),
         _ if ui.options => Some(Kind::Options),
         _ if lobby => Some(Kind::Lobby),
         None => None,
@@ -1553,12 +1806,33 @@ fn panels(
     if lobby {
         ui.menu = false;
     }
+    // The server list: scrolled by a stick pushed up or down (or its arrows: `pointer`), kept
+    // in range as the list changes, from the top on another level.
+    if lobby && matches!(model.screen, Screen::Internet | Screen::Lan) && !ui.options {
+        let y = input
+            .hands
+            .iter()
+            .map(|h| h.stick.y)
+            .fold(0.0f32, |a, v| if v.abs() > a.abs() { v } else { a });
+        if y.abs() > 0.7 && !ui.list_flick {
+            ui.list_top = (ui.list_top as i32 - y.signum() as i32).max(0) as usize;
+        }
+        if y.abs() > 0.7 {
+            ui.list_flick = true;
+        } else if y.abs() < 0.3 {
+            ui.list_flick = false;
+        }
+        ui.list_top = ui.list_top.min(list_max_top(&model));
+    } else {
+        ui.list_top = 0;
+    }
     // The start menu is built anew when its choices change, or once the head is tracked; the
     // options when they change.
     let stale = ui.panel.as_ref().is_some_and(|p| {
         p.kind == Kind::Lobby
-            && (p.shows != Some(lobby_key(&model)) || p.headless && input.head.is_some())
-            || p.kind == Kind::Options && settings.is_changed()
+            && (p.shows != Some(lobby_key(&model, ui.list_top))
+                || p.headless && input.head.is_some())
+            || matches!(p.kind, Kind::Options | Kind::Controls) && settings.is_changed()
     });
     // In front of the eyes, level, a little below them.
     let in_front = || {
@@ -1594,13 +1868,14 @@ fn panels(
                 root,
             };
             let (buttons, countdown_at) = match (kind, game.as_deref()) {
-                (Kind::Lobby, _) => (build_lobby(&mut b, &model), Vec3::ZERO),
-                (Kind::Menu, Some(g)) => (build_menu(&mut b, g), Vec3::ZERO),
+                (Kind::Lobby, _) => (build_lobby(&mut b, &model, ui.list_top), Vec3::ZERO),
+                (Kind::Menu, Some(g)) => (build_menu(&mut b, g, &settings), Vec3::ZERO),
                 (Kind::End, Some(g)) => build_end(&mut b, g),
                 (Kind::Options, _) => (
                     build_options(&mut b, &settings, no_vignette.is_none()),
                     Vec3::ZERO,
                 ),
+                (Kind::Controls, _) => (build_controls(&mut b, &settings), Vec3::ZERO),
                 _ => (Vec::new(), Vec3::ZERO),
             };
             ui.panel = Some(Panel {
@@ -1610,7 +1885,7 @@ fn panels(
                 buttons,
                 countdown: None,
                 countdown_at,
-                shows: (kind == Kind::Lobby).then(|| lobby_key(&model)),
+                shows: (kind == Kind::Lobby).then(|| lobby_key(&model, ui.list_top)),
                 headless,
             });
         }
@@ -1822,6 +2097,17 @@ fn pointer(
         },
         Act::Options => ui.options = true,
         Act::Opt(VrOpt::Back) => ui.options = false,
+        Act::Controls => ui.controls = true,
+        Act::ControlsBack => ui.controls = false,
+        Act::Bind(a, forward) => {
+            settings.step_vr(a, forward);
+            settings.save();
+        }
+        Act::ResetControls => {
+            settings.vr_buttons = crate::settings::Settings::default().vr_buttons;
+            settings.save();
+        }
+        Act::Scroll(d) => ui.list_top = (ui.list_top as i32 + d).max(0) as usize,
         Act::Opt(o) => {
             if matches!(o, VrOpt::Calibrate | VrOpt::ResetHeight) {
                 commands.insert_resource(crate::actors::RefitLegs(true));

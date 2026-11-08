@@ -63,15 +63,15 @@ impl HostNet {
     }
 
     /// Tells the network about the server now and then; logs what happens.
-    fn tick(&mut self, server: &Server, sim: &Sim) {
+    fn tick(&mut self, server: &Server, sim: &Sim, bots: &Bots) {
         if sim.tick % REPORT_TICKS != 1 {
             return;
         }
-        self.lan.update(server.report(sim, self.port, false));
+        self.lan.update(server.report(sim, bots, self.port, false));
         if let Some((reporter, mapper)) = &self.internet {
             // Outside, players join on the port the router opened.
             let port = mapper.external_port().unwrap_or(self.port);
-            reporter.update(server.report(sim, port, false));
+            reporter.update(server.report(sim, bots, port, false));
             for line in reporter.take_log() {
                 info!("master server: {line}");
             }
@@ -547,7 +547,7 @@ fn step_game(
                     info!("server: {line}");
                 }
                 if let Some(n) = net {
-                    n.tick(server, sim);
+                    n.tick(server, sim, bots);
                 }
             }
             for e in evs {

@@ -358,8 +358,8 @@ impl Server {
     }
 
     /// The server as the master server's list and LAN beacons show it: joined on `port`
-    /// (outside a router: the port it opened), playing `sim`.
-    pub fn report(&self, sim: &Sim, port: u16, dedicated: bool) -> ServerReport {
+    /// (outside a router: the port it opened), playing `sim` with `bots`.
+    pub fn report(&self, sim: &Sim, bots: &Bots, port: u16, dedicated: bool) -> ServerReport {
         ServerReport {
             protocol: PROTOCOL,
             game_version: env!("CARGO_PKG_VERSION").into(),
@@ -384,6 +384,7 @@ impl Server {
                 .collect(),
             max_players: lt_sim::sim::MAX_PLAYERS as u16,
             bots: sim.players.iter().filter(|p| p.bot).count() as u16,
+            bots_enabled: bots.enabled(),
             scores: sim.scores,
             time_left_s: sim.time_left as u32,
         }
