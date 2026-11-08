@@ -26,6 +26,11 @@ struct EventBanner;
 /// The line under the banner saying what the event does.
 #[derive(Component)]
 struct EventBannerSub;
+/// A bar of the crosshair, and the way it moves out (spreading after a shot, and for the
+/// shotgun's cone); the dot in the middle has none.
+#[derive(Component)]
+struct Reticle(Vec2);
+
 /// One of the four strokes of the hit marker, an X around the crosshair.
 #[derive(Component)]
 struct HitMarkStroke;
@@ -131,6 +136,10 @@ struct Feed {
     mark: Confirm,
     /// The points just scored: text and seconds left.
     points: Vec<(String, f32)>,
+    /// The crosshair spread by the last shot (px, easing back), and the seconds until the gun
+    /// is ready again of how many.
+    spread: f32,
+    cycle: (f32, f32),
 }
 
 /// Little enough of a full blaster to warn about.
@@ -164,6 +173,7 @@ impl Plugin for HudPlugin {
                     event_banner,
                     pickup_note,
                     hit_marker,
+                    reticle,
                     edge_glow,
                     fade_shadows,
                     objective_markers,
@@ -441,11 +451,11 @@ fn spawn(mut commands: Commands) {
                 ..default()
             })
             .with_children(|c| {
-                c.spawn(reticle_bar(0.0, 14.0, 9.0, 2.0));
-                c.spawn(reticle_bar(21.0, 14.0, 9.0, 2.0));
-                c.spawn(reticle_bar(14.0, 0.0, 2.0, 9.0));
-                c.spawn(reticle_bar(14.0, 21.0, 2.0, 9.0));
-                c.spawn(reticle_bar(13.5, 13.5, 3.0, 3.0));
+                c.spawn((reticle_bar(0.0, 14.0, 9.0, 2.0), Reticle(Vec2::NEG_X)));
+                c.spawn((reticle_bar(21.0, 14.0, 9.0, 2.0), Reticle(Vec2::X)));
+                c.spawn((reticle_bar(14.0, 0.0, 2.0, 9.0), Reticle(Vec2::NEG_Y)));
+                c.spawn((reticle_bar(14.0, 21.0, 2.0, 9.0), Reticle(Vec2::Y)));
+                c.spawn((reticle_bar(13.5, 13.5, 3.0, 3.0), Reticle(Vec2::ZERO)));
                 // The hit marker: four strokes on the diagonals, pointing in.
                 for k in 0..4 {
                     let a = std::f32::consts::FRAC_PI_4 + k as f32 * std::f32::consts::FRAC_PI_2;
@@ -920,6 +930,22 @@ pub fn feed_entries(e: &SimEvent, game: &Game) -> Vec<(String, Color, f32)> {
 
 fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMut<Feed>) {
     for GameEvent(e) in events.read() {
+        if let SimEvent::Fired { player, second, .. } = *e
+            && Some(player) == game.me
+            && let Some(p) = game.snap.players.iter().find(|p| p.id == player)
+        {
+            feed.spread = (feed.spread + RETICLE_KICK).min(RETICLE_KICK * 2.0);
+            // (Dual pistols: either is ready again when the first is.)
+            if !second || feed.cycle.0 <= 0.0 {
+                let gun = lt_sim::shot::Gun {
+                    weapon: p.weapon,
+                    rapid: p.rapid,
+                    ..default()
+                };
+                let t = gun.interval(&game.rules);
+                feed.cycle = (t, t);
+            }
+        }
         // (A lesser marker doesn't cut a greater one short.)
         if let Some(c) = hit_confirm(e, &game)
             && (c.rank() >= feed.mark.rank() || feed.hit_mark <= 0.0)
@@ -1516,6 +1542,51 @@ fn hit_marker(
         let a = (life / 0.4).min(1.0);
         color.0 = neonui::AMBER.with_alpha(a);
         shadow.color.set_alpha(0.85 * a);
+    }
+}
+
+/// How far a shot spreads the crosshair's bars (px), and how quickly they come back (time
+/// constant, s); how much further out the shotgun's are.
+const RETICLE_KICK: f32 = 5.0;
+const RETICLE_BACK: f32 = 0.08;
+const RETICLE_SHOTGUN: f32 = 5.0;
+
+/// The crosshair: its bars spread by a shot (and further out for the shotgun's cone), its dot
+/// dim until the gun is ready again, all pink while the blaster is down after a hit.
+fn reticle(
+    time: Res<Time>,
+    game: Res<Game>,
+    mut feed: ResMut<Feed>,
+    mut bars: Query<(&Reticle, &mut UiTransform, &mut BackgroundColor)>,
+) {
+    let dt = time.delta_secs();
+    feed.spread *= (-dt / RETICLE_BACK).exp();
+    feed.cycle.0 = (feed.cycle.0 - dt).max(0.0);
+    let me = game
+        .me
+        .and_then(|id| game.snap.players.iter().find(|p| p.id == id));
+    let shotgun = me.is_some_and(|p| p.weapon == lt_sim::Weapon::Shotgun);
+    let down = me.is_some_and(|p| p.cooldown > 0.0);
+    let gap = feed.spread + if shotgun { RETICLE_SHOTGUN } else { 0.0 };
+    let base = if down {
+        neonui::PINK
+    } else {
+        Color::srgb(0.95, 1.0, 1.0)
+    };
+    let cycling = if feed.cycle.1 > 0.0 {
+        feed.cycle.0 / feed.cycle.1
+    } else {
+        0.0
+    };
+    for (r, mut t, mut bg) in &mut bars {
+        let off = r.0 * gap;
+        t.translation = Val2::px(off.x, off.y);
+        let a = if r.0 == Vec2::ZERO {
+            0.9 * (1.0 - 0.75 * cycling)
+        } else {
+            0.9
+        };
+        bg.0 = base.with_alpha(a);
     }
 }
 
