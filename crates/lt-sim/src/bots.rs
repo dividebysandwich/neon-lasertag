@@ -17,8 +17,8 @@
 //!
 //! **Roles and skill.** Every bot is offensive or defensive (`Bots` alternates them per team).
 //! Its skill (0..1, from the game's `Difficulty`) sets how well it plays, with some spread
-//! between bots: its fixed aiming error (an angle applied to every shot, about 6.5° standard
-//! deviation at Easy, 3.5° at Normal and 2° at Hard, so even Hard bots miss at range), reaction
+//! between bots: its fixed aiming error (an angle applied to every shot, about 10° standard
+//! deviation at Easy, 6° at Normal and 2° at Hard, so even Hard bots miss at range), reaction
 //! time, turn speed, how much it leads moving enemies, how readily it throws grenades and how
 //! much it cares about cover when picking spots.
 //!
@@ -983,10 +983,11 @@ impl Bot {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let skill = skill.clamp(0.0, 1.0);
         // Each bot's own accuracy: set by the skill, with a spread of about ±25 % so bots of one
-        // difficulty don't all play alike. The floor keeps the best bots human: about 2° at
-        // Hard still misses a chest at 20 m now and then, more so on the move.
+        // difficulty don't all play alike: about 10° at Easy (a miss more often than not past a
+        // few metres), 6° at Normal and 2° at Hard. The floor keeps the best bots human: 2°
+        // still misses a chest at 20 m now and then, more so on the move.
         let spread = |rng: &mut ChaCha8Rng| 0.75 + 0.5 * rng.random::<f32>();
-        let aim_error = ((7.5 - 6.0 * skill) * spread(&mut rng))
+        let aim_error = ((11.5 - 10.5 * skill) * spread(&mut rng))
             .max(1.6)
             .to_radians();
         // Seconds before the first shot at someone new: about 0.75 s at Easy, 0.25 s at Hard.
@@ -3206,6 +3207,10 @@ mod tests {
             easy.0 > normal.0 && normal.0 > hard.0 && hard.0 > 1.5f32.to_radians(),
             "{easy:?} {normal:?} {hard:?}"
         );
+        // Easy and Normal bots miss a lot; Hard ones stay sharp.
+        assert!(easy.0 > 8.5f32.to_radians() && easy.0 < 12.0f32.to_radians());
+        assert!(normal.0 > 5.0f32.to_radians() && normal.0 < 7.0f32.to_radians());
+        assert!(hard.0 < 2.6f32.to_radians());
         assert!(easy.1 > normal.1 && normal.1 > hard.1);
         assert!(easy.2 < normal.2 && normal.2 < hard.2);
     }
