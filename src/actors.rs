@@ -57,6 +57,8 @@ struct AvatarParts {
     gun_hits: Vec<(Entity, u8)>,
     /// Dual pistols: the second, a blaster in the other hand.
     gun2: Entity,
+    /// The muzzle flashes of `gun` and `gun2` (`MuzzleFlash`).
+    flashes: [Entity; 2],
     grenade: Entity,
     /// The shield's beam of light (a child of `root`), with its light on the player.
     beam: Entity,
@@ -101,7 +103,16 @@ struct Flash {
 }
 
 /// How long a muzzle flash lasts (s).
-const MUZZLE_FLASH: f32 = 0.06;
+const MUZZLE_FLASH: f32 = 0.07;
+
+/// A gun's muzzle flash (a child of the gun, hidden between shots): a hot core in a glow, a
+/// tongue of light out of the barrel and a star of rays round it, turned anew each shot.
+#[derive(Component, Default)]
+struct MuzzleFlash {
+    life: f32,
+    size: f32,
+    roll: f32,
+}
 
 /// A charge gun beam's streak: thins out over its life.
 #[derive(Component)]
@@ -148,6 +159,7 @@ impl Plugin for ActorsPlugin {
                     sync_grenades,
                     sync_pickups,
                     effects,
+                    muzzle_flashes.after(sync_players),
                     animate_sparks,
                     animate_glitter,
                 )
@@ -436,6 +448,7 @@ fn spawn_avatar(
         &mut solid,
         &mut ghost,
     ));
+    let flashes = [gun, gun2].map(|g| spawn_muzzle_flash(commands, g, meshes, palette, team));
     let grenade = commands
         .spawn((Transform::IDENTITY, Visibility::Hidden))
         .id();
@@ -481,6 +494,7 @@ fn spawn_avatar(
         charge_glow,
         gun_hits,
         gun2,
+        flashes,
         grenade,
         beam,
         solid,
@@ -1180,6 +1194,123 @@ fn sync_grenades(
     }
 }
 
+fn spawn_muzzle_flash(
+    commands: &mut Commands,
+    gun: Entity,
+    meshes: &ActorMeshes,
+    palette: &Palette,
+    team: Option<Team>,
+) -> Entity {
+    let root = commands
+        .spawn((
+            MuzzleFlash::default(),
+            Transform::IDENTITY,
+            Visibility::Hidden,
+            ChildOf(gun),
+        ))
+        .id();
+    enum Look {
+        White,
+        Team,
+        Glow,
+    }
+    let mut part = |mesh: &Handle<Mesh>, t: Transform, look: Look| {
+        let mut e = commands.spawn((Mesh3d(mesh.clone()), t, ChildOf(root)));
+        match look {
+            Look::White => e.insert(MeshMaterial3d(palette.bolt_for(None))),
+            Look::Team => e.insert(MeshMaterial3d(palette.bolt_for(team))),
+            Look::Glow => e.insert(MeshMaterial3d(palette.glow_for(team))),
+        };
+    };
+    // (Sizes for a flash of 1: scaled by its `size` and the moment.) A white-hot core, so it
+    // shows against walls of its own colour.
+    part(
+        &meshes.halo,
+        Transform::from_scale(Vec3::splat(0.2)),
+        Look::White,
+    );
+    part(
+        &meshes.halo,
+        Transform::from_scale(Vec3::splat(0.55)),
+        Look::Glow,
+    );
+    part(
+        &meshes.halo,
+        Transform::from_xyz(0.0, 0.0, -0.45).with_scale(Vec3::new(0.1, 0.1, 0.6)),
+        Look::White,
+    );
+    for k in 0..4 {
+        part(
+            &meshes.spark,
+            Transform::from_rotation(Quat::from_rotation_z(
+                k as f32 * std::f32::consts::FRAC_PI_4,
+            ))
+            .with_scale(Vec3::new(0.05, 1.0, 0.05)),
+            Look::Team,
+        );
+    }
+    root
+}
+
+/// Lights a gun's muzzle flash when it fires, at the muzzle of the weapon in hand, and lets
+/// it flare and die away (on the game's clock: a pause holds it).
+fn muzzle_flashes(
+    mut events: MessageReader<GameEvent>,
+    game: Res<Game>,
+    views: Res<Views>,
+    models: Res<Models>,
+    time: Res<Time>,
+    mut q: Query<(&mut MuzzleFlash, &mut Transform, &mut Visibility)>,
+) {
+    for GameEvent(e) in events.read() {
+        let SimEvent::Fired { player, second, .. } = *e else {
+            continue;
+        };
+        let Some(v) = views.players.get(&player) else {
+            continue;
+        };
+        let weapon = game
+            .snap
+            .players
+            .iter()
+            .find(|p| p.id == player)
+            .map(|p| p.weapon);
+        let shotgun = weapon == Some(Weapon::Shotgun) && !second;
+        let Ok((mut f, mut t, _)) = q.get_mut(v.flashes[second as usize]) else {
+            continue;
+        };
+        f.life = MUZZLE_FLASH;
+        f.size = match weapon {
+            Some(Weapon::Shotgun) => 0.15,
+            Some(Weapon::Lance) | Some(Weapon::Charge) => 0.12,
+            Some(Weapon::Dual) => 0.07,
+            _ => 0.09,
+        } * (0.85 + 0.3 * rand::random::<f32>());
+        f.roll = rand::random::<f32>() * std::f32::consts::TAU;
+        t.translation = if shotgun {
+            models.shotgun_muzzle
+        } else {
+            models.muzzle
+        };
+    }
+    let dt = time.delta_secs();
+    for (mut f, mut t, mut vis) in &mut q {
+        if f.life <= 0.0 {
+            if *vis != Visibility::Hidden {
+                *vis = Visibility::Hidden;
+            }
+            continue;
+        }
+        f.life -= dt;
+        // Full at once, dying away (and a little twist as it goes).
+        let k = (1.0 - f.life / MUZZLE_FLASH).clamp(0.0, 1.0);
+        let s = f.size * (0.6 + 0.4 * (k * 6.0).min(1.0)) * (1.0 - k).sqrt();
+        t.scale = Vec3::splat(s.max(1e-4));
+        t.rotation = Quat::from_rotation_z(f.roll + k * 0.6);
+        *vis = Visibility::Inherited;
+    }
+}
+
 /// A hit's flash at `at`: a glowing ball of `size` and a light of `intensity` (lumens)
 /// reaching `range`, lasting `life` s.
 #[allow(clippy::too_many_arguments)]
@@ -1529,26 +1660,6 @@ fn effects(
                     0.025,
                     seed,
                 );
-            }
-            // A muzzle flash: a small glow swelling and gone at once (the light is
-            // `shot_lights`'), bigger for the shotgun.
-            SimEvent::Fired { player, pos, .. } => {
-                let shotgun = game
-                    .snap
-                    .players
-                    .iter()
-                    .any(|p| p.id == player && p.weapon == Weapon::Shotgun);
-                commands.spawn((
-                    Flash {
-                        life: MUZZLE_FLASH,
-                        max: MUZZLE_FLASH,
-                        size: if shotgun { 0.16 } else { 0.09 },
-                        light: None,
-                    },
-                    Mesh3d(meshes.halo.clone()),
-                    MeshMaterial3d(palette.glow_for(team_of(player))),
-                    Transform::from_translation(pos).with_scale(Vec3::splat(0.01)),
-                ));
             }
             // A charge gun's beam: a streak of light along its way, fading.
             SimEvent::BeamFired { player, pos, dir } => {
