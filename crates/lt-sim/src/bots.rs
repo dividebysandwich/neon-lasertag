@@ -3041,9 +3041,11 @@ mod tests {
 
     #[test]
     fn bots_attack_targets_reload_and_use_grenades() {
-        // Two arenas, three and a half minutes each.
+        // Four arenas, three and a half minutes each. (How a match goes differs a little from
+        // platform to platform, the maths libraries rounding differently; in an arena or two the
+        // attackers may well never get through.)
         let mut total = Stats::default();
-        for seed in [3, 12] {
+        for seed in [1, 3, 4, 11] {
             let s = play(seed, 8, 210.0, Rules::default());
             total.target_hits += s.target_hits;
             total.offense_target_hits += s.offense_target_hits;
