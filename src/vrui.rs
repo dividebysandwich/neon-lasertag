@@ -3,7 +3,7 @@
 //!
 //! - The start menu, out of a game (in the empty arena under fireworks, src/lobby.rs): the
 //!   levels of src/menu.rs (botmatch, internet and LAN server lists, hosting), with their
-//!   choices lit; no typing in VR.
+//!   choices lit; no typing in VR. Pointing at a mode button shows what the mode is about.
 //! - The menu (the right menu button, or B / Y held; see src/vr.rs): Resume, New match (local
 //!   games: the next match on a new arena), Options, Main menu and Quit, floating in front of
 //!   the player.
@@ -30,7 +30,7 @@ use crate::assets::MeshData;
 use crate::endscreen::{Row, standings, winner};
 use crate::game::{Game, GameEvent};
 use crate::materials::{AccentMaterial, GlowMaterial, NeonUniform, Palette, team_color};
-use crate::menu::{InternetList, MenuAct, MenuModel, Outcome, Screen};
+use crate::menu::{InternetList, MenuAct, MenuModel, Outcome, Screen, mode_blurb};
 use crate::segtext::{self, Align};
 use crate::session::{Session, SessionCmd};
 use crate::vfont;
@@ -132,6 +132,8 @@ struct Button {
     half: Vec2,
     /// The glow lit while pointed at.
     hover: Entity,
+    /// A tooltip shown while pointed at.
+    tip: Option<Entity>,
 }
 
 struct Panel {
@@ -513,7 +515,40 @@ impl Builder<'_, '_, '_> {
             center: c,
             half: size / 2.0,
             hover,
+            tip: None,
         }
+    }
+
+    /// A tooltip: `s` in small dim text, wrapped to `w`, its first line's middle at `at`;
+    /// hidden until shown (`Button::tip`).
+    fn tip(&mut self, s: &str, at: Vec2, w: f32) -> Entity {
+        let root = self
+            .commands
+            .spawn((
+                Transform::from_translation(at.extend(0.0)),
+                Visibility::Hidden,
+                ChildOf(self.root),
+            ))
+            .id();
+        let dim = self.mats.dim.clone();
+        let h = 0.019;
+        let mut t = Builder {
+            commands: &mut *self.commands,
+            meshes: &mut *self.meshes,
+            mats: self.mats,
+            root,
+        };
+        for (k, line) in wrap(s, h, w).iter().enumerate() {
+            t.text(
+                line,
+                h,
+                Vec2::new(0.0, -(k as f32) * h * 1.6),
+                Align::Center,
+                &dim,
+                None,
+            );
+        }
+        root
     }
 }
 
@@ -738,7 +773,15 @@ fn lobby_choices(b: &mut Builder, buttons: &mut Vec<Button>, m: &MenuModel, mut 
         .map(|&g| item(g.name(), MenuAct::Mode(g)))
         .map(|(n, a, on)| (n, menu(a), Hue::Cyan, on))
         .collect();
+    let first = buttons.len();
     button_row(b, buttons, modes, y - 0.07, 0.24, 0.09);
+    // Pointed at, a mode button says what the mode is about (under the row).
+    for (k, &g) in GameMode::ALL.iter().enumerate() {
+        let tip = b.tip(mode_blurb(g), Vec2::new(0.0, y - 0.155), 1.0);
+        if let Some(button) = buttons.get_mut(first + k) {
+            button.tip = Some(tip);
+        }
+    }
     y - 0.16
 }
 
@@ -1594,13 +1637,15 @@ fn pointer(
         return;
     };
     for (k, b) in panel.buttons.iter().enumerate() {
-        if let Ok(mut v) = vis.get_mut(b.hover) {
-            let want = if pointed.contains(&Some(k)) {
-                Visibility::Inherited
-            } else {
-                Visibility::Hidden
-            };
-            if *v != want {
+        let want = if pointed.contains(&Some(k)) {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        for e in std::iter::once(b.hover).chain(b.tip) {
+            if let Ok(mut v) = vis.get_mut(e)
+                && *v != want
+            {
                 *v = want;
             }
         }

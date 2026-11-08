@@ -97,6 +97,20 @@ pub enum MenuAct {
     Quit,
 }
 
+/// What a mode is about, in a line (the mode buttons' tooltips; capitals for VR's panels).
+pub fn mode_blurb(mode: GameMode) -> &'static str {
+    match mode {
+        GameMode::Classic => "HIT THE ENEMY TEAM'S TARGETS - THEY HANG DEEP IN ITS HALF",
+        GameMode::Megatarget => {
+            "HIT BOTH SECONDARY TARGETS TO OPEN THE MIDDLE ROOM - THEN THE MEGATARGET"
+        }
+        GameMode::Prism => "STEAL THE ENEMY'S PRISM AND CARRY IT HOME - NO SHOOTING WHILE CARRYING",
+        GameMode::Infection => {
+            "CLOAKED RED PHANTOMS HUNT BLUE SURVIVORS - TAGGED OUT YOU TURN PHANTOM"
+        }
+    }
+}
+
 /// What an act leads to beyond the menu.
 pub enum Outcome {
     Stay,
@@ -345,7 +359,9 @@ impl Plugin for MenuPlugin {
             .add_systems(Update, spawn.run_if(resource_exists::<ShowMenu>))
             .add_systems(
                 Update,
-                (dev_pick, keys, buttons, build, show_lists, live, selected)
+                (
+                    dev_pick, keys, buttons, build, show_lists, live, selected, tips,
+                )
                     .chain()
                     .before(crate::options::OptionsSet)
                     .run_if(any_with_component::<MenuRoot>),
@@ -371,6 +387,14 @@ enum Live {
     Address,
     ServerName,
 }
+
+/// A button's tooltip: shown under it while the mouse is over it.
+#[derive(Component, Clone, Copy)]
+struct Tip(&'static str);
+
+/// The tooltip shown (over everything).
+#[derive(Component)]
+struct TipPopup;
 
 fn first(mut commands: Commands, args: Res<Args>) {
     if args.menu {
@@ -539,22 +563,29 @@ fn choices(p: &mut ChildSpawnerCommands, model: &MenuModel) {
             n.spawn(neonui::text_w(s, 17.0, neonui::DIM, 700));
         });
     };
-    let options = |r: &mut ChildSpawnerCommands, items: Vec<(&str, MenuAct)>| {
+    let options = |r: &mut ChildSpawnerCommands,
+                   items: Vec<(&'static str, MenuAct, Option<Tip>)>| {
         r.spawn((Node {
             width: Val::Px(full),
             column_gap: Val::Px(10.0),
             ..default()
         },))
             .with_children(|o| {
-                for (s, a) in items {
+                for (s, a, tip) in items {
                     let neon = NeonButton {
                         color: neonui::CYAN,
                         selected: model.selected(&a),
                     };
-                    neonui::button(o, &s.to_uppercase(), a, neon, Some(CHOICE_W), 16.0);
+                    let mut b = neonui::button(o, &s.to_uppercase(), a, neon, Some(CHOICE_W), 16.0);
+                    if let Some(t) = tip {
+                        b.insert(t);
+                    }
                 }
             });
     };
+    fn plain(items: Vec<(&'static str, MenuAct)>) -> Vec<(&'static str, MenuAct, Option<Tip>)> {
+        items.into_iter().map(|(s, a)| (s, a, None)).collect()
+    }
     p.spawn(neonui::row(10.0)).with_children(|r| {
         name(r, "BOTS");
         r.spawn((Node {
@@ -581,20 +612,24 @@ fn choices(p: &mut ChildSpawnerCommands, model: &MenuModel) {
         name(r, "DIFFICULTY");
         options(
             r,
-            Difficulty::ALL
-                .iter()
-                .map(|d| (d.name(), MenuAct::Difficulty(*d)))
-                .collect(),
+            plain(
+                Difficulty::ALL
+                    .iter()
+                    .map(|d| (d.name(), MenuAct::Difficulty(*d)))
+                    .collect(),
+            ),
         );
     });
     p.spawn(neonui::row(10.0)).with_children(|r| {
         name(r, "ARENA");
         options(
             r,
-            SizeChoice::ALL
-                .iter()
-                .map(|a| (a.name(), MenuAct::Arena(*a)))
-                .collect(),
+            plain(
+                SizeChoice::ALL
+                    .iter()
+                    .map(|a| (a.name(), MenuAct::Arena(*a)))
+                    .collect(),
+            ),
         );
     });
     p.spawn(neonui::row(10.0)).with_children(|r| {
@@ -603,7 +638,7 @@ fn choices(p: &mut ChildSpawnerCommands, model: &MenuModel) {
             r,
             GameMode::ALL
                 .iter()
-                .map(|m| (m.name(), MenuAct::Mode(*m)))
+                .map(|m| (m.name(), MenuAct::Mode(*m), Some(Tip(mode_blurb(*m)))))
                 .collect(),
         );
     });
@@ -959,4 +994,63 @@ fn selected(model: Res<MenuModel>, mut q: Query<(&MenuAct, &mut NeonButton)>) {
             n.selected = on;
         }
     }
+}
+
+/// The tooltip of the button the mouse is over, under it (spawned and taken down as the mouse
+/// moves; its text is in the button's `Tip`).
+fn tips(
+    mut commands: Commands,
+    root: Query<Entity, With<MenuRoot>>,
+    hovered: Query<(&Interaction, &Tip, &ComputedNode, &UiGlobalTransform)>,
+    popups: Query<Entity, With<TipPopup>>,
+    mut shown: Local<Option<&'static str>>,
+) {
+    let Ok(root) = root.single() else { return };
+    let over = hovered
+        .iter()
+        .find(|(i, ..)| matches!(i, Interaction::Hovered | Interaction::Pressed));
+    if over.map(|(_, t, ..)| t.0) == *shown {
+        return;
+    }
+    for e in &popups {
+        commands.entity(e).despawn();
+    }
+    *shown = over.map(|(_, t, ..)| t.0);
+    let Some((_, tip, node, transform)) = over else {
+        return;
+    };
+    // (The transform is in physical pixels: the node's middle.)
+    let k = node.inverse_scale_factor;
+    let centre = transform.translation * k;
+    let half = node.size * k / 2.0;
+    const W: f32 = 340.0;
+    commands.spawn((
+        TipPopup,
+        ChildOf(root),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(centre.x - W / 2.0),
+            top: Val::Px(centre.y + half.y + 8.0),
+            width: Val::Px(W),
+            padding: UiRect::axes(Val::Px(12.0), Val::Px(8.0)),
+            border: UiRect::all(Val::Px(1.0)),
+            border_radius: BorderRadius::all(Val::Px(6.0)),
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.02, 0.01, 0.08, 0.96)),
+        BorderColor::all(neonui::CYAN.with_alpha(0.7)),
+        BoxShadow::new(
+            neonui::CYAN.with_alpha(0.3),
+            Val::Px(0.0),
+            Val::Px(0.0),
+            Val::Px(0.0),
+            Val::Px(12.0),
+        ),
+        GlobalZIndex(15),
+        children![(
+            neonui::text(tip.0, 12.0, neonui::TEXT),
+            TextLayout::justify(Justify::Center),
+        )],
+    ));
 }
