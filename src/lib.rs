@@ -40,6 +40,7 @@ pub mod pause;
 pub mod reflections;
 pub mod rig;
 pub mod scenery;
+pub mod scope;
 pub mod segtext;
 pub mod session;
 pub mod settings;

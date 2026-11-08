@@ -258,6 +258,7 @@ impl Plugin for VrPlugin {
                     wrist_points,
                     wrist_glance,
                     holster,
+                    crate::scope::place_scope,
                     laser_sight,
                 )
                     .chain()
@@ -288,6 +289,13 @@ impl Plugin for VrPlugin {
                 Update,
                 spawn_sight
                     .run_if(resource_exists::<Palette>.and_then(not(resource_exists::<Sight>))),
+            )
+            .add_systems(
+                Update,
+                crate::scope::spawn_scope.run_if(
+                    resource_exists::<Palette>
+                        .and_then(not(resource_exists::<crate::scope::Scope>)),
+                ),
             )
             .add_systems(
                 Update,
@@ -369,16 +377,18 @@ fn out_of_game(
 
 /// Testing without controllers (`LT_VR_FAKE_HANDS=1`): the right hand points ahead and a little
 /// down (at a panel's second button), the left one is at the holster (`LT_VR_FAKE_HANDS=wrist`:
-/// held up before the eyes, its wrist display turned to them).
+/// held up before the eyes, its wrist display turned to them; `scope`: the right hand draws
+/// the blaster and holds its scope, src/scope.rs, up to the eyes).
 fn fake_hands(
     mut input: ResMut<XrInput>,
     vr: Res<VrState>,
+    settings: Res<Settings>,
     mut mode: Local<Option<Option<String>>>,
 ) {
     let mode = mode.get_or_insert_with(|| {
         std::env::var("LT_VR_FAKE_HANDS")
             .ok()
-            .filter(|v| v == "1" || v == "wrist")
+            .filter(|v| v == "1" || v == "wrist" || v == "scope")
     });
     let Some(head) = input.head.filter(|_| mode.is_some()) else {
         return;
@@ -392,6 +402,28 @@ fn fake_hands(
         input.hands[0].aim = Some(t);
     }
     let rot = Quat::from_rotation_y(flat_yaw(head.rotation));
+    if mode.as_deref() == Some("scope") && input.hands[1].grip.is_none() {
+        // (Gripping only once at the holster: drawing takes a fresh grip.)
+        input.hands[1].squeeze = if vr.gun.is_some() || vr.near[1] {
+            1.0
+        } else {
+            0.0
+        };
+        let t = match (vr.gun, vr.holster) {
+            // Drawn: the gun level (its tilt in the hand undone), the lens before the eyes.
+            (Some(_), _) => {
+                let gun = rot;
+                let at = head.translation + rot * Vec3::new(0.0, -0.01, -0.1)
+                    - gun * crate::scope::LENS_AT;
+                Transform::from_translation(at)
+                    .with_rotation(gun * Quat::from_rotation_x(gun_tilt(&settings)))
+            }
+            (None, Some(h)) => Transform::from_translation(h).with_rotation(rot),
+            (None, None) => return,
+        };
+        input.hands[1].grip = Some(t);
+        input.hands[1].aim = Some(t);
+    }
     if input.hands[1].grip.is_none() {
         let at = head.translation + rot * Vec3::new(0.2, -0.25, -0.35);
         let target = head.translation + rot * Vec3::new(0.0, -0.17, -1.4);
@@ -802,7 +834,8 @@ fn place_rig(
 }
 
 /// The prism lance's laser sight: a thin beam from its muzzle and a dot where it meets the
-/// arena (VR has no zoom).
+/// arena (the beam hidden while looking through the scope, src/scope.rs: it would run down the
+/// middle of its view).
 #[derive(Resource)]
 struct Sight {
     beam: Entity,
@@ -843,9 +876,12 @@ fn laser_sight(
     local: Res<LocalCmd>,
     mover: Res<Mover>,
     palette: Res<Palette>,
-    mut q: Query<(&mut Transform, &mut Visibility)>,
+    scope: Option<Res<crate::scope::Scope>>,
+    lenses: Query<&crate::scope::ScopeLens>,
+    mut q: Query<(&mut Transform, &mut Visibility), Without<crate::scope::ScopeLens>>,
 ) {
     let Some(mut sight) = sight else { return };
+    let scoped = crate::scope::scope_on(scope.as_deref(), &lenses);
     let me = game
         .me
         .and_then(|me| game.snap.players.iter().find(|p| p.id == me));
@@ -876,7 +912,7 @@ fn laser_sight(
         };
     };
     if let Ok((mut t, mut v)) = q.get_mut(sight.beam) {
-        show(&mut v, on && len > 0.05);
+        show(&mut v, on && len > 0.05 && !scoped);
         *t = Transform::from_translation((from + end) / 2.0)
             .with_rotation(Quat::from_rotation_arc(Vec3::Y, dir))
             .with_scale(Vec3::new(1.0, len, 1.0));

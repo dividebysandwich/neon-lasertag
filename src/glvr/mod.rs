@@ -13,7 +13,7 @@
 //! Environment: `LT_GL_FOVEATION` = off, low, medium (default) or high; `LT_FDM_ENV="K=V;..."`;
 //! `LT_GL_MSAA` = 0, 2 (default) or 4; `LT_GL_DRIVER=native` draws with Mesa's native driver
 //! instead of Zink; `LT_GL_DELAYED=1` shows each image a frame after it is
-//! drawn; `LT_XR_SHOT=<secs>` saves the eyes' images (xr-eye0.png, xr-eye1.png).
+//! drawn; `LT_XR_SHOT=<secs>` saves the eyes' images (xr-eye0.png, xr-eye1.png) and the scope's view (xr-scope0.png, src/scope.rs).
 
 mod controllers;
 mod egl;

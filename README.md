@@ -212,7 +212,7 @@ Debug environment variables:
 | `LT_MASTER=URL` | Use another master server |
 | `LT_VR_MENU=1\|options` | Open the VR menu / options |
 | `LT_SCORES=1` | Show the flat-screen scores |
-| `LT_VR_FAKE_HANDS=1\|wrist` | Fake VR controllers |
+| `LT_VR_FAKE_HANDS=1\|wrist\|scope` | Fake VR controllers (`scope`: the prism lance's scope held to the eye) |
 | `LT_HOLSTER=x,y,z` | Holster position from the eyes (default `0.23,-0.58,-0.07`) |
 | `LT_GUN_TILT=DEG` | Blaster tilt in the hand (default 30) |
 | `LT_LEFT_HANDED=1` | Same as `--left-handed` |

@@ -19,7 +19,7 @@ uniform vec3 u_point_colour[16];
 uniform int u_point_count;
 
 #ifdef VERTEX
-layout(num_views = 2) in;
+layout(num_views = NUM_VIEWS) in;
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_normal;
 out vec3 v_world;
