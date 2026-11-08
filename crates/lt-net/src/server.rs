@@ -264,6 +264,9 @@ impl Server {
                     return;
                 };
                 let Some(p) = r.player else { return };
+                if !sim.rules.team_switch {
+                    return;
+                }
                 if sim.switch_team(p, team) {
                     let moved = bots.balance(sim);
                     self.log.push(format!(

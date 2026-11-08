@@ -169,6 +169,9 @@ pub struct Rules {
     /// Infection: the phantoms' points for infecting every survivor.
     pub infect_all_points: u32,
     pub double_last: f32,
+    /// Whether players may switch teams during a match (`Sim::switch_team`; never in
+    /// Infection).
+    pub team_switch: bool,
     /// The arena's size (with the seed and the mode, all a client needs to build the same
     /// arena).
     pub arena: ArenaSize,
@@ -293,6 +296,7 @@ impl Default for Rules {
             infect_all_points: 1000,
             blackout_time: 20.0,
             double_last: 60.0,
+            team_switch: true,
             arena: ArenaSize::Small,
             mode: GameMode::Classic,
             secondary_points: 100,

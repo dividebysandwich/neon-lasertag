@@ -129,6 +129,7 @@ type LobbyKey = (
     SizeChoice,
     GameMode,
     Option<Team>,
+    bool,
     u32,
 );
 
@@ -140,6 +141,7 @@ fn lobby_key(m: &MenuModel) -> LobbyKey {
         m.arena,
         m.mode,
         m.team,
+        m.team_switch,
         m.rev,
     )
 }
@@ -860,6 +862,25 @@ fn lobby_choices(b: &mut Builder, buttons: &mut Vec<Button>, m: &MenuModel, mut 
             })
             .collect();
         button_row(b, buttons, teams, y - 0.07, 0.3, 0.09);
+    }
+    y -= 0.16;
+    label(b, "SWITCH TEAMS", y);
+    let switching = [(true, "allowed"), (false, "locked")]
+        .iter()
+        .map(|&(on, name)| item(name, MenuAct::TeamSwitch(on)))
+        .map(|(n, a, on)| (n, menu(a), Hue::Cyan, on))
+        .collect();
+    let first = buttons.len();
+    button_row(b, buttons, switching, y - 0.07, 0.3, 0.09);
+    let tips = [
+        "PLAYERS MAY CHANGE SIDES FROM THE MENU - BOTS EVEN THE TEAMS OUT",
+        "EVERYONE STAYS ON THE TEAM THEY STARTED ON",
+    ];
+    for (k, s) in tips.iter().enumerate() {
+        let tip = b.tip(s, Vec2::new(0.0, y - 0.155), 1.0);
+        if let Some(button) = buttons.get_mut(first + k) {
+            button.tip = Some(tip);
+        }
     }
     y - 0.16
 }

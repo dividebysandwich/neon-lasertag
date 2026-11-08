@@ -395,7 +395,8 @@ impl Game {
     /// Whether the local player may switch teams now: the rules allow it, the mode isn't
     /// Infection (the game hands out the sides there) and the match is on.
     pub fn can_switch_team(&self) -> bool {
-        self.level.mode != lt_sim::level::GameMode::Infection
+        self.rules.team_switch
+            && self.level.mode != lt_sim::level::GameMode::Infection
             && self.me.is_some()
             && !self.snap.over
     }

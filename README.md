@@ -43,6 +43,10 @@ In the last minute every point counts double.
   you fire or the protection runs out.
 - Your own spawn pads heal you and refill your blaster; the white reload stations in the
   middle refill it too.
+- Pick your team in the Botmatch or host menu (or with `--team`), or let the game put you on
+  the smaller one. During a match the in-game menu lets you change sides, unless the host set
+  **Switch teams** to locked (`--lock-teams`); bots move over to keep the teams even.
+  Infection hands out the sides itself.
 
 ### Game modes
 
@@ -175,6 +179,8 @@ reflections); on a weaker PC, turn **Reflections** off in Options.
 | `--difficulty easy\|normal\|hard` | Bot difficulty |
 | `--arena small\|medium\|large\|random` | Arena size (`random` picks one per match) |
 | `--mode classic\|megatarget\|prism\|infection` | Game mode (default `megatarget`) |
+| `--team red\|blue\|auto` | Your team in local and hosted games (default `auto`: the smaller one) |
+| `--lock-teams` | Local and hosted games: nobody changes sides during a match |
 | `--match-time S` | Match length in seconds (local games) |
 | `--host [PORT]` | Host a game on your network |
 | `--public` | With `--host`: list the game on the internet |

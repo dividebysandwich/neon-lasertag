@@ -96,8 +96,10 @@ pub struct Args {
     pub arena: lt_sim::level::SizeChoice,
     /// What local and hosted games are played for (`--mode`).
     pub game_mode: lt_sim::level::GameMode,
-    /// One's own team in local and hosted games (`--team`; none: the smaller one).
+    /// One's own team in local and hosted games (`--team`; none: the smaller one), and whether
+    /// players may switch teams during a match (`--lock-teams` turns it off).
     pub team: Option<lt_sim::Team>,
+    pub team_switch: bool,
     /// VR: the holster on the left hip (`--left-handed` or `LT_LEFT_HANDED=1`).
     pub left_handed: bool,
     /// Local games: the match's length in seconds (testing).
@@ -125,6 +127,7 @@ impl Args {
             arena: lt_sim::level::SizeChoice::default(),
             game_mode: lt_sim::level::GameMode::Megatarget,
             team: None,
+            team_switch: true,
             left_handed: std::env::var("LT_LEFT_HANDED").is_ok_and(|v| v == "1"),
             match_time: None,
             screenshot: None,
@@ -182,6 +185,7 @@ impl Args {
                     Some(t) if t == "auto" => a.team = None,
                     _ => eprintln!("--team: red, blue or auto"),
                 },
+                "--lock-teams" => a.team_switch = false,
                 "--left-handed" => a.left_handed = true,
                 "--match-time" => a.match_time = next(&mut i).and_then(|v| v.parse().ok()),
                 "--screenshot" => shot = next(&mut i),
@@ -439,6 +443,7 @@ fn setup(
                 arena: args.arena,
                 mode: args.game_mode,
                 team: args.team,
+                team_switch: args.team_switch,
             },
         });
     }
@@ -487,15 +492,20 @@ fn start_game(
             arena,
             mode,
             team,
+            team_switch,
         } => {
             session.difficulty = difficulty;
             session.arena = arena;
             session.mode = mode;
+            let rules = lt_sim::Rules {
+                team_switch,
+                ..session.rules(&args)
+            };
             let mut game = Game::local(
                 seed,
                 bots,
                 difficulty.skill(),
-                session.rules(&args),
+                rules,
                 &args.name,
                 team,
                 host,

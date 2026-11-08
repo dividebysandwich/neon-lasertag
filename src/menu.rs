@@ -3,7 +3,8 @@
 //!
 //! ```text
 //! top          Botmatch | Multiplayer | Options | Quit
-//! botmatch     the bots' number and difficulty, the arenas' size, the mode; Start
+//! botmatch     the bots' number and difficulty, the arenas' size, the mode, one's team and
+//!              whether teams may be switched during a match; Start
 //! multiplayer  Internet | LAN
 //! internet     the master server's list (join one), join by address, host an internet game
 //! lan          the games found on the local network (lt-net's lan.rs), join by address,
@@ -96,6 +97,8 @@ pub enum MenuAct {
     Mode(GameMode),
     /// One's own team (`None`: the smaller one).
     Team(Option<Team>),
+    /// Whether players may switch teams during a match.
+    TeamSwitch(bool),
     Options,
     Quit,
 }
@@ -150,8 +153,10 @@ pub struct MenuModel {
     pub difficulty: Difficulty,
     pub arena: SizeChoice,
     pub mode: GameMode,
-    /// One's own team in local and hosted games (`None`: the smaller one).
+    /// One's own team in local and hosted games (`None`: the smaller one), and whether
+    /// players may switch teams during a match.
     pub team: Option<Team>,
+    pub team_switch: bool,
     /// The hosted game's name, and the address typed to join.
     pub server_name: String,
     pub address: String,
@@ -176,6 +181,7 @@ impl MenuModel {
             arena: args.arena,
             mode: args.game_mode,
             team: args.team,
+            team_switch: args.team_switch,
             server_name: args.hosted_name(),
             address: String::new(),
             port: args.host.unwrap_or(lt_net::protocol::DEFAULT_PORT),
@@ -246,6 +252,7 @@ impl MenuModel {
             MenuAct::Arena(a) => *a == self.arena,
             MenuAct::Mode(m) => *m == self.mode,
             MenuAct::Team(t) => *t == self.team,
+            MenuAct::TeamSwitch(on) => *on == self.team_switch,
             _ => false,
         }
     }
@@ -258,6 +265,7 @@ impl MenuModel {
             arena: self.arena,
             mode: self.mode,
             team: self.team,
+            team_switch: self.team_switch,
         }
     }
 
@@ -316,6 +324,10 @@ impl MenuModel {
                 self.team = *t;
                 None
             }
+            MenuAct::TeamSwitch(on) => {
+                self.team_switch = *on;
+                None
+            }
             MenuAct::Options => return Outcome::Options,
             MenuAct::Quit => return Outcome::Quit,
         };
@@ -339,8 +351,10 @@ pub enum Start {
         difficulty: Difficulty,
         arena: SizeChoice,
         mode: GameMode,
-        /// One's own team (`None`: the smaller one).
+        /// One's own team (`None`: the smaller one), and whether teams may be switched
+        /// during a match (`Rules::team_switch`).
         team: Option<Team>,
+        team_switch: bool,
     },
     Join(String),
 }
@@ -686,6 +700,26 @@ fn choices(p: &mut ChildSpawnerCommands, model: &MenuModel) {
                     .map(|t| (team_name(*t), MenuAct::Team(*t)))
                     .collect(),
             ),
+        );
+    });
+    p.spawn(neonui::row(10.0)).with_children(|r| {
+        name(r, "SWITCH TEAMS");
+        options(
+            r,
+            vec![
+                (
+                    "allowed",
+                    MenuAct::TeamSwitch(true),
+                    Some(Tip(
+                        "PLAYERS MAY CHANGE SIDES FROM THE IN-GAME MENU - BOTS EVEN THE TEAMS OUT",
+                    )),
+                ),
+                (
+                    "locked",
+                    MenuAct::TeamSwitch(false),
+                    Some(Tip("EVERYONE STAYS ON THE TEAM THEY STARTED ON")),
+                ),
+            ],
         );
     });
 }
