@@ -71,6 +71,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::collide::{BODY_RADIUS, World};
 use crate::level::{self, Dims, Level, MoverKind};
+use crate::shot::Shot;
 use crate::sim::{EYE, PICKUP_HEIGHT, Player, Sim, TICK, eye_on_neck, look_rot, yaw_of};
 use crate::types::*;
 
@@ -2515,7 +2516,16 @@ impl Controller for Bot {
                     .iter()
                     .find(|s| s.id == id)
                     .map_or(Vec3::ZERO, |s| s.vel);
-                let lead = vel * (d / sim.rules.blaster_bolt_speed) * (0.4 + 0.6 * self.skill);
+                // (As fast as what the gun in hand fires: a charge gun charged, its beam.)
+                let shot = match p.weapon {
+                    Weapon::Lance => Shot::Lance,
+                    Weapon::Ricochet => Shot::Ricochet,
+                    Weapon::Charge if p.charging.is_some_and(|t| t >= sim.rules.charge_time) => {
+                        Shot::Beam
+                    }
+                    _ => Shot::Bolt,
+                };
+                let lead = vel * (d / shot.speed(&sim.rules)) * (0.4 + 0.6 * self.skill);
                 Some((point + lead, ok && self.seen_for >= self.reaction))
             }
             (None, None) => self.panel_in_reach(sim, p, eye, muzzle).map(|c| (c, true)),

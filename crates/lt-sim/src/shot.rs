@@ -161,6 +161,17 @@ impl Shot {
             _ => 1,
         }
     }
+
+    /// How fast its bolts fly (m/s).
+    pub fn speed(self, rules: &Rules) -> f32 {
+        match self {
+            Shot::Bolt | Shot::Spread => rules.blaster_bolt_speed,
+            Shot::Ricochet => rules.blaster_bolt_speed * 0.75,
+            Shot::Beam => rules.beam_speed,
+            // (Across its whole range in a tick.)
+            Shot::Lance => rules.lance_range / TICK,
+        }
+    }
 }
 
 /// The eyes' offset from the feet for a commanded head position (none: standing height).
@@ -212,7 +223,7 @@ pub fn shot_seed(player: PlayerId, seq: u32) -> u64 {
 pub fn shot_bolts(shot: Shot, dir: Vec3, rules: &Rules, seed: u64) -> Vec<(Vec3, f32, BoltExtra)> {
     match shot {
         Shot::Bolt => vec![(
-            dir * rules.blaster_bolt_speed,
+            dir * shot.speed(rules),
             rules.bolt_life,
             BoltExtra::default(),
         )],
@@ -220,20 +231,21 @@ pub fn shot_bolts(shot: Shot, dir: Vec3, rules: &Rules, seed: u64) -> Vec<(Vec3,
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let side = dir.any_orthonormal_vector();
             let up = dir.cross(side);
-            let life = rules.shotgun_range / rules.blaster_bolt_speed;
+            let speed = shot.speed(rules);
+            let life = rules.shotgun_range / speed;
             (0..rules.shotgun_bolts)
                 .map(|_| {
                     // Evenly over the cone's disc.
                     let r = rng.random::<f32>().sqrt() * rules.shotgun_spread.tan();
                     let a = rng.random_range(0.0..std::f32::consts::TAU);
                     let d = (dir + (side * a.cos() + up * a.sin()) * r).normalize();
-                    (d * rules.blaster_bolt_speed, life, BoltExtra::default())
+                    (d * speed, life, BoltExtra::default())
                 })
                 .collect()
         }
         // (Across its whole range in a tick, and a tick more after a mirror.)
         Shot::Lance => vec![(
-            dir * rules.lance_range / TICK,
+            dir * shot.speed(rules),
             TICK * (1 + rules.mirror_bounces as u32) as f32 - TICK * 0.5,
             BoltExtra {
                 lance: true,
@@ -241,7 +253,7 @@ pub fn shot_bolts(shot: Shot, dir: Vec3, rules: &Rules, seed: u64) -> Vec<(Vec3,
             },
         )],
         Shot::Ricochet => vec![(
-            dir * rules.blaster_bolt_speed * 0.75,
+            dir * shot.speed(rules),
             rules.bolt_life,
             BoltExtra {
                 ricochet: true,
@@ -249,8 +261,8 @@ pub fn shot_bolts(shot: Shot, dir: Vec3, rules: &Rules, seed: u64) -> Vec<(Vec3,
             },
         )],
         Shot::Beam => vec![(
-            dir * rules.beam_speed,
-            rules.beam_range / rules.beam_speed,
+            dir * shot.speed(rules),
+            rules.beam_range / shot.speed(rules),
             BoltExtra {
                 damage: rules.beam_damage,
                 pierce: true,
