@@ -152,6 +152,12 @@ pub struct Gait {
 }
 
 impl Gait {
+    /// Forgets the standing height so far (the legs fit the height seen next, as when the
+    /// height setting changes).
+    pub fn refit(&mut self) {
+        self.stand = 0.0;
+    }
+
     /// The hips' facing (the legs' and boots' yaw).
     pub fn hip_yaw(&self) -> f32 {
         self.hip_yaw
@@ -395,6 +401,18 @@ mod tests {
             let off = (knee - hip) - d * (knee - hip).dot(d);
             assert!(off.length() < 0.1, "knee {off:?} off the line");
         }
+    }
+
+    #[test]
+    fn refit_forgets_a_taller_stance() {
+        // Tall at first (as before calibrating), then the default height: refitted, the
+        // legs are back to their default length at once.
+        let mut g = Gait::default();
+        run(&mut g, Vec3::ZERO, Vec3::ZERO, 2.2, 1.0);
+        assert!(g.stand > STAND_HIP + 0.3);
+        g.refit();
+        run(&mut g, Vec3::ZERO, Vec3::ZERO, lt_sim::sim::EYE, 0.1);
+        assert!((g.stand - STAND_HIP).abs() < 0.02, "stand {}", g.stand);
     }
 
     #[test]

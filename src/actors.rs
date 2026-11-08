@@ -141,15 +141,22 @@ struct Ring {
     size: f32,
 }
 
+/// Set when the VR height setting is calibrated or reset: one's own legs fit the new height
+/// (they otherwise only ever grow to the tallest stance seen).
+#[derive(Resource, Default)]
+pub struct RefitLegs(pub bool);
+
 pub struct ActorsPlugin;
 
 impl Plugin for ActorsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Views>()
+            .init_resource::<RefitLegs>()
             .add_systems(Startup, make_meshes)
             .add_systems(
                 Update,
                 (
+                    refit_legs.before(sync_players),
                     sync_players,
                     damage_pips,
                     sync_bolts,
@@ -558,6 +565,16 @@ fn with_decoys(snap: &lt_sim::Snapshot) -> Vec<PlayerSnap> {
 fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
     let d = (b - a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
     a + d * t
+}
+
+fn refit_legs(mut refit: ResMut<RefitLegs>, game: Res<Game>, mut views: ResMut<Views>) {
+    if !refit.0 {
+        return;
+    }
+    refit.0 = false;
+    if let Some(v) = game.me.and_then(|me| views.players.get_mut(&me)) {
+        v.gait.refit();
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

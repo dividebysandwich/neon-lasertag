@@ -1823,6 +1823,9 @@ fn pointer(
         Act::Options => ui.options = true,
         Act::Opt(VrOpt::Back) => ui.options = false,
         Act::Opt(o) => {
+            if matches!(o, VrOpt::Calibrate | VrOpt::ResetHeight) {
+                commands.insert_resource(crate::actors::RefitLegs(true));
+            }
             let head = input.head.map(|h| h.translation.y);
             apply_option(&mut settings, o, head);
             settings.save();
