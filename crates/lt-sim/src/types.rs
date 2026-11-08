@@ -474,6 +474,8 @@ pub enum SimEvent {
         player: PlayerId,
         pos: Vec3,
         dir: Vec3,
+        /// By the second of dual pistols.
+        second: bool,
     },
     /// A charge gun has been held long enough: letting go fires a beam.
     ChargeFull {

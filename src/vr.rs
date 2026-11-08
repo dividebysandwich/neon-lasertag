@@ -1723,9 +1723,15 @@ fn haptics(
     for GameEvent(e) in events.read() {
         match *e {
             // A short sharp kick.
-            SimEvent::Fired { player, .. } if player == me => {
-                rumble.play(gun, 0.0, 0.025, 0.8);
-                rumble.fade(gun, 0.025, 0.04, 0.3);
+            // (In the hand that fired: dual pistols' second, its own.)
+            SimEvent::Fired { player, second, .. } if player == me => {
+                let hand = if second {
+                    vr.gun2.map_or(gun, |h| h.index())
+                } else {
+                    gun
+                };
+                rumble.play(hand, 0.0, 0.025, 0.8);
+                rumble.fade(hand, 0.025, 0.04, 0.3);
             }
             // Click click.
             SimEvent::Empty { player } if player == me => {

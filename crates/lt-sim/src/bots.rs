@@ -2905,7 +2905,9 @@ mod tests {
             }
             for e in sim.drain_events() {
                 match e {
-                    SimEvent::Fired { player, pos, dir } => {
+                    SimEvent::Fired {
+                        player, pos, dir, ..
+                    } => {
                         s.fired += 1;
                         let team = sim.player(player).map(|p| p.team);
                         if sim.level.targets.iter().any(|t| {

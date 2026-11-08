@@ -1806,6 +1806,7 @@ impl Sim {
             player: id,
             pos: from,
             dir,
+            second,
         });
         if shot == Shot::Beam {
             self.events.push(SimEvent::BeamFired {

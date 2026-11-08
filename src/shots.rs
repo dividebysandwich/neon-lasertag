@@ -166,6 +166,7 @@ impl Shots {
             player,
             pos: from,
             dir,
+            second,
         });
         if shot == Shot::Beam {
             out.push(SimEvent::BeamFired {
