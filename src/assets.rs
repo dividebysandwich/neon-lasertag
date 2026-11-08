@@ -211,6 +211,11 @@ pub struct Models {
     pub torso: Model,
     /// Left and right gloves (origin at the palm, fingers along -Z).
     pub hands: [Model; 2],
+    /// Rigid body segments posed by `crate::rig`, one mesh for both sides; each hangs from its
+    /// joint (the origin) down -Y, front -Z: the neck (from the head's pivot), the pelvis (top
+    /// centre, tucked into the chest's hem), upper arm (shoulder), forearm (elbow), thigh
+    /// (hip), shin (knee) and boot (ankle; toe along -Z).
+    pub body: BodyModels,
     /// A reload station (origin on the floor in the middle of its cell).
     pub reload: Model,
     /// The powerups lying in the arena (origin at their centre, front towards -Z; the shotgun
@@ -219,6 +224,17 @@ pub struct Models {
     /// The shotgun in a player's hand (in the blaster's frame), and its muzzle.
     pub shotgun: Model,
     pub shotgun_muzzle: Vec3,
+}
+
+#[derive(Clone, Default)]
+pub struct BodyModels {
+    pub neck: Model,
+    pub pelvis: Model,
+    pub upper_arm: Model,
+    pub forearm: Model,
+    pub thigh: Model,
+    pub shin: Model,
+    pub boot: Model,
 }
 
 pub const ANIMALS: [&str; 8] = [
@@ -278,6 +294,20 @@ pub fn load_models(meshes: &mut Assets<Mesh>) -> Models {
             for (i, n) in ["hand_left", "hand_right"].iter().enumerate() {
                 if f.meshes.contains_key(*n) {
                     models.hands[i] = Model::from_glb(&f, Some(n), meshes);
+                }
+            }
+            let b = &mut models.body;
+            for (n, m) in [
+                ("neck", &mut b.neck),
+                ("pelvis", &mut b.pelvis),
+                ("upper_arm", &mut b.upper_arm),
+                ("forearm", &mut b.forearm),
+                ("thigh", &mut b.thigh),
+                ("shin", &mut b.shin),
+                ("boot", &mut b.boot),
+            ] {
+                if f.meshes.contains_key(n) {
+                    *m = Model::from_glb(&f, Some(n), meshes);
                 }
             }
         }
