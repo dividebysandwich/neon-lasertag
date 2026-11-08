@@ -37,6 +37,7 @@ pub mod music;
 pub mod neonui;
 pub mod options;
 pub mod pause;
+pub mod reflections;
 pub mod rig;
 pub mod scenery;
 pub mod segtext;
@@ -324,6 +325,7 @@ pub fn run() {
                 lobby::LobbyPlugin,
                 pause::PausePlugin,
                 options::OptionsPlugin,
+                reflections::ReflectionsPlugin,
                 endscreen::EndScreenPlugin,
             ));
         }

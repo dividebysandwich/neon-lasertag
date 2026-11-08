@@ -1,6 +1,6 @@
 //! The flat screen's options screen (from the start menu and the in-game menu): sound and music
 //! volume, key bindings, mouse sensitivity and inverted mouse look, the field of view, holding
-//! or toggling crouch and head bob, saved as soon as they change (src/settings.rs).
+//! or toggling crouch, head bob and reflections, saved as soon as they change (src/settings.rs).
 //!
 //! A binding is changed by clicking it and pressing a key or a mouse button; Esc cancels,
 //! Backspace or Delete clears it. Esc otherwise closes the screen.
@@ -25,6 +25,7 @@ enum Opt {
     ToggleCrouch,
     HeadBob,
     ObjectiveMarkers,
+    Reflections,
     /// Sound effects' and music volume, down (false) or up (true).
     Sound(bool),
     Music(bool),
@@ -42,6 +43,7 @@ enum OptText {
     ToggleCrouch,
     HeadBob,
     ObjectiveMarkers,
+    Reflections,
     Sound,
     Music,
 }
@@ -167,6 +169,11 @@ fn show(
                         button(r, Opt::ObjectiveMarkers, 204.0, "", Some(OptText::ObjectiveMarkers));
                         r.spawn(Node { width: Val::Px(8.0), ..default() });
                     });
+                    p.spawn(row()).with_children(|r| {
+                        name(r, "Reflections (off: faster)");
+                        button(r, Opt::Reflections, 204.0, "", Some(OptText::Reflections));
+                        r.spawn(Node { width: Val::Px(8.0), ..default() });
+                    });
                     p.spawn(Node { height: Val::Px(8.0), ..default() });
                     for a in Action::ALL {
                         p.spawn(row()).with_children(|r| {
@@ -253,6 +260,7 @@ fn buttons(
             Opt::ToggleCrouch => settings.toggle_crouch = !settings.toggle_crouch,
             Opt::HeadBob => settings.head_bob = !settings.head_bob,
             Opt::ObjectiveMarkers => settings.objective_markers = !settings.objective_markers,
+            Opt::Reflections => settings.reflections = !settings.reflections,
             Opt::Sound(up) => {
                 settings.sound_volume = Settings::step_volume(settings.sound_volume, up)
             }
@@ -330,6 +338,7 @@ fn refresh(
                 "Off"
             })
             .to_string(),
+            OptText::Reflections => (if settings.reflections { "On" } else { "Off" }).to_string(),
             OptText::Sound => format!("{:.0} %", settings.sound_volume * 100.0),
             OptText::Music => format!("{:.0} %", settings.music_volume * 100.0),
             OptText::Slot(a, slot) => {

@@ -1,5 +1,5 @@
 //! The player's settings: the flat screen's key bindings, mouse sensitivity, inverted mouse
-//! look, field of view, crouching (held or toggled) and head bob, and the volumes of the sound effects and the music (in VR too).
+//! look, field of view, crouching (held or toggled), head bob and reflections, and the volumes of the sound effects and the music (in VR too).
 //! Changed in the options screen (src/options.rs) and kept in `settings.ron` in the user's
 //! config directory (`$XDG_CONFIG_HOME/lasertag`, `~/.config/lasertag`, `%APPDATA%\lasertag`).
 
@@ -268,6 +268,9 @@ pub struct Settings {
     pub head_bob: bool,
     /// The HUD marks the targets to go for (`hud::goals`), flat screen and VR.
     pub objective_markers: bool,
+    /// Glossy floors, walls and models with screen-space reflections (flat screen,
+    /// src/reflections.rs); off for weaker GPUs.
+    pub reflections: bool,
     /// VR: the holster on the left hip (`--left-handed` too); the blaster turned nose down in
     /// the hand (degrees, `GUN_TILT_RANGE`); the holster raised (m, `HOLSTER_RANGE`); the
     /// vibration's strength (0..=1); the stick moving where the left hand points (else where
@@ -324,6 +327,7 @@ impl Default for Settings {
             toggle_crouch: false,
             head_bob: true,
             objective_markers: true,
+            reflections: true,
             left_handed: false,
             gun_tilt: GUN_TILT_DEFAULT,
             holster_dy: 0.0,
@@ -493,6 +497,7 @@ impl Settings {
                 s.toggle_crouch = saved.toggle_crouch;
                 s.head_bob = saved.head_bob;
                 s.objective_markers = saved.objective_markers;
+                s.reflections = saved.reflections;
                 s.left_handed = saved.left_handed;
                 s.gun_tilt = saved.gun_tilt.clamp(GUN_TILT_RANGE.0, GUN_TILT_RANGE.1);
                 s.holster_dy = saved.holster_dy.clamp(HOLSTER_RANGE.0, HOLSTER_RANGE.1);
@@ -529,6 +534,7 @@ impl Settings {
             toggle_crouch: self.toggle_crouch,
             head_bob: self.head_bob,
             objective_markers: self.objective_markers,
+            reflections: self.reflections,
             left_handed: self.left_handed,
             gun_tilt: self.gun_tilt,
             holster_dy: self.holster_dy,
@@ -573,6 +579,7 @@ struct Saved {
     toggle_crouch: bool,
     head_bob: bool,
     objective_markers: bool,
+    reflections: bool,
     left_handed: bool,
     gun_tilt: f32,
     holster_dy: f32,
@@ -595,6 +602,7 @@ impl Default for Saved {
             toggle_crouch: false,
             head_bob: true,
             objective_markers: true,
+            reflections: true,
             left_handed: false,
             gun_tilt: GUN_TILT_DEFAULT,
             holster_dy: 0.0,

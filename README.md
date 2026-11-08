@@ -159,6 +159,9 @@ summary of the rules.
 
 Seated VR players can use **Calibrate height** in Options to play at full height.
 
+On the flat screen the floors, walls and players are glossy and mirror the neon (screen-space
+reflections); on a weaker PC, turn **Reflections** off in Options.
+
 ## Command line options
 
 | Option | Description |

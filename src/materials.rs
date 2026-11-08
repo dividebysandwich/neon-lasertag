@@ -4,6 +4,7 @@
 //! `NeonGlobals` (time, team colours, event pulses), copied into them every frame.
 //! Shader: assets/shaders/neon.wgsl (and its GL port assets/shaders/gl/neon.glsl).
 
+use bevy::material::OpaqueRendererMethod;
 use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::pbr::{MaterialPipeline, MaterialPipelineKey};
 use bevy::prelude::*;
@@ -202,6 +203,20 @@ impl From<&AccentMaterial> for NeonKey {
 impl Material for AccentMaterial {
     fn fragment_shader() -> ShaderRef {
         SHADER.into()
+    }
+
+    fn deferred_fragment_shader() -> ShaderRef {
+        SHADER.into()
+    }
+
+    /// Deferred while reflections are on (`DefaultOpaqueRendererMethod`, src/reflections.rs),
+    /// so they show in them; overlays always forward (they set their own depth).
+    fn opaque_render_method(&self) -> OpaqueRendererMethod {
+        if self.overlay {
+            OpaqueRendererMethod::Forward
+        } else {
+            OpaqueRendererMethod::Auto
+        }
     }
 
     fn enable_shadows() -> bool {
