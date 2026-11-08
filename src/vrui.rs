@@ -6,7 +6,7 @@
 //!   choices lit; no typing in VR. Pointing at a mode button shows what the mode is about.
 //! - The menu (the right menu button, or B / Y held; see src/vr.rs): Resume, New match (local
 //!   games: the next match on a new arena), Options, Main menu and Quit, floating in front of
-//!   the player.
+//!   the player; where the game allows it, Red and Blue buttons to change sides.
 //! - The options (from the start menu or the menu): volumes, the blaster's tilt, the holster's
 //!   height and side, vibration, where the stick moves, and the height calibration.
 //! - A panel stays where it was placed (in front of the eyes when it opened; the start menu keeps
@@ -30,7 +30,7 @@ use crate::assets::MeshData;
 use crate::endscreen::{Row, standings, winner};
 use crate::game::{Game, GameEvent};
 use crate::materials::{AccentMaterial, GlowMaterial, NeonUniform, Palette, team_color};
-use crate::menu::{InternetList, MenuAct, MenuModel, Outcome, Screen, mode_blurb};
+use crate::menu::{InternetList, MenuAct, MenuModel, Outcome, Screen, mode_blurb, team_name};
 use crate::segtext::{self, Align};
 use crate::session::{Session, SessionCmd};
 use crate::vfont;
@@ -97,6 +97,8 @@ enum Act {
     Options,
     /// Change an option.
     Opt(VrOpt),
+    /// Play on this team.
+    Team(Team),
 }
 
 /// The VR options' buttons (`build_options`).
@@ -120,10 +122,26 @@ enum VrOpt {
 
 /// What the start menu panel shows: its level, the choices and the lists' revision (it is
 /// built anew when they change).
-type LobbyKey = (Screen, usize, Difficulty, SizeChoice, GameMode, u32);
+type LobbyKey = (
+    Screen,
+    usize,
+    Difficulty,
+    SizeChoice,
+    GameMode,
+    Option<Team>,
+    u32,
+);
 
 fn lobby_key(m: &MenuModel) -> LobbyKey {
-    (m.screen, m.bots, m.difficulty, m.arena, m.mode, m.rev)
+    (
+        m.screen,
+        m.bots,
+        m.difficulty,
+        m.arena,
+        m.mode,
+        m.team,
+        m.rev,
+    )
 }
 
 struct Button {
@@ -205,17 +223,29 @@ enum Hue {
     Pink,
     Amber,
     Green,
+    /// The teams' colours (the team buttons).
+    Red,
+    Blue,
 }
 
 impl Hue {
-    const ALL: [Hue; 6] = [
+    const ALL: [Hue; 8] = [
         Hue::Cyan,
         Hue::Magenta,
         Hue::Violet,
         Hue::Pink,
         Hue::Amber,
         Hue::Green,
+        Hue::Red,
+        Hue::Blue,
     ];
+
+    fn of_team(t: Team) -> Hue {
+        match t {
+            Team::Red => Hue::Red,
+            Team::Blue => Hue::Blue,
+        }
+    }
 
     fn color(self) -> Vec3 {
         let c = match self {
@@ -225,6 +255,8 @@ impl Hue {
             Hue::Pink => crate::neonui::PINK,
             Hue::Amber => crate::neonui::AMBER,
             Hue::Green => crate::neonui::GREEN,
+            Hue::Red => return team_color(Some(Team::Red)),
+            Hue::Blue => return team_color(Some(Team::Blue)),
         };
         let l = c.to_linear();
         Vec3::new(l.red, l.green, l.blue)
@@ -563,10 +595,11 @@ fn short(name: &str, n: usize) -> String {
 
 fn build_menu(b: &mut Builder, game: &Game) -> Vec<Button> {
     let local = game.is_local();
-    // The buttons, and under them the scores as they stand.
+    let teams = game.can_switch_team();
+    // The buttons (and the team row), and under them the scores as they stand.
     let rows = standings(game);
     let n = rows[0].len() + rows[1].len();
-    let buttons_h = if local { 1.04 } else { 0.88 };
+    let buttons_h = if local { 1.04 } else { 0.88 } + if teams { 0.17 } else { 0.0 };
     let scores_h = 2.0 * (0.12 + 0.02) + n as f32 * ROW + 0.04;
     let size = Vec2::new(1.0, buttons_h + scores_h);
     b.backing(size, Hue::Magenta);
@@ -598,7 +631,8 @@ fn build_menu(b: &mut Builder, game: &Game) -> Vec<Button> {
     acts.push(("OPTIONS", Act::Options, Hue::Violet));
     acts.push(("MAIN MENU", Act::Leave, Hue::Magenta));
     acts.push(("QUIT", Act::Quit, Hue::Pink));
-    acts.iter()
+    let mut buttons: Vec<Button> = acts
+        .iter()
         .enumerate()
         .map(|(k, (label, act, hue))| {
             b.button(
@@ -610,7 +644,35 @@ fn build_menu(b: &mut Builder, game: &Game) -> Vec<Button> {
                 false,
             )
         })
-        .collect()
+        .collect();
+    if teams {
+        // One's own team lit; the other moves the player over.
+        let y = top - 0.25 - acts.len() as f32 * 0.16;
+        let dim = b.mats.dim.clone();
+        b.text_w(
+            "YOUR TEAM",
+            0.022,
+            BOLD,
+            Vec2::new(0.0, y + 0.075),
+            Align::Center,
+            &dim,
+            None,
+        );
+        let mine = game.my_team();
+        let items = Team::ALL
+            .iter()
+            .map(|&t| {
+                (
+                    team_name(Some(t)).to_string(),
+                    Act::Team(t),
+                    Hue::of_team(t),
+                    mine == Some(t),
+                )
+            })
+            .collect();
+        button_row(b, &mut buttons, items, y, 0.27, 0.1);
+    }
+    buttons
 }
 
 /// The help panel's width (m).
@@ -782,6 +844,23 @@ fn lobby_choices(b: &mut Builder, buttons: &mut Vec<Button>, m: &MenuModel, mut 
             button.tip = Some(tip);
         }
     }
+    y -= 0.22;
+    // (Infection hands out the sides itself: no choosing there.)
+    if m.mode != GameMode::Infection {
+        label(b, "YOUR TEAM", y);
+        let teams = [None, Some(Team::Red), Some(Team::Blue)]
+            .iter()
+            .map(|&t| item(team_name(t), MenuAct::Team(t)))
+            .map(|(n, a, on)| {
+                let hue = match a {
+                    MenuAct::Team(Some(t)) => Hue::of_team(t),
+                    _ => Hue::Cyan,
+                };
+                (n, menu(a), hue, on)
+            })
+            .collect();
+        button_row(b, buttons, teams, y - 0.07, 0.3, 0.09);
+    }
     y - 0.16
 }
 
@@ -853,7 +932,13 @@ fn lobby_list(b: &mut Builder, buttons: &mut Vec<Button>, m: &MenuModel, y: f32,
 /// The start menu (src/menu.rs's levels; no typing, so no join by address and the server's
 /// name as it is).
 fn build_lobby(b: &mut Builder, m: &MenuModel) -> Vec<Button> {
-    let size = Vec2::new(1.1, 1.12);
+    // (The screens with the game's choices are taller.)
+    let height = match m.screen {
+        Screen::Botmatch => 1.5,
+        Screen::Host { .. } => 1.58,
+        _ => 1.12,
+    };
+    let size = Vec2::new(1.1, height);
     // The panel's colour, as the flat screen's for this level.
     let hue = match m.screen {
         Screen::Botmatch | Screen::Internet | Screen::Host { internet: true } => Hue::Cyan,
@@ -886,7 +971,7 @@ fn build_lobby(b: &mut Builder, m: &MenuModel) -> Vec<Button> {
         }
     };
     // Back (and the level's way on) at the bottom.
-    let bottom = top - 1.03;
+    let bottom = top - (size.y - 0.09);
     let back = |b: &mut Builder, buttons: &mut Vec<Button>, go: Option<(&str, MenuAct, Hue)>| {
         let items = std::iter::once(("BACK".to_string(), menu(MenuAct::Back), Hue::Violet, false))
             .chain(go.map(|(l, a, h)| (l.to_string(), menu(a), h, false)))
@@ -1668,6 +1753,10 @@ fn pointer(
         }
         Act::Quit => {
             cmds.write(SessionCmd::Quit);
+        }
+        Act::Team(t) => {
+            ui.menu = false;
+            cmds.write(SessionCmd::SwitchTeam(t));
         }
         Act::Menu(a) => match model.apply(&a) {
             Outcome::Start(start) => commands.insert_resource(start),

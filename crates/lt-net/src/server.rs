@@ -259,6 +259,19 @@ impl Server {
                 r.claims.extend(hits.into_iter().take(64).map(|c| (c, 0)));
                 r.claims.truncate(256);
             }
+            ToServer::SwitchTeam(team) => {
+                let Some(r) = self.remotes.get(&id) else {
+                    return;
+                };
+                let Some(p) = r.player else { return };
+                if sim.switch_team(p, team) {
+                    let moved = bots.balance(sim);
+                    self.log.push(format!(
+                        "{} switched to {team:?} ({moved} bots moved)",
+                        r.name
+                    ));
+                }
+            }
             // (Closing this end tells nobody here: the player goes now.)
             ToServer::Bye => {
                 self.drop_remote(id, "quit", sim, bots);

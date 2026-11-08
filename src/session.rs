@@ -64,6 +64,8 @@ pub enum SessionCmd {
     /// Back to the start menu (flat screen).
     Leave,
     Quit,
+    /// Play on the other team (`Game::switch_team`).
+    SwitchTeam(lt_sim::Team),
 }
 
 pub struct SessionPlugin;
@@ -629,6 +631,11 @@ fn run_commands(
                     game.close();
                 }
                 exit.write(AppExit::Success);
+            }
+            SessionCmd::SwitchTeam(team) => {
+                if let Some(game) = game.as_deref_mut() {
+                    game.switch_team(*team);
+                }
             }
         }
     }

@@ -945,6 +945,38 @@ impl Sim {
         self.players.retain(|p| p.id != id);
     }
 
+    /// Moves player `id` over to `team`: they start over at its base (back from being tagged
+    /// out if they were), their powerups gone and a carried prism dropped where they stood.
+    /// Nothing happens (false) on the same team, or in Infection, where the game hands out the
+    /// sides.
+    pub fn switch_team(&mut self, id: PlayerId, team: Team) -> bool {
+        if self.infection() {
+            return false;
+        }
+        let Some(pi) = self.players.iter().position(|p| p.id == id) else {
+            return false;
+        };
+        if self.players[pi].team == team {
+            return false;
+        }
+        let feet = self.players[pi].feet;
+        if let Some(k) = self.prisms.iter().position(|x| x.carrier == Some(id)) {
+            self.drop_prism(k, feet + Vec3::Y * 0.3);
+        }
+        let p = &mut self.players[pi];
+        p.team = team;
+        p.respawn = None;
+        p.grenades = 0;
+        p.hit_by.clear();
+        p.cmd.fire = false;
+        p.cmd.fire2 = false;
+        p.lose_powerups();
+        self.send_home(pi);
+        self.events
+            .push(SimEvent::SwitchedTeam { player: id, team });
+        true
+    }
+
     /// The latest command of a player, applied by every `step` until replaced.
     pub fn set_cmd(&mut self, id: PlayerId, cmd: PlayerCmd) {
         if let Some(p) = self.player_mut(id) {

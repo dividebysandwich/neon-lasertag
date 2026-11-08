@@ -607,6 +607,11 @@ pub enum SimEvent {
     Infected {
         player: PlayerId,
     },
+    /// `player` moved over to `team` (`Sim::switch_team`), starting over at its base.
+    SwitchedTeam {
+        player: PlayerId,
+        team: Team,
+    },
     /// A bounty on `player` (`Sim::bounty`), claimed by `by` tagging them out, or lasted out.
     BountyOn {
         player: PlayerId,

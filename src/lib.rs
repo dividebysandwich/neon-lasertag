@@ -96,6 +96,8 @@ pub struct Args {
     pub arena: lt_sim::level::SizeChoice,
     /// What local and hosted games are played for (`--mode`).
     pub game_mode: lt_sim::level::GameMode,
+    /// One's own team in local and hosted games (`--team`; none: the smaller one).
+    pub team: Option<lt_sim::Team>,
     /// VR: the holster on the left hip (`--left-handed` or `LT_LEFT_HANDED=1`).
     pub left_handed: bool,
     /// Local games: the match's length in seconds (testing).
@@ -122,6 +124,7 @@ impl Args {
             difficulty: Difficulty::default(),
             arena: lt_sim::level::SizeChoice::default(),
             game_mode: lt_sim::level::GameMode::Megatarget,
+            team: None,
             left_handed: std::env::var("LT_LEFT_HANDED").is_ok_and(|v| v == "1"),
             match_time: None,
             screenshot: None,
@@ -172,6 +175,12 @@ impl Args {
                 {
                     Some(m) => a.game_mode = m,
                     None => eprintln!("--mode: classic, megatarget, prism or infection"),
+                },
+                "--team" => match next(&mut i).as_deref().map(str::to_ascii_lowercase) {
+                    Some(t) if t == "red" => a.team = Some(lt_sim::Team::Red),
+                    Some(t) if t == "blue" => a.team = Some(lt_sim::Team::Blue),
+                    Some(t) if t == "auto" => a.team = None,
+                    _ => eprintln!("--team: red, blue or auto"),
                 },
                 "--left-handed" => a.left_handed = true,
                 "--match-time" => a.match_time = next(&mut i).and_then(|v| v.parse().ok()),
@@ -429,6 +438,7 @@ fn setup(
                 difficulty: args.difficulty,
                 arena: args.arena,
                 mode: args.game_mode,
+                team: args.team,
             },
         });
     }
@@ -465,6 +475,7 @@ fn start_game(
                     args.difficulty.skill(),
                     session.rules(&args),
                     &args.name,
+                    args.team,
                     None,
                 ));
             }
@@ -475,6 +486,7 @@ fn start_game(
             difficulty,
             arena,
             mode,
+            team,
         } => {
             session.difficulty = difficulty;
             session.arena = arena;
@@ -485,6 +497,7 @@ fn start_game(
                 difficulty.skill(),
                 session.rules(&args),
                 &args.name,
+                team,
                 host,
             );
             if args.autopilot {

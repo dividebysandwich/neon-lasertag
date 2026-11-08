@@ -893,6 +893,14 @@ pub fn feed_entries(e: &SimEvent, game: &Game) -> Vec<(String, Color, f32)> {
                 8.0,
             ));
         }
+        SimEvent::SwitchedTeam { player, team } => {
+            let side = if team == Team::Red { "Red" } else { "Blue" };
+            out.push((
+                format!("{} switched to {side}", game.name_of(player)),
+                team_color(team),
+                4.0,
+            ));
+        }
         SimEvent::MatchOver { scores } => {
             let (w, c) = if scores[0] > scores[1] {
                 ("RED WINS", team_color(Team::Red))
@@ -2556,6 +2564,16 @@ pub fn mega_banner_for(e: &SimEvent, game: &Game) -> Option<Banner> {
         small,
     };
     match *e {
+        SimEvent::SwitchedTeam { player, team } if player == me => Some(banner(
+            if team == Team::Red {
+                "YOU'RE ON RED NOW"
+            } else {
+                "YOU'RE ON BLUE NOW"
+            },
+            "STARTING OVER AT YOUR NEW BASE".to_string(),
+            crate::endscreen::team_ui_color(Some(team)),
+            true,
+        )),
         // Infection: one's own fate.
         SimEvent::Infected { player } if player == me => Some(banner(
             "YOU ARE A PHANTOM",

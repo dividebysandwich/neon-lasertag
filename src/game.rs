@@ -305,17 +305,19 @@ fn blend(a: &Snapshot, b: &Snapshot, k: f32, view: f64) -> Snapshot {
 }
 
 impl Game {
-    /// A local game: `bots` bots of `skill` (`Difficulty::skill`).
+    /// A local game: `bots` bots of `skill` (`Difficulty::skill`), the local player on `team`
+    /// (`None`: the smaller one).
     pub fn local(
         seed: u64,
         bots: usize,
         skill: f32,
         rules: Rules,
         name: &str,
+        team: Option<Team>,
         host: Option<Hosting>,
     ) -> Game {
         let mut sim = Sim::new(seed, rules.clone());
-        let me = sim.add_player(name, None, false);
+        let me = sim.add_player(name, team, false);
         let mut b = Bots::default();
         b.fill(&mut sim, bots, skill);
         sim.begin();
@@ -388,6 +390,32 @@ impl Game {
             .iter()
             .find(|n| n.0 == id)
             .map_or("?", |n| n.1.as_str())
+    }
+
+    /// Whether the local player may switch teams now: the rules allow it, the mode isn't
+    /// Infection (the game hands out the sides there) and the match is on.
+    pub fn can_switch_team(&self) -> bool {
+        self.level.mode != lt_sim::level::GameMode::Infection
+            && self.me.is_some()
+            && !self.snap.over
+    }
+
+    /// Moves the local player over to `team` (`can_switch_team`): in a local game at once,
+    /// the bots evening the teams out; in a remote one by asking the server.
+    pub fn switch_team(&mut self, team: Team) {
+        if !self.can_switch_team() {
+            return;
+        }
+        let Some(me) = self.me else { return };
+        match &mut self.source {
+            Source::Local { sim, bots, .. } => {
+                if sim.switch_team(me, team) {
+                    let moved = bots.balance(sim);
+                    info!("switched to {team:?} ({moved} bots moved over)");
+                }
+            }
+            Source::Remote(client) => client.send_team(team),
+        }
     }
 }
 
@@ -820,9 +848,17 @@ fn predict(
 
 /// Starting over and leaving (src/session.rs).
 impl Game {
-    /// A local game on arena `seed` again: the local player again, `bots`
-    /// bots of `skill`, `rules`; a listen server moves its remote players over.
-    pub fn restart(&mut self, seed: u64, bots: usize, skill: f32, rules: Rules) {
+    /// A local game on arena `seed` again: the local player again (on `team`; `None`: the
+    /// smaller one), `bots` bots of `skill`, `rules`; a listen server moves its remote players
+    /// over.
+    pub fn restart(
+        &mut self,
+        seed: u64,
+        bots: usize,
+        skill: f32,
+        rules: Rules,
+        team: Option<Team>,
+    ) {
         let name = self
             .me
             .map_or_else(|| "Player".to_string(), |id| self.name_of(id).to_string());
@@ -836,7 +872,7 @@ impl Game {
             return;
         };
         let mut next = Sim::new(seed, rules.clone());
-        let me = next.add_player(&name, None, false);
+        let me = next.add_player(&name, team, false);
         let mut next_bots = Bots::default();
         next_bots.fill(&mut next, bots, skill);
         next.begin();
@@ -858,14 +894,20 @@ impl Game {
             .collect();
     }
 
-    /// The next match of a local game on arena `seed`, with as many players and the same bots.
+    /// The next match of a local game on arena `seed`, with as many players and the same bots,
+    /// the local player staying on the team they ended on (not in Infection: the game picks).
     pub fn next_match(&mut self, seed: u64) {
         let Source::Local { sim, bots, .. } = &self.source else {
             return;
         };
         let others = sim.players.len().saturating_sub(1);
         let skill = bots.skill();
-        self.restart(seed, others, skill, self.rules.clone());
+        let team = if sim.infection() {
+            None
+        } else {
+            self.me.and_then(|me| sim.player(me)).map(|p| p.team)
+        };
+        self.restart(seed, others, skill, self.rules.clone(), team);
     }
 
     /// Stops hosting (telling the players) or leaves the server.

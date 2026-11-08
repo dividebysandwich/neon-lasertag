@@ -1,9 +1,11 @@
 //! The flat screen's in-game menu: Esc opens it (the match goes on underneath), Esc again or
 //! Resume closes it and takes the mouse again. Leave goes back to the start menu, Quit ends
-//! the program. (The VR menu is in src/vrui.rs.)
+//! the program. Where the game allows it (`Rules::team_switch`, not Infection) a team row
+//! moves the player to the other side. (The VR menu is in src/vrui.rs.)
 
 use bevy::prelude::*;
 use bevy::window::{CursorOptions, PrimaryWindow};
+use lt_sim::Team;
 
 use crate::desktop::{Overlays, set_grab};
 use crate::game::Game;
@@ -20,6 +22,7 @@ enum PauseButton {
     Options,
     Leave,
     Quit,
+    Team(Team),
 }
 
 pub struct PausePlugin;
@@ -84,6 +87,10 @@ fn buttons(
             PauseButton::Quit => {
                 cmds.write(SessionCmd::Quit);
             }
+            PauseButton::Team(t) => {
+                cmds.write(SessionCmd::SwitchTeam(*t));
+                resume(&mut overlays, &mut cursor);
+            }
         }
     }
 }
@@ -120,6 +127,10 @@ fn show(
                                         22.0,
                                     );
                                 }
+                                if let Some(game) = game.as_deref().filter(|g| g.can_switch_team())
+                                {
+                                    team_row(p, game);
+                                }
                             });
                         if let Some(game) = game.as_deref() {
                             help(p, &settings, game);
@@ -136,6 +147,24 @@ fn show(
         }
         _ => {}
     }
+}
+
+/// Under the buttons: the teams, one's own lit; the other moves the player over.
+fn team_row(p: &mut ChildSpawnerCommands, game: &Game) {
+    let mine = game.my_team();
+    p.spawn(neonui::gap(4.0));
+    p.spawn(neonui::text_w("YOUR TEAM", 15.0, neonui::DIM, 700));
+    p.spawn(neonui::row(12.0)).with_children(|r| {
+        for t in Team::ALL {
+            let color = crate::endscreen::team_ui_color(Some(t));
+            let neon = NeonButton {
+                color,
+                selected: mine == Some(t),
+            };
+            let label = if t == Team::Red { "RED" } else { "BLUE" };
+            neonui::button(r, label, PauseButton::Team(t), neon, Some(174.0), 18.0);
+        }
+    });
 }
 
 /// Beside the buttons: the controls as bound now, and the rules in short, side by side.

@@ -18,6 +18,7 @@
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::prelude::*;
 use lt_net::{LanBrowser, LanServer, ListSlot, ServerEntry, fetch_list_into};
+use lt_sim::Team;
 use lt_sim::bots::Difficulty;
 use lt_sim::level::{GameMode, SizeChoice};
 
@@ -93,6 +94,8 @@ pub enum MenuAct {
     Difficulty(Difficulty),
     Arena(SizeChoice),
     Mode(GameMode),
+    /// One's own team (`None`: the smaller one).
+    Team(Option<Team>),
     Options,
     Quit,
 }
@@ -108,6 +111,15 @@ pub fn mode_blurb(mode: GameMode) -> &'static str {
         GameMode::Infection => {
             "CLOAKED RED PHANTOMS HUNT BLUE SURVIVORS - TAGGED OUT YOU TURN PHANTOM"
         }
+    }
+}
+
+/// A team's name as the menus show it (`None`: auto).
+pub fn team_name(team: Option<Team>) -> &'static str {
+    match team {
+        None => "AUTO",
+        Some(Team::Red) => "RED",
+        Some(Team::Blue) => "BLUE",
     }
 }
 
@@ -138,6 +150,8 @@ pub struct MenuModel {
     pub difficulty: Difficulty,
     pub arena: SizeChoice,
     pub mode: GameMode,
+    /// One's own team in local and hosted games (`None`: the smaller one).
+    pub team: Option<Team>,
     /// The hosted game's name, and the address typed to join.
     pub server_name: String,
     pub address: String,
@@ -161,6 +175,7 @@ impl MenuModel {
             difficulty: args.difficulty,
             arena: args.arena,
             mode: args.game_mode,
+            team: args.team,
             server_name: args.hosted_name(),
             address: String::new(),
             port: args.host.unwrap_or(lt_net::protocol::DEFAULT_PORT),
@@ -230,6 +245,7 @@ impl MenuModel {
             MenuAct::Difficulty(d) => *d == self.difficulty,
             MenuAct::Arena(a) => *a == self.arena,
             MenuAct::Mode(m) => *m == self.mode,
+            MenuAct::Team(t) => *t == self.team,
             _ => false,
         }
     }
@@ -241,6 +257,7 @@ impl MenuModel {
             difficulty: self.difficulty,
             arena: self.arena,
             mode: self.mode,
+            team: self.team,
         }
     }
 
@@ -295,6 +312,10 @@ impl MenuModel {
                 self.mode = *m;
                 None
             }
+            MenuAct::Team(t) => {
+                self.team = *t;
+                None
+            }
             MenuAct::Options => return Outcome::Options,
             MenuAct::Quit => return Outcome::Quit,
         };
@@ -318,6 +339,8 @@ pub enum Start {
         difficulty: Difficulty,
         arena: SizeChoice,
         mode: GameMode,
+        /// One's own team (`None`: the smaller one).
+        team: Option<Team>,
     },
     Join(String),
 }
@@ -395,6 +418,10 @@ struct Tip(&'static str);
 /// The tooltip shown (over everything).
 #[derive(Component)]
 struct TipPopup;
+
+/// The team row: Infection hands out the sides itself, so it hides there.
+#[derive(Component)]
+struct TeamRow;
 
 fn first(mut commands: Commands, args: Res<Args>) {
     if args.menu {
@@ -640,6 +667,25 @@ fn choices(p: &mut ChildSpawnerCommands, model: &MenuModel) {
                 .iter()
                 .map(|m| (m.name(), MenuAct::Mode(*m), Some(Tip(mode_blurb(*m)))))
                 .collect(),
+        );
+    });
+    let mut team_row = p.spawn((TeamRow, neonui::row(10.0)));
+    if model.mode == GameMode::Infection {
+        team_row.insert(Node {
+            display: Display::None,
+            ..neonui::row(10.0)
+        });
+    }
+    team_row.with_children(|r| {
+        name(r, "YOUR TEAM");
+        options(
+            r,
+            plain(
+                [None, Some(Team::Red), Some(Team::Blue)]
+                    .iter()
+                    .map(|t| (team_name(*t), MenuAct::Team(*t)))
+                    .collect(),
+            ),
         );
     });
 }
@@ -983,8 +1029,12 @@ fn live(model: Res<MenuModel>, time: Res<Time>, mut q: Query<(&Live, &mut Text)>
     }
 }
 
-/// The current choices lit.
-fn selected(model: Res<MenuModel>, mut q: Query<(&MenuAct, &mut NeonButton)>) {
+/// The current choices lit (and the team row away in Infection).
+fn selected(
+    model: Res<MenuModel>,
+    mut q: Query<(&MenuAct, &mut NeonButton)>,
+    mut rows: Query<&mut Node, With<TeamRow>>,
+) {
     if !model.is_changed() {
         return;
     }
@@ -992,6 +1042,16 @@ fn selected(model: Res<MenuModel>, mut q: Query<(&MenuAct, &mut NeonButton)>) {
         let on = model.selected(a);
         if n.selected != on {
             n.selected = on;
+        }
+    }
+    let display = if model.mode == GameMode::Infection {
+        Display::None
+    } else {
+        Display::Flex
+    };
+    for mut n in &mut rows {
+        if n.display != display {
+            n.display = display;
         }
     }
 }

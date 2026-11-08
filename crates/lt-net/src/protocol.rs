@@ -6,7 +6,7 @@ use lt_sim::{PlayerCmd, PlayerId, Rules, SimEvent, Team};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL: u16 = 29;
+pub const PROTOCOL: u16 = 30;
 pub const DEFAULT_PORT: u16 = 27420;
 /// How many of its latest commands a client sends with each input (a lost packet loses
 /// nothing).
@@ -24,6 +24,8 @@ pub enum ToServer {
     },
     /// What the client's own bolts hit, as it showed the players (reliable).
     Hits(Vec<HitClaim>),
+    /// The player wants to play on `Team` (granted if `Rules::team_switch` allows; reliable).
+    SwitchTeam(Team),
     Bye,
 }
 

@@ -86,6 +86,16 @@ impl Client {
         self.endpoint.flush(Instant::now());
     }
 
+    /// Asks to play on `team` (the server decides; the roster and snapshots show the outcome).
+    pub fn send_team(&mut self, team: Team) {
+        if !self.connected {
+            return;
+        }
+        self.endpoint
+            .send(0, Channel::Reliable, &encode(&ToServer::SwitchTeam(team)));
+        self.endpoint.flush(Instant::now());
+    }
+
     pub fn poll(&mut self) -> Vec<ClientEvent> {
         let now = Instant::now();
         let mut out = Vec::new();

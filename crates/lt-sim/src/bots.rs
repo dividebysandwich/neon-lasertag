@@ -909,6 +909,8 @@ pub struct Bot {
     shared: Shared,
     graph: Option<Arc<BotGraph>>,
     me: Option<PlayerId>,
+    /// The team last played on (moved over: everything starts over).
+    team: Option<Team>,
 
     plan: Plan,
     plan_left: f32,
@@ -1001,6 +1003,7 @@ impl Bot {
             shared,
             graph: None,
             me: None,
+            team: None,
             plan: Plan::Hold,
             plan_left: 0.0,
             next_plan_hint: None,
@@ -2340,6 +2343,12 @@ impl Controller for Bot {
         if !self.aim.is_finite() || self.aim.length_squared() < 0.5 {
             self.aim = Vec3::NEG_Z;
         }
+        if self.team != Some(p.team) {
+            if self.team.is_some() {
+                self.reset();
+            }
+            self.team = Some(p.team);
+        }
         if !p.alive() {
             self.reset();
             return self.pose(PlayerCmd::default());
@@ -2711,6 +2720,41 @@ impl Bots {
         self.roles.remove(&id);
         sim.remove_player(id);
         true
+    }
+
+    /// Evens the teams out (after a player switched sides): while one team has two or more
+    /// players more than the other and a bot among them, one of its bots goes over (one waiting
+    /// to respawn first, else the one with the fewest points). Returns how many went.
+    pub fn balance(&mut self, sim: &mut Sim) -> usize {
+        let mut moved = 0;
+        loop {
+            let count = |t: Team| sim.players.iter().filter(|p| p.team == t).count();
+            let (r, b) = (count(Team::Red), count(Team::Blue));
+            let (from, to) = if r >= b + 2 {
+                (Team::Red, Team::Blue)
+            } else if b >= r + 2 {
+                (Team::Blue, Team::Red)
+            } else {
+                break;
+            };
+            let Some(id) = sim
+                .players
+                .iter()
+                .filter(|p| p.bot && p.team == from && self.bots.contains_key(&p.id))
+                .min_by_key(|p| (p.alive(), p.score))
+                .map(|p| p.id)
+            else {
+                break;
+            };
+            if !sim.switch_team(id, to) {
+                break;
+            }
+            if let Some(r) = self.roles.get_mut(&id) {
+                r.0 = to;
+            }
+            moved += 1;
+        }
+        moved
     }
 
     /// Sets every bot's command for the next step.
@@ -3344,6 +3388,52 @@ mod tests {
     }
 
     #[test]
+    fn switching_teams_moves_the_bots_to_even_out() {
+        let mut sim = Sim::new(5, Rules::default());
+        let me = sim.add_player("me", Some(Team::Red), false).unwrap();
+        let mut bots = Bots::default();
+        bots.fill(&mut sim, 7, 0.5);
+        let count = |sim: &Sim, t: Team| sim.players.iter().filter(|p| p.team == t).count();
+        assert_eq!((count(&sim, Team::Red), count(&sim, Team::Blue)), (4, 4));
+        for _ in 0..30 {
+            bots.think(&mut sim);
+            sim.step();
+        }
+        assert!(sim.switch_team(me, Team::Blue));
+        assert_eq!((count(&sim, Team::Red), count(&sim, Team::Blue)), (3, 5));
+        let moved = bots.balance(&mut sim);
+        assert_eq!(moved, 1);
+        assert_eq!((count(&sim, Team::Red), count(&sim, Team::Blue)), (4, 4));
+        assert_eq!(sim.player(me).unwrap().team, Team::Blue);
+        let switched: Vec<_> = sim
+            .drain_events()
+            .into_iter()
+            .filter(|e| matches!(e, SimEvent::SwitchedTeam { .. }))
+            .collect();
+        assert_eq!(switched.len(), 2, "{switched:?}");
+        // Switching back and forth keeps the teams even; the same team is a no-op.
+        assert!(!sim.switch_team(me, Team::Blue));
+        assert!(sim.switch_team(me, Team::Red));
+        bots.balance(&mut sim);
+        assert_eq!((count(&sim, Team::Red), count(&sim, Team::Blue)), (4, 4));
+        // The bots play on after moving (their state starts over on the new team).
+        for _ in 0..120 {
+            bots.think(&mut sim);
+            sim.step();
+        }
+        assert!(sim.players.iter().all(|p| p.feet.is_finite()));
+        // Not in Infection: the game hands out the sides.
+        let mut inf = Sim::new(
+            5,
+            Rules {
+                mode: level::GameMode::Infection,
+                ..Rules::default()
+            },
+        );
+        let me = inf.add_player("me", Some(Team::Red), false).unwrap();
+        assert!(!inf.switch_team(me, Team::Blue));
+    }
+
     #[test]
     fn bots_go_for_the_megatarget() {
         let mut totals = [0usize; 6];
