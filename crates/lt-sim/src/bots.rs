@@ -1251,6 +1251,10 @@ impl Bot {
             && let Some(spot) = self.pick_guard_spot(sim, g, p, t)
         {
             self.release_claim();
+            // (A powerup can wait; a reload can't.)
+            if matches!(self.errand, Some(Errand::Pickup { .. })) {
+                self.errand = None;
+            }
             self.plan = Plan::Defend;
             self.plan_left = self.rng.random_range(10.0..16.0);
             self.spot = Some(spot);
