@@ -80,11 +80,11 @@ frames, PREVIEW_LIDS=-5,-5 shuts them).
   game poses by IK (`src/rig.rs`). All X mirror symmetric except the hands (`avatars.py` refuses
   to build anything else asymmetric).
   - `head_wolf`, `head_cat`, `head_deer`, `head_fox`, `head_bear`, `head_rabbit`, `head_owl`,
-    `head_boar`, `head_dragon`: cartoon heads (~1000-1400 tris, smooth shaded across edges
-    bending less than 40 degrees), origin at the midpoint between the eyeballs' centres (the VR
+    `head_boar`, `head_dragon`: cartoon heads (~750-1100 tris, faceted: smooth shaded only across
+    edges bending less than 25 degrees), origin at the midpoint between the eyeballs' centres (the VR
     head pose), looking along -Z. Skulls are ~0.24-0.3 m across; snouts reach up to ~0.2 m
     forward, ears/antlers up to 0.37 m above the eyes (all within +-0.35 m in X/Z and 0.6 m
-    tall). Each head is a loft of 16-sided superellipse rings for the skull and a second for the
+    tall). Each head is a loft of 12-sided superellipse rings for the skull and a second for the
     muzzle (a narrow bridge between the eyes over a wide jaw, its back face the pale throat),
     with a brow ridge over each eye, a nose blob, a mouth line and a team-coloured accessory
     (headset, goggles, glasses, visor, horn rings, antler tips...).
@@ -92,7 +92,8 @@ frames, PREVIEW_LIDS=-5,-5 shuts them).
     frame: origin at the eyeball's centre (sunk 0.45 radii into the skull), -Z where it looks
     at rest (turned a little outwards), +Y up, scaled uniformly by the eye's radius
     (0.031-0.046 m). The game (`src/eyes.rs`) puts the shared `eyeball` there (unit sphere
-    looking along -Z: `body` pupil, `eyes` iris, `sclera`, a `glow_white` glint; ~270 tris), or
+    looking along -Z: `body` pupil, `eyes` iris, `sclera`, a `glow_white` glint; ~160 tris, smooth
+    shaded across edges bending less than 40 degrees, as the lids), or
     the animal's own `eyeball_<animal>` when there is one (`eyeball_cat`: a slit pupil), and two
     `eyelid`s (a lune of a shell, radii 1.05-1.11, from its rim 118 degrees back over the top;
     the second turned 180 degrees about Z for the lower lid), turning the ball about its centre

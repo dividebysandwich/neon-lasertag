@@ -3,7 +3,7 @@
     blender -b --factory-startup --python-exit-code 1 --python tools/models/blaster.py
 
 A low-poly light-gun pistol (long octagonal barrel, slab receiver with a ribbed top rib, angled
-grooved grip, trigger and guard, front/rear sights). Game frame: barrel along -Z, up +Y,
+grip, trigger and guard, front/rear sights). Game frame: barrel along -Z, up +Y,
 origin at the centre of the hand's hold on the grip. Materials: `body`, `accent` (team trim),
 `hit_1`/`hit_2`/`hit_3` (remaining-hit lights on the top rib, hit_1 nearest the player),
 `muzzle` (emitter disc at the barrel tip). An empty `muzzle` marks the barrel tip.
@@ -62,8 +62,7 @@ def build():
          cap0="body", cap1="muzzle")
     loft(g, [octagon_ring(-0.168, 0.0172), octagon_ring(-0.178, 0.0172)], L.NZ, mats="accent")
     loft(g, [octagon_ring(-0.140, 0.0172), octagon_ring(-0.144, 0.0172)], L.NZ, mats="accent")
-    # Grip: tilted octagonal section with horizontal finger grooves (depth only, so the sides
-    # stay flat for the trim line) and a flared butt.
+    # Grip: tilted octagonal section with a flared butt (plain: the holding glove covers it).
     a = (0, math.cos(GRIP_TILT), -math.sin(GRIP_TILT))  # up the grip
     d = (0, math.sin(GRIP_TILT), math.cos(GRIP_TILT))  # towards the back of the grip
 
@@ -74,12 +73,7 @@ def build():
         return [L.add(c, L.add((x, 0, 0), L.mul(d, dd))) for x, dd in pts]
 
     grip = [section(-0.074, 0.017, 0.025), section(-0.066, 0.017, 0.025),
-            section(-0.064, 0.015, 0.022)]
-    for k in range(5):
-        t0 = -0.052 + k * 0.016
-        grip += [section(t0), section(t0 + 0.002, hd=0.0195), section(t0 + 0.008, hd=0.0195),
-                 section(t0 + 0.010)]
-    grip.append(section(0.066))
+            section(-0.064, 0.015, 0.022), section(0.066)]
     loft(g, grip, a, cap0="body", cap1="body")
     # Team trim: receiver side lines and a line down each grip side.
     for f, sz in side_frames(xh):

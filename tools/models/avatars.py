@@ -354,7 +354,7 @@ def translate(geo, off):
 # head's `head_<animal>_eye_l` / `_eye_r` nodes (origin at the eyeball's centre, -Z the eye's
 # forward, scaled by the eye's radius), turning the balls to look about and the lids to blink.
 
-SIDES = 16
+SIDES = 12
 ANG = tuple(180.0 * i / (SIDES // 2) for i in range(SIDES // 2 + 1))
 # How wide open each animal's eyes rest: the upper and the lower lid's edge, in degrees above
 # and below the eye's forward point (src/assets.rs ANIMALS keeps the same table for the game;
@@ -363,8 +363,10 @@ LIDS = {"wolf": (40, 44), "cat": (46, 48), "deer": (54, 52), "fox": (36, 44), "b
         "rabbit": (58, 54), "owl": (62, 58), "boar": (40, 42), "dragon": (42, 46)}
 # Lids closed: their edges meet this far below the forward point.
 LID_SHUT = -5
-# The skull surfaces shade smoothly across edges bending less than this (degrees).
-SMOOTH = 40.0
+# The skull surfaces shade smoothly across edges bending less than this (degrees): low, so
+# their facets show as the rest of the game's; the eyes stay round.
+SMOOTH = 25.0
+SMOOTH_EYES = 40.0
 
 
 def head_ring(z, cy, hw, hh, n=2.4, wt=1.0, wb=1.0):
@@ -391,7 +393,7 @@ def circle(c, n, r, k=12, phase=0.0, uhint=Y):
             for i in range(k)]
 
 
-def torus(geo, c, n, R, r, mat="accent", segs=18, sides=8, uhint=Y, arc=(0.0, 360.0)):
+def torus(geo, c, n, R, r, mat="accent", segs=12, sides=6, uhint=Y, arc=(0.0, 360.0)):
     """A ring (or an arc of one) of radius R, r thick, around c in the plane with normal n."""
     n = norm(n)
     a = cross(uhint, n)
@@ -480,7 +482,7 @@ class Head:
         p, n = raycast([self.g], add(c, mul(d, 0.5)), mul(d, -1))
         return add(p, mul(n, lift)), n
 
-    def flow(self, guide, w=0.005, step=0.01):
+    def flow(self, guide, w=0.005, step=0.02):
         """A light line over the skull through guide = [(z, angle)]: angle in degrees around
         the head's long axis from the top (+Y) towards +X; 0 everywhere puts one line on the
         mirror plane, otherwise it is drawn on the +X half and mirrored."""
@@ -499,7 +501,7 @@ class Head:
         F = self.eye_fwd
         R = norm(cross(Y, F))  # inwards (-X) for the right eye
         path = []
-        n = 5
+        n = 3
         for i in range(n + 1):
             t = i / n
             a = math.radians(span[0] + (span[1] - span[0]) * t)
@@ -507,7 +509,7 @@ class Head:
             d = add(mul(R, math.cos(a)), mul(Y, math.sin(a) - drop))
             p = add(add(self.eye_c, mul(d, lift * r)), mul(F, fwd * r))
             path.append(project([self.g], p, self.eye_out, thick * r * 0.45))
-        tube(self.h, path, [thick * r] * len(path), sides=6, tip=False, mat=mat)
+        tube(self.h, path, [thick * r] * len(path), sides=4, tip=False, mat=mat)
 
     def nose(self, hw, hh, depth=0.012, mat="accent", dy=0.0, k=8):
         """A rounded nose blob on the snout's end cap."""
@@ -546,13 +548,13 @@ class Head:
         """A headset's band over the crown at section z: a tube lying on the skull from the top
         down to `span[1]` degrees each side, a light line running along its top."""
         path, tops = [], []
-        k = 6
+        k = 4
         for i in range(k + 1):
             a = span[0] + (span[1] - span[0]) * i / k
             p, n = self.surface(z, a, r * lift)
             path.append(p)
             tops.append((add(p, mul(n, r)), n))
-        tube(self.h, path, [r] * len(path), sides=6, tip=False, mat=mat)
+        tube(self.h, path, [r] * len(path), sides=4, tip=False, mat=mat)
         flow_strip(self.h, tops, flow_w)
 
     def earcup(self, y, z, r=0.03, depth=0.022, ring=True):
@@ -561,11 +563,11 @@ class Head:
         p, n = raycast([self.g], (0.5, y, z), NX)
         n = norm((1.0, n[1] * 0.3, n[2] * 0.3))
         c0 = sub(p, mul(n, 0.006))
-        loft(self.h, [circle(c0, n, r, 10), circle(add(c0, mul(n, depth * 0.85)), n, r, 10),
-                      circle(add(c0, mul(n, depth)), n, r * 0.8, 10)], cap0=None)
+        loft(self.h, [circle(c0, n, r, 8), circle(add(c0, mul(n, depth * 0.85)), n, r, 8),
+                      circle(add(c0, mul(n, depth)), n, r * 0.8, 8)], cap0=None)
         if ring:
-            loft(self.h, [circle(add(c0, mul(n, depth * 0.45)), n, r * 1.04, 10),
-                          circle(add(c0, mul(n, depth * 0.7)), n, r * 1.04, 10)], mat="accent",
+            loft(self.h, [circle(add(c0, mul(n, depth * 0.45)), n, r * 1.04, 8),
+                          circle(add(c0, mul(n, depth * 0.7)), n, r * 1.04, 8)], mat="accent",
                  cap0=None, cap1=None)
         plate(self.h, add(c0, mul(n, depth)), n, L.ngon(0, 0, r * 0.4, 8), h=0.003, depth=0.006)
 
@@ -573,7 +575,7 @@ class Head:
         """Goggles pushed up on the forehead: two accent rims (and dark lenses) lying on the skull
         at section z, `angle` degrees out from the top, joined by a bridge, on a strap."""
         p, n = self.surface(z, angle, r * 0.9)
-        torus(self.h, p, n, R, r, segs=12, sides=5)
+        torus(self.h, p, n, R, r, segs=10, sides=4)
         if lens:
             plate(self.h, sub(p, mul(n, r * 0.3)), n, L.ngon(0, 0, R - r * 0.5, 12), "body",
                   h=0.0, depth=0.004)
@@ -590,7 +592,7 @@ class Head:
         each eyeball's centre, a bridge between them and temples back to the ears."""
         er = self.eye_r
         c = add(self.eye_c, mul(self.eye_fwd, out * er))
-        torus(self.h, c, self.eye_fwd, R * er, r * er, segs=14, sides=4)
+        torus(self.h, c, self.eye_fwd, R * er, r * er, segs=10, sides=4)
         inner = add(c, mul(norm(cross(Y, self.eye_fwd)), R * er))
         mid = (0.0, inner[1] + 0.004, inner[2] + 0.003)
         tube(self.h, [mid, inner], [r * er * 0.8, r * er * 0.8], sides=4, tip=False, mat="accent")
@@ -663,14 +665,16 @@ def eyeball(slit=False):
     team-coloured iris, a pale sclera and a white glint up and to the left."""
     g = L.Geo()
     pupil = "eyes" if slit else "body"
-    steps = [(7, pupil), (17, pupil), (25, "eyes"), (38, "eyes"), (49, "sclera"),
-             (70, "sclera"), (95, "sclera"), (125, "sclera")]
+    # (12 sides, and the back sunk in the skull coarse: every player has two.)
+    sides = 12
+    steps = [(17, pupil), (25, "eyes"), (38, "eyes"), (49, "sclera"), (75, "sclera"),
+             (110, "sclera")]
     rings = []
     for th, _ in steps:
         t = math.radians(th)
-        rings.append([(math.sin(t) * math.cos(math.radians(360.0 * i / SIDES)),
-                       math.sin(t) * math.sin(math.radians(360.0 * i / SIDES)), -math.cos(t))
-                      for i in range(SIDES)])
+        rings.append([(math.sin(t) * math.cos(math.radians(360.0 * i / sides)),
+                       math.sin(t) * math.sin(math.radians(360.0 * i / sides)), -math.cos(t))
+                      for i in range(sides)])
     rings.append([(0.0, 0.0, 1.0)])
     loft(g, rings, mat=[m for _, m in steps], cap0=pupil, cap1=None)
     if slit:
@@ -699,9 +703,9 @@ def eyelid():
     outer strip beside it glow in the team colour."""
     g = L.Geo()
     R0, R1 = 1.05, 1.11
-    lams = [0, 7, 30, 60, 90, 118]
-    inner_lams = [0, 30, 118]
-    psis = list(range(0, 181, 20))
+    lams = [0, 7, 45, 85, 118]
+    inner_lams = [0, 60, 118]
+    psis = list(range(0, 181, 30))
 
     def P(psi, lam, R):
         s, c = math.sin(math.radians(psi)), math.cos(math.radians(psi))
@@ -927,7 +931,7 @@ def head_owl():
               eye=(0.05, 0.03, -0.01, 4), radius=0.045, sink=0.5, diverge=0.05)
     # The facial disc: a pale ruff of feathers ringing each eye, meeting at the V brow.
     torus(hd.h, sub(hd.eye_c, mul(hd.eye_fwd, 0.2 * hd.eye_r)), hd.eye_fwd, hd.eye_r * 1.65,
-          hd.eye_r * 0.42, mat="fur_light", segs=14, sides=6)
+          hd.eye_r * 0.42, mat="fur_light", segs=12, sides=5)
     hd.brow(thick=0.24, inner=0.4, outer=-0.1, lift=1.4)
     # A small hooked beak below the eyes.
     c, hw, hh = hd.front
@@ -1554,7 +1558,8 @@ def main():
             bad = g.mirror_errors()
             if bad:
                 raise RuntimeError("%s is not X mirror symmetric: %s" % (name, bad[:5]))
-        smooth = SMOOTH if name.startswith(("head_", "eyeball")) or name == "eyelid" else None
+        smooth = (SMOOTH if name.startswith("head_") else
+                  SMOOTH_EYES if name.startswith("eyeball") or name == "eyelid" else None)
         L.make_object(name, g, smooth=smooth)
         mn = [min(p[i] for p in g.positions()) for i in range(3)]
         mx = [max(p[i] for p in g.positions()) for i in range(3)]
