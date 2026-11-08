@@ -51,6 +51,7 @@ struct Sounds {
     mega_win: Handle<AudioSource>,
     mirror_ping: Handle<AudioSource>,
     jump_pad: Handle<AudioSource>,
+    dash: Handle<AudioSource>,
     charge_loop: Handle<AudioSource>,
     charge_full: Handle<AudioSource>,
     beam_fire: Handle<AudioSource>,
@@ -108,7 +109,7 @@ impl Plugin for SoundPlugin {
             .add_systems(Startup, load)
             .add_systems(
                 Update,
-                ((play_events, footsteps), cap_mix)
+                ((play_events, footsteps, dash_ready), cap_mix)
                     .chain()
                     .run_if(resource_exists::<Game>),
             )
@@ -151,6 +152,7 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
         mega_win: s("mega_win"),
         mirror_ping: s("mirror_ping"),
         jump_pad: s("jump_pad"),
+        dash: s("dash"),
         charge_loop: s("charge_loop"),
         charge_full: s("charge_full"),
         beam_fire: s("beam_fire"),
@@ -584,10 +586,10 @@ fn play_events(
                 play(
                     &mut commands,
                     gain,
-                    &sounds.jump_pad,
+                    &sounds.dash,
                     (!mine).then_some(pos),
-                    if mine { 0.4 } else { 0.6 },
-                    0.7,
+                    if mine { 0.7 } else { 1.0 },
+                    1.0,
                 )
             }
             // A thud, lower and louder the harder the landing.
@@ -783,6 +785,28 @@ fn play_events(
             _ => {}
         }
     }
+}
+
+/// A soft tick when the local player's dash is ready again.
+fn dash_ready(
+    mut commands: Commands,
+    game: Res<Game>,
+    sounds: Res<Sounds>,
+    settings: Option<Res<Settings>>,
+    mut waiting: Local<bool>,
+) {
+    let Some(p) = game
+        .me
+        .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
+    else {
+        return;
+    };
+    let wait = p.dash_ready > 0.0 && p.respawn.is_none();
+    if *waiting && !wait && p.respawn.is_none() {
+        let gain = crate::settings::sound_gain(settings.as_deref());
+        play(&mut commands, gain, &sounds.tick, None, 0.3, 1.4);
+    }
+    *waiting = wait;
 }
 
 fn footsteps(

@@ -1,13 +1,15 @@
 #!/bin/bash
-# Derives the special weapons' fire sounds from the blasters' (assets/sounds/laser_fire*.ogg,
-# made by gen_sfx.py) with ffmpeg: pitched, filtered and with other sounds mixed in, one for
-# each team's blaster sound (`_red`: Red's).
+# Derives sounds from others (assets/sounds/*.ogg, made by gen_sfx.py) with ffmpeg: pitched,
+# filtered and with other sounds mixed in.
 #
+# The special weapons' fire sounds, from each team's blaster sound (`_red`: Red's):
 # - ricochet_fire: lower, with a mirror ping's metallic ring trailing it.
 # - dual_fire: higher, lighter and shorter.
 # - charge_tap: narrower, with a wavering slice of the charge gun's hum after it.
 #
-#     tools/gen_weapon_sfx.sh
+# - dash: a jump pad's launch, lower and shorter, under a rush of air.
+#
+#     tools/gen_derived_sfx.sh
 set -euo pipefail
 cd "$(dirname "$0")/../assets/sounds"
 
@@ -41,3 +43,13 @@ for team in "" _red; do
             vibrato=f=9:d=0.35,volume=0.45,adelay=40[h];
         [b][h]amix=inputs=2:normalize=0,alimiter=limit=0.9[out]" charge_loop
 done
+
+# (The rush: pink noise swelling and dying away, band-passed.)
+ffmpeg -v error -y -i jump_pad.ogg -f lavfi -i "anoisesrc=color=pink:duration=0.4:seed=7" \
+    -filter_complex "
+        [0:a]$norm,asetrate=44100*0.75,aresample=44100,highpass=f=200,
+            atrim=0:0.45,afade=t=out:st=0.2:d=0.25,volume=0.8[b];
+        [1:a]$norm,bandpass=f=1400:width_type=o:w=1.5,
+            afade=t=in:d=0.08,afade=t=out:st=0.12:d=0.28,volume=0.9[n];
+        [b][n]amix=inputs=2:normalize=0,alimiter=limit=0.9[out]" \
+    -map '[out]' -ac 1 -ar 44100 -c:a libvorbis -q:a 5 dash.ogg

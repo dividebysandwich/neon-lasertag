@@ -11,6 +11,7 @@ run. Loudness is set per sound as an RMS level in the `SOUNDS` table at the bott
 script (fire/hits around -16 dBFS, footsteps -27 dBFS); peaks are softly limited below full
 scale. Tweak the generator functions or levels there and rerun.
 
-`tools/gen_weapon_sfx.sh` derives the special weapons' fire sounds (`ricochet_fire`,
-`dual_fire`, `charge_tap`, each with a `_red` twin) from the blasters' with ffmpeg filters
-(pitch, filtering, other sounds mixed in). Rerun it after regenerating `laser_fire*`.
+`tools/gen_derived_sfx.sh` derives the special weapons' fire sounds (`ricochet_fire`,
+`dual_fire`, `charge_tap`, each with a `_red` twin) from the blasters', and `dash` from
+`jump_pad`, with ffmpeg filters (pitch, filtering, other sounds mixed in). Rerun it after
+regenerating those.

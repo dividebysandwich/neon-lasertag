@@ -32,6 +32,8 @@ pub struct Look {
     pub crouch_on: bool,
     /// Zooming in with the prism lance: 0 not at all, 1 all the way (eased).
     pub zoom: f32,
+    /// Dashing: 0 to 1 (eased), widening the view.
+    pub dash: f32,
     /// The mouse wheel held as a button (rolled up, not down since: `WheelState`).
     pub wheel: bool,
     /// Dual pistols: the left one's turn to fire (they take turns, a click each).
@@ -244,15 +246,25 @@ pub fn camera_bundle() -> impl Bundle {
 const ZOOM: f32 = 2.5;
 const ZOOM_TIME: f32 = 0.06;
 
-/// The field of view from the settings (`Settings::fov`), narrowed by the zoom.
+/// How much a dash widens the view (rad), and how quickly (time constant, s).
+const DASH_FOV: f32 = 0.1;
+const DASH_FOV_TIME: f32 = 0.06;
+
+/// The field of view from the settings (`Settings::fov`), narrowed by the zoom and widened
+/// while dashing (with the head bob, `Settings::head_bob`).
 fn apply_fov(
     settings: Res<Settings>,
-    look: Res<Look>,
+    mut look: ResMut<Look>,
+    mover: Res<Mover>,
+    time: Res<Time>,
     mut cams: Query<&mut Projection, With<MainCamera>>,
 ) {
+    let dashing = mover.valid && mover.moves.dash_left > 0.0 && settings.head_bob;
+    let k = 1.0 - (-time.delta_secs() / DASH_FOV_TIME).exp();
+    look.dash += (if dashing { 1.0 } else { 0.0 } - look.dash) * k;
     let fov = settings.fov.to_radians();
     let zoomed = 2.0 * ((fov / 2.0).tan() / ZOOM).atan();
-    let want = fov + (zoomed - fov) * look.zoom;
+    let want = fov + (zoomed - fov) * look.zoom + DASH_FOV * look.dash;
     for mut p in &mut cams {
         let off = matches!(&*p, Projection::Perspective(pp) if (pp.fov - want).abs() > 1e-4);
         if off && let Projection::Perspective(pp) = &mut *p {
