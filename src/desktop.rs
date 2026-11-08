@@ -1,7 +1,7 @@
 //! Playing on a flat screen: mouse look, WASD, Ctrl crouches, left button fires, right button (or G) holds a
 //! grenade and throws it when let go. Esc opens the in-game menu (src/pause.rs); while it or
 //! the end of match screen (src/endscreen.rs) is up, the mouse is free and the game ignores
-//! the input.
+//! the input; so does it while frozen (F11, src/freeze.rs).
 
 use bevy::camera::Hdr;
 use bevy::core_pipeline::tonemapping::Tonemapping;
@@ -347,14 +347,16 @@ fn read_input(
     models: Res<Models>,
     time: Res<Time<Fixed>>,
     mover: Res<Mover>,
-    overlays: Res<Overlays>,
+    (overlays, frozen): (Res<Overlays>, Res<crate::freeze::Frozen>),
     settings: Res<Settings>,
     mut sway: ResMut<Sway>,
     real: Res<Time>,
     mut arc: ResMut<ThrowArc>,
 ) {
     let Some(game) = game else { return };
+    // (Frozen: the player stands as they were.)
     let grabbed = !overlays.any()
+        && !frozen.0
         && cursor
             .single()
             .is_ok_and(|c| c.grab_mode != CursorGrabMode::None);

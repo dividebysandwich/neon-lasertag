@@ -26,6 +26,7 @@ pub mod desktop;
 pub mod endscreen;
 pub mod eyes;
 pub mod features;
+pub mod freeze;
 pub mod game;
 #[cfg(all(feature = "glvr", target_os = "linux"))]
 pub mod glvr;
@@ -342,6 +343,7 @@ pub fn run() {
                 options::OptionsPlugin,
                 reflections::ReflectionsPlugin,
                 endscreen::EndScreenPlugin,
+                freeze::FreezePlugin,
             ));
         }
     }
@@ -382,7 +384,8 @@ pub fn run() {
     if let Some((path, times)) = args.screenshot.clone() {
         app.add_systems(
             Update,
-            move |mut commands: Commands, time: Res<Time>, mut done: Local<usize>| {
+            // (On the wall clock: the game's stops while frozen, src/freeze.rs.)
+            move |mut commands: Commands, time: Res<Time<Real>>, mut done: Local<usize>| {
                 if *done < times.len() && time.elapsed_secs() > times[*done] {
                     let file = if times.len() > 1 {
                         path.replace(".png", &format!("_{}.png", *done))
@@ -400,7 +403,7 @@ pub fn run() {
     if let Some(secs) = args.quit_after {
         app.add_systems(
             Update,
-            move |time: Res<Time>, mut exit: MessageWriter<AppExit>| {
+            move |time: Res<Time<Real>>, mut exit: MessageWriter<AppExit>| {
                 if time.elapsed() > Duration::from_secs_f32(secs) {
                     exit.write(AppExit::Success);
                 }

@@ -137,7 +137,7 @@ impl Tracks {
 
 /// The track playing (an index into `Tracks::files`), and whether it loops.
 #[derive(Component)]
-struct Music(usize, bool);
+pub(crate) struct Music(usize, bool);
 
 /// The mood the music is in, whether its track for it has started, and the last track played.
 #[derive(Resource, Default)]

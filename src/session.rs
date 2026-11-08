@@ -15,7 +15,7 @@
 //! room (`warp-room`), in front of the first turret (`warp-turret`) or into the first pocket
 //! (`warp-pocket`); in front of the nearest mirror (`warp-mirror`) jump pad (`warp-pad`) or laser gate (`warp-gate`); turning the flat screen's view (`yaw=90`, `pitch=-20`, in degrees); holding the trigger
 //! down for S seconds (`fire=S`); putting up a carried barrier (`barrier`); arena events (`blackout`, `overdrive`) and the last
-//! minute's double points (`double`).
+//! minute's double points (`double`); freezing the game (`freeze`).
 
 use bevy::prelude::*;
 use lt_sim::bots::Difficulty;
@@ -578,6 +578,12 @@ fn dev_script(
                 }
             });
         }
+        // Freezing an offline game (as F11; the script waits while frozen).
+        "freeze" => commands.queue(|w: &mut World| {
+            if let Some(mut f) = w.get_resource_mut::<crate::freeze::Frozen>() {
+                f.1 = true;
+            }
+        }),
         a if a.starts_with("play") => {
             let d = a
                 .strip_prefix("play-")

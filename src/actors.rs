@@ -699,14 +699,21 @@ fn sync_players(
             place_part(v.arms[i][1], fore, !me);
         }
         let chest_yaw = if mine { local.cmd.yaw } else { yaw };
-        let legs = v
-            .gait
-            .update(real.delta_secs(), base, chest.translation, chest_yaw);
-        place_part(v.pelvis, legs.pelvis, !me || vr);
-        for i in 0..2 {
-            place_part(v.legs[i][0], legs.thigh[i], !me || vr);
-            place_part(v.legs[i][1], legs.shin[i], !me || vr);
-            place_part(v.legs[i][2], legs.boot[i], !me || vr);
+        // (Held as they are while the game is paused: the gait eases with the time passed.)
+        if real.delta_secs() > 0.0 {
+            let legs = v
+                .gait
+                .update(real.delta_secs(), base, chest.translation, chest_yaw);
+            place_part(v.pelvis, legs.pelvis, !me || vr);
+            for i in 0..2 {
+                place_part(v.legs[i][0], legs.thigh[i], !me || vr);
+                place_part(v.legs[i][1], legs.shin[i], !me || vr);
+                place_part(v.legs[i][2], legs.boot[i], !me || vr);
+            }
+        } else {
+            for e in std::iter::once(v.pelvis).chain(v.legs.iter().flatten().copied()) {
+                set_vis(&mut vis, e, !me || vr);
+            }
         }
         set_vis(&mut vis, v.gun, alive && gun_hand.is_some());
         set_vis(&mut vis, v.blaster, p.weapon != Weapon::Shotgun);
