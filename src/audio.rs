@@ -23,6 +23,11 @@ struct Sounds {
     /// Blasters firing: Blue's and Red's sound different.
     fire: Handle<AudioSource>,
     fire_red: Handle<AudioSource>,
+    /// The ricochet rifle's, dual pistols' and charge gun's (a plain shot) firing: Blue's and
+    /// Red's each (tools/gen_weapon_sfx.sh).
+    ricochet: [Handle<AudioSource>; 2],
+    dual: [Handle<AudioSource>; 2],
+    charge_tap: [Handle<AudioSource>; 2],
     shotgun: Handle<AudioSource>,
     deny: Handle<AudioSource>,
     /// The local player hit, and someone else hit.
@@ -119,6 +124,9 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
     commands.insert_resource(Sounds {
         fire: s("laser_fire"),
         fire_red: s("laser_fire_red"),
+        ricochet: [s("ricochet_fire"), s("ricochet_fire_red")],
+        dual: [s("dual_fire"), s("dual_fire_red")],
+        charge_tap: [s("charge_tap"), s("charge_tap_red")],
         lance_fire: s("prismrifle"),
         headshot: s("headshot"),
         sensor_pulse: s("sensor_pulse"),
@@ -390,14 +398,15 @@ fn play_events(
                     .find(|p| p.id == player)
                     .map(|p| p.weapon);
                 let shotgun = weapon == Some(Weapon::Shotgun);
-                let sound = if shotgun {
-                    &sounds.shotgun
-                } else if weapon == Some(Weapon::Lance) {
-                    &sounds.lance_fire
-                } else if red {
-                    &sounds.fire_red
-                } else {
-                    &sounds.fire
+                let team = red as usize;
+                let sound = match weapon {
+                    Some(Weapon::Shotgun) => &sounds.shotgun,
+                    Some(Weapon::Lance) => &sounds.lance_fire,
+                    Some(Weapon::Ricochet) => &sounds.ricochet[team],
+                    Some(Weapon::Dual) => &sounds.dual[team],
+                    Some(Weapon::Charge) => &sounds.charge_tap[team],
+                    _ if red => &sounds.fire_red,
+                    _ => &sounds.fire,
                 };
                 play_capped(
                     &mut commands,
