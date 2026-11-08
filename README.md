@@ -3,7 +3,7 @@
 Red vs Blue lasertag in procedurally generated neon arenas, for VR headsets (OpenXR) and the
 flat screen. Built with Bevy.
 
-<img width="1916" height="1051" alt="image" src="https://github.com/user-attachments/assets/1a696844-08a1-4cbf-84e2-67545a2d226c" />
+<img width="1692" height="1335" alt="image" src="https://github.com/user-attachments/assets/915d1143-f502-45e2-b203-ed93befbd5e4" />
 
 ## Getting started
 
