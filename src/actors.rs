@@ -36,6 +36,13 @@ struct AvatarParts {
     head: Entity,
     /// Floating gloves, left and right.
     hands: [Entity; 2],
+    /// The body between them, posed by `crate::rig`: the neck, the pelvis, each arm's upper
+    /// arm and forearm and each leg's thigh, shin and boot (left, right), and the legs' gait.
+    neck: Entity,
+    pelvis: Entity,
+    arms: [[Entity; 2]; 2],
+    legs: [[Entity; 3]; 2],
+    gait: crate::rig::Gait,
     /// Chest lights (hits left).
     bars: Vec<(Entity, u8)>,
     /// The weapon in hand: the blaster or the shotgun (children of `gun`), and their hit
@@ -320,6 +327,20 @@ fn spawn_avatar(
         );
         h
     });
+    let mut part = |model: &Model| {
+        let e = commands
+            .spawn((Transform::IDENTITY, Visibility::default(), ChildOf(root)))
+            .id();
+        spawn_dual(
+            commands, e, model, palette, team, &ghost_mat, &mut solid, &mut ghost,
+        );
+        e
+    };
+    let b = &models.body;
+    let neck = part(&b.neck);
+    let pelvis = part(&b.pelvis);
+    let arms = [0, 1].map(|_| [part(&b.upper_arm), part(&b.forearm)]);
+    let legs = [0, 1].map(|_| [part(&b.thigh), part(&b.shin), part(&b.boot)]);
     let gun = commands
         .spawn((Transform::IDENTITY, Visibility::default()))
         .id();
@@ -420,6 +441,11 @@ fn spawn_avatar(
         body,
         head,
         hands,
+        neck,
+        pelvis,
+        arms,
+        legs,
+        gait: default(),
         bars,
         gun,
         blaster,
@@ -607,6 +633,38 @@ fn sync_players(
                 t.translation = hands[i].pos;
                 t.rotation = hands[i].rot;
             }
+        }
+        // The body between the parts. One's own legs show in VR, looking down; arms reaching
+        // from a chest one can't see would not look right.
+        let mut place_part = |e: Entity, t: Transform, on: bool| {
+            set_vis(&mut vis, e, on);
+            if let Ok(mut tr) = transforms.get_mut(e) {
+                *tr = t;
+            }
+        };
+        let chest = Transform::from_translation(lt_sim::sim::chest_top(head.pos, head.rot))
+            .with_rotation(Quat::from_rotation_y(yaw));
+        let neck = crate::rig::neck(
+            lt_sim::sim::neck_of(head.pos, head.rot),
+            chest.translation,
+            head.rot,
+        );
+        place_part(v.neck, neck, !me);
+        for (i, side) in [-1.0, 1.0].into_iter().enumerate() {
+            let glove = Transform::from_translation(hands[i].pos).with_rotation(hands[i].rot);
+            let [upper, fore] = crate::rig::arm(&chest, side, &glove);
+            place_part(v.arms[i][0], upper, !me);
+            place_part(v.arms[i][1], fore, !me);
+        }
+        let chest_yaw = if mine { local.cmd.yaw } else { yaw };
+        let legs = v
+            .gait
+            .update(real.delta_secs(), base, chest.translation, chest_yaw);
+        place_part(v.pelvis, legs.pelvis, !me || vr);
+        for i in 0..2 {
+            place_part(v.legs[i][0], legs.thigh[i], !me || vr);
+            place_part(v.legs[i][1], legs.shin[i], !me || vr);
+            place_part(v.legs[i][2], legs.boot[i], !me || vr);
         }
         set_vis(&mut vis, v.gun, alive && gun_hand.is_some());
         set_vis(&mut vis, v.blaster, p.weapon != Weapon::Shotgun);
