@@ -333,9 +333,10 @@ def glow_band(geo, f, pts, closed, d0, d1, mat="glow"):
 
 
 def strip(geo, f, pts, w, closed=False, glow=(0.09, 0.09), mat="accent", h=ACCENT_H,
-          glow_mat="glow", caps=True):
+          glow_mat="glow", caps=True, sides=True):
     """An accent strip of width w along a polyline, standing h proud of frame f, with glow
-    halos of width glow=(left, right) lying on the surface beside it."""
+    halos of width glow=(left, right) lying on the surface beside it. `sides=False` leaves out
+    its edges' thin side faces (seen only edge on: a third of the triangles)."""
     L = offset_line(pts, w / 2, closed)
     R = offset_line(pts, -w / 2, closed)
     s = _arclen(pts, closed)
@@ -347,6 +348,8 @@ def strip(geo, f, pts, w, closed=False, glow=(0.09, 0.09), mat="accent", h=ACCEN
         ln = f.d(*_left(d))
         geo.face([f.p(*R[i], h), f.p(*R[j], h), f.p(*L[j], h), f.p(*L[i], h)], mat,
                  [(s[i], 0), (s[i + 1], 0), (s[i + 1], 1), (s[i], 1)], want=f.N)
+        if not sides:
+            continue
         geo.face([f.p(*L[i]), f.p(*L[j]), f.p(*L[j], h), f.p(*L[i], h)], mat, want=ln)
         geo.face([f.p(*R[i]), f.p(*R[j]), f.p(*R[j], h), f.p(*R[i], h)], mat, want=mul(ln, -1))
     if not closed and caps:

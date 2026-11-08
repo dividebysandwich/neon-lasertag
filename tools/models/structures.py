@@ -76,6 +76,115 @@ class Solid:
         return [(x, self.y0, z) for x, z in self.poly]
 
 
+# Neon collected while decorating, and put on once a structure's solids are all done, chained
+# into long strips: bands along vertical faces at one height (round a whole tower), lines along
+# slab edges (round a whole deck): one strip mitred round a curve, no seams where the segments
+# meet. They are flat (no side faces 8 mm deep, only ever seen edge on): most of the neon is
+# these, and that leaves out two thirds of their triangles.
+BANDS = []  # (a, b, n, y, w, glow): a band on the vertical face over a-b (x, z), n its outside
+RIMS = []  # (a, b, y, inset, w, under): a line on a slab's top (or underside) along a-b
+
+
+def band(s, i, y, w, glow):
+    a, b, n, _ = s.side(i)
+    BANDS.append((a, b, n, y, w, glow))
+
+
+def rim(a, b, y, inset, w, under=False):
+    RIMS.append((a, b, y, inset, w, under))
+
+
+def chains(pieces, start, end, kind):
+    """Pieces joined end to start into chains (lists of pieces) of the same kind; and whether
+    each closes on itself."""
+    by_start, by_end = {}, {}
+    for k, p in enumerate(pieces):
+        by_start.setdefault((kind(p), start(p)), []).append(k)
+        by_end.setdefault((kind(p), end(p)), []).append(k)
+    used = set()
+    out = []
+    for k0 in range(len(pieces)):
+        if k0 in used:
+            continue
+        used.add(k0)
+        chain = [k0]
+        closed = False
+        while True:
+            key = (kind(pieces[chain[-1]]), end(pieces[chain[-1]]))
+            nxt = [k for k in by_start.get(key, []) if k not in used]
+            if not nxt:
+                closed = key == (kind(pieces[k0]), start(pieces[k0])) and len(chain) > 2
+                break
+            used.add(nxt[0])
+            chain.append(nxt[0])
+        if not closed:
+            while True:
+                key = (kind(pieces[chain[0]]), start(pieces[chain[0]]))
+                prv = [k for k in by_end.get(key, []) if k not in used]
+                if not prv:
+                    break
+                used.add(prv[0])
+                chain.insert(0, prv[0])
+        out.append(([pieces[k] for k in chain], closed))
+    return out
+
+
+def q2(p):
+    return (int(round(p[0] * 1000)), int(round(p[1] * 1000)))
+
+
+def emit_bands(g):
+    kind = lambda p: (round(p[3], 4), p[4], p[5])
+    for chain, closed in chains(BANDS, lambda p: q2(p[0]), lambda p: q2(p[1]), kind):
+        y, w, glow = chain[0][3], chain[0][4], chain[0][5]
+        pts = [c[0] for c in chain] + ([] if closed else [chain[-1][1]])
+        segs = [c[2] for c in chain]
+        n = len(pts)
+        # Each point's way out, mitred between the faces meeting there.
+        mit = []
+        for k in range(n):
+            if closed:
+                n1, n2 = segs[k - 1], segs[k]
+            else:
+                n1 = segs[max(k - 1, 0)]
+                n2 = segs[min(k, len(segs) - 1)]
+            d = 1.0 + n1[0] * n2[0] + n1[1] * n2[1]
+            mit.append(((n1[0] + n2[0]) / d, (n1[1] + n2[1]) / d))
+        hw = w / 2
+        P = lambda k, out, dy: (pts[k % n][0] + mit[k % n][0] * out, y + dy,
+                                pts[k % n][1] + mit[k % n][1] * out)
+        h, gh = L.ACCENT_H, L.GLOW_H
+        s_len = [0.0]
+        for k in range(len(segs)):
+            a, b = pts[k], pts[(k + 1) % n]
+            s_len.append(s_len[-1] + math.hypot(b[0] - a[0], b[1] - a[1]))
+        for k in range(len(segs)):
+            j = k + 1
+            nn = (segs[k][0], 0, segs[k][1])
+            u0, u1 = s_len[k], s_len[k + 1]
+            g.face([P(k, h, -hw), P(j, h, -hw), P(j, h, hw), P(k, h, hw)], "accent",
+                   [(u0, 0), (u1, 0), (u1, 1), (u0, 1)], want=nn)
+            for sv in (1, -1):
+                g.face([P(k, gh, sv * hw), P(j, gh, sv * hw), P(j, gh, sv * (hw + glow)),
+                        P(k, gh, sv * (hw + glow))], "glow",
+                       [(u0, 0), (u1, 0), (u1, 1), (u0, 1)], want=nn)
+
+
+def emit_rims(g):
+    kind = lambda p: (round(p[2], 4), p[3], p[4], p[5])
+    for chain, closed in chains(RIMS, lambda p: q2(p[0]), lambda p: q2(p[1]), kind):
+        y, inset, w, under = chain[0][2], chain[0][3], chain[0][4], chain[0][5]
+        pts = [c[0] for c in chain] + ([] if closed else [chain[-1][1]])
+        if under:
+            f = Frame((0, y, 0), L.X, L.Z)  # N = -Y; (u, v) = (x, z): inside on the left
+            uv, d = [(p[0], p[1]) for p in pts], inset
+        else:
+            f = Frame((0, y, 0), L.X, L.NZ)  # N = +Y; (u, v) = (x, -z): inside on the right
+            uv, d = [(p[0], -p[1]) for p in pts], -inset
+        centre = L.offset_line(uv, d, closed)
+        L.strip(g, f, centre, w, closed=closed, glow=(0.05, 0.05), caps=False, sides=False)
+
+
 def face_key(pts):
     return frozenset(qkey(p) for p in pts)
 
@@ -86,6 +195,8 @@ def edge_key(a, b, y):
 
 def build(name, spec):
     g = L.Geo()
+    BANDS.clear()
+    RIMS.clear()
     solids = [Solid(d) for d in spec["solids"]]
     # Faces two solids share are inside: left out.
     count = {}
@@ -119,6 +230,8 @@ def build(name, spec):
             if exposed(q):
                 g.face(q, "body", want=(nrm[0], 0, nrm[1]))
         decorate(g, s, exposed, slab_edges)
+    emit_bands(g)
+    emit_rims(g)
     for lamp in spec["lamps"]:
         lamp_housing(g, tuple(lamp["pos"]), tuple(lamp["dir"]))
     return g
@@ -136,14 +249,13 @@ def decorate(g, s, exposed, slab_edges):
         if s.tag == "wall":
             if is_face:
                 if hv > 0.08:
-                    line(g, f, (-hu, hv - INSET), (hu, hv - INSET), W, glow=0.06, caps=False)
+                    band(s, i, s.y1 - INSET, W, 0.06)
                 if s.y0 > 0.01 and hv > 0.08:
-                    line(g, f, (-hu, -hv + INSET), (hu, -hv + INSET), W, glow=0.06, caps=False)
+                    band(s, i, s.y0 + INSET, W, 0.06)
                 if s.y0 < 0.01 and h > 0.5:
-                    line(g, f, (-hu, 0.14 - hv), (hu, 0.14 - hv), 0.025, glow=0.05, caps=False)
+                    band(s, i, s.y0 + 0.14, 0.025, 0.05)
                 if s.y0 < STOREY - 0.6 and s.y1 > STOREY + 0.6:
-                    v = STOREY - 0.3 - f.o[1]
-                    line(g, f, (-hu, v), (hu, v), 0.03, glow=0.07, caps=False)
+                    band(s, i, STOREY - 0.3, 0.03, 0.07)
                 # Over a doorway in a tall wall: chevrons pointing down at it.
                 if s.y0 > 2.0 and hv > 0.8 and hu > 0.5:
                     for k in range(3):
@@ -159,19 +271,19 @@ def decorate(g, s, exposed, slab_edges):
             if i == s.front:
                 line(g, f, (-hu + 0.05, hv - 0.035), (hu - 0.05, hv - 0.035), 0.03, glow=0.05)
             elif is_face:
-                line(g, f, (-hu, hv - 0.035), (hu, hv - 0.035), 0.025, glow=0.05, caps=False)
+                band(s, i, s.y1 - 0.035, 0.025, 0.05)
         elif s.tag in ("deck", "roof"):
             a, b, _, _ = s.side(i)
             if slab_edges.get(edge_key(a, b, s.y1), 0) < 2 and hu > 0.05:
-                line(g, f, (-hu, 0), (hu, 0), 0.03, glow=0.05, caps=False)
+                band(s, i, (s.y0 + s.y1) / 2, 0.03, 0.05)
         elif s.tag == "column":
-            for v in (-hv + 0.16, hv - 0.16):
-                line(g, f, (-hu, v), (hu, v), 0.03, glow=0.05, caps=False)
+            for y in (s.y0 + 0.16, s.y1 - 0.16):
+                band(s, i, y, 0.03, 0.05)
             if i % 2 == 0 and hv > 0.6 and hu > 0.06:
                 line(g, f, (0, -hv + 0.36), (0, hv - 0.36), 0.03, glow=0.05)
         elif s.tag == "rail":
             if is_face:
-                line(g, f, (-hu, hv - 0.04), (hu, hv - 0.04), 0.025, glow=0.04, caps=False)
+                band(s, i, s.y1 - 0.04, 0.025, 0.04)
     # Tops and undersides.
     if s.tag == "step":
         a, b, nrm, ln = s.side(s.front)
@@ -183,16 +295,16 @@ def decorate(g, s, exposed, slab_edges):
                 continue
             if slab_edges.get(edge_key(a, b, s.y1), 0) < 2 and exposed(s.top()):
                 # (Unbroken round a slab of many pieces.)
-                top_line(g, s, a, b, nrm, 0.08 if s.tag == "roof" else 0.05, 0.03, s.y1, pull=0)
+                rim(a, b, s.y1, 0.08 if s.tag == "roof" else 0.05, 0.03)
             if s.y0 > 0.01 and slab_edges.get(edge_key(a, b, s.y0), 0) < 2 and exposed(s.bottom()):
-                top_line(g, s, a, b, nrm, 0.06, 0.03, s.y0, under=True, pull=0)
+                rim(a, b, s.y0, 0.06, 0.03, under=True)
     if s.tag == "rail" and exposed(s.top()):
         # Along the rail's longest side, in the middle of its top.
         i = max(range(n), key=lambda k: s.side(k)[3])
         a, b, nrm, ln = s.side(i)
         width = min(abs((p[0] - a[0]) * nrm[0] + (p[1] - a[1]) * nrm[1]) for p in s.poly
                     if abs((p[0] - a[0]) * nrm[0] + (p[1] - a[1]) * nrm[1]) > 1e-3)
-        top_line(g, s, a, b, nrm, width / 2, 0.02, s.y1)
+        rim(a, b, s.y1, width / 2, 0.02)
 
 
 def top_line(g, s, a, b, nrm, inset, w, y, under=False, pull=None):
