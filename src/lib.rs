@@ -37,6 +37,7 @@ pub mod music;
 pub mod neonui;
 pub mod options;
 pub mod pause;
+pub mod rig;
 pub mod scenery;
 pub mod segtext;
 pub mod session;
