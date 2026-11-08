@@ -11,6 +11,7 @@ use std::collections::VecDeque;
 
 use bevy::math::Vec3;
 use lt_sim::collide::World;
+use lt_sim::hitbox::Part;
 use lt_sim::level::Level;
 use lt_sim::shot::{self, BoltTarget, Contact, Gun, HitClaim, Shot, Trigger};
 use lt_sim::sim::{Bolt, BoltSnap, PlayerSnap, Snapshot};
@@ -31,7 +32,11 @@ struct Flying {
 
 #[derive(Default)]
 pub struct Shots {
+    /// Infection under way (`Snapshot::infected`): a phantom's bolts are short and deadly.
+    pub infected: bool,
     gun: Gun,
+    /// Dual pistols' second.
+    gun2: Gun,
     /// Shots fired (`PlayerCmd::shot`), and the ammo each cost, until the server's state
     /// includes them.
     seq: u32,
@@ -82,34 +87,77 @@ impl Shots {
         let owed: u16 = self.costs.iter().map(|c| c.1).sum();
         self.gun.ammo = me.ammo.saturating_sub(owed);
         self.gun.rapid = me.rapid;
-        self.gun.shotgun = me.shotgun;
-        self.gun.charge = me.charge;
+        self.gun.weapon = me.weapon;
         self.gun.cooldown = me.cooldown;
         self.gun.tick();
+        // (Dual pistols: the second's trigger, sharing the shots.)
+        self.gun2.ammo = self.gun.ammo;
+        self.gun2.rapid = me.rapid;
+        self.gun2.weapon = me.weapon;
+        self.gun2.cooldown = me.cooldown;
+        self.gun2.tick();
         if me.respawn.is_some() {
             self.gun.prev_fire = cmd.fire;
             self.gun.charging = None;
+            self.gun2.prev_fire = cmd.fire2;
             return;
         }
         let player = id;
-        let shot = match self.gun.trigger(cmd.fire, cmd.gun_hand.is_some(), rules) {
-            None => return,
-            Some(Trigger::Denied) => return out.push(SimEvent::Denied { player }),
-            Some(Trigger::Empty) => return out.push(SimEvent::Empty { player }),
-            Some(Trigger::ChargeFull) => return out.push(SimEvent::ChargeFull { player }),
-            Some(Trigger::Fire(s)) => s,
-        };
-        self.gun.fired(shot, rules);
+        // Both triggers first (the second's with the first's shot paid), then the shots, in
+        // order (as the sim numbers them).
+        let mut fired = Vec::new();
+        for second in [false, true] {
+            let t = if second {
+                if me.weapon != lt_sim::Weapon::Dual {
+                    self.gun2.prev_fire = cmd.fire2;
+                    continue;
+                }
+                self.gun2.ammo = self.gun.ammo;
+                self.gun2.trigger(cmd.fire2, cmd.gun2_hand.is_some(), rules)
+            } else {
+                self.gun.trigger(cmd.fire, cmd.gun_hand.is_some(), rules)
+            };
+            match t {
+                None => {}
+                Some(Trigger::Denied) => out.push(SimEvent::Denied { player }),
+                Some(Trigger::Empty) => out.push(SimEvent::Empty { player }),
+                Some(Trigger::ChargeFull) => out.push(SimEvent::ChargeFull { player }),
+                Some(Trigger::Fire(shot)) => {
+                    if second {
+                        self.gun2.fired(shot, rules);
+                        self.gun.ammo = self.gun2.ammo;
+                    } else {
+                        self.gun.fired(shot, rules);
+                    }
+                    fired.push((shot, second));
+                }
+            }
+        }
+        for (shot, second) in fired {
+            self.fire(cmd, me, feet, world, rules, id, shot, second, out);
+        }
+    }
+
+    /// One shot fired (`trigger`): counted, and its bolts flying.
+    #[allow(clippy::too_many_arguments)]
+    fn fire(
+        &mut self,
+        cmd: &mut PlayerCmd,
+        me: &PlayerSnap,
+        feet: Vec3,
+        world: &World,
+        rules: &Rules,
+        id: PlayerId,
+        shot: Shot,
+        second: bool,
+        out: &mut Vec<SimEvent>,
+    ) {
+        let player = id;
         self.seq += 1;
         cmd.shot = self.seq;
-        let cost = if shot == Shot::Beam {
-            rules.beam_cost
-        } else {
-            1
-        };
-        self.costs.push_back((self.seq, cost));
+        self.costs.push_back((self.seq, shot.cost(rules)));
         let eye = feet + shot::head_offset(cmd.head.pos);
-        let (from, dir) = shot::muzzle(feet, eye, cmd);
+        let (from, dir) = shot::muzzle_of(feet, eye, cmd, second);
         out.push(SimEvent::Fired {
             player,
             pos: from,
@@ -133,10 +181,9 @@ impl Shots {
             return;
         }
         let seed = shot::shot_seed(id, self.seq);
-        for (k, (vel, life, extra)) in shot::shot_bolts(shot, dir, rules, seed)
-            .into_iter()
-            .enumerate()
-        {
+        let bolts = shot::shot_bolts(shot, dir, rules, seed);
+        let bolts = shot::as_phantom(bolts, rules, me.team, self.infected);
+        for (k, (vel, life, extra)) in bolts.into_iter().enumerate() {
             self.next_id = self.next_id.wrapping_add(1);
             self.bolts.push(Flying {
                 bolt: Bolt {
@@ -167,15 +214,43 @@ impl Shots {
         out: &mut Vec<SimEvent>,
     ) {
         let cmds: Vec<PlayerCmd> = snap.players.iter().map(snap_cmd).collect();
-        let targets = || {
-            snap.players.iter().zip(&cmds).map(|(p, cmd)| BoltTarget {
-                id: p.id,
-                team: p.team,
-                alive: p.respawn.is_none(),
-                feet: p.feet,
-                eye: p.feet + p.head.pos,
-                cmd,
+        let decoy_cmds: Vec<PlayerCmd> = snap
+            .decoys
+            .iter()
+            .map(|d| PlayerCmd {
+                yaw: d.yaw,
+                head: d.head,
+                hands: d.hands,
+                gun_hand: d.gun_hand,
+                ..Default::default()
             })
+            .collect();
+        // (The decoys after the players: a bolt stops at one, the server pops it.)
+        let targets = || {
+            snap.players
+                .iter()
+                .zip(&cmds)
+                .map(|(p, cmd)| BoltTarget {
+                    id: p.id,
+                    team: p.team,
+                    alive: p.respawn.is_none(),
+                    feet: p.feet,
+                    eye: p.feet + p.head.pos,
+                    cmd,
+                })
+                .chain(
+                    snap.decoys
+                        .iter()
+                        .zip(&decoy_cmds)
+                        .map(|(d, cmd)| BoltTarget {
+                            id: d.owner,
+                            team: d.team,
+                            alive: true,
+                            feet: d.feet,
+                            eye: d.feet + shot::head_offset(d.head.pos),
+                            cmd,
+                        }),
+                )
         };
         let Shots {
             bolts,
@@ -192,14 +267,45 @@ impl Shots {
             let mut gone = false;
             // (A beam goes on through whoever it hits: maybe several in a tick.)
             for _ in 0..8 {
-                match shot::bolt_contact(
+                let contact = shot::bolt_contact(
                     world,
                     &snap.barriers,
                     rules,
                     &f.bolt,
                     targets().enumerate(),
-                ) {
-                    Contact::Clear => {}
+                );
+                if f.bolt.extra.lance {
+                    out.push(SimEvent::Streak {
+                        player: f.bolt.owner,
+                        from: f.bolt.pos,
+                        to: match contact {
+                            Contact::Clear => f.bolt.pos + f.bolt.vel * TICK,
+                            Contact::Player { at, .. }
+                            | Contact::Barrier { at, .. }
+                            | Contact::Mirror { at, .. } => at,
+                            Contact::Arena { q, .. } => q,
+                        },
+                    });
+                }
+                match contact {
+                    Contact::Clear => gone = f.bolt.extra.lance,
+                    Contact::Mirror { index, at, n } => {
+                        struck.push_back((clock, at));
+                        match shot::bounce_placed(&mut f.bolt, at, n) {
+                            Some(n) => out.push(SimEvent::Reflected {
+                                pos: at,
+                                normal: n,
+                                team: f.bolt.team,
+                            }),
+                            None => {
+                                out.push(SimEvent::BarrierHit {
+                                    id: snap.barriers[index].id,
+                                    pos: at,
+                                });
+                                gone = true;
+                            }
+                        }
+                    }
                     Contact::Barrier { index, at } => {
                         struck.push_back((clock, at));
                         out.push(SimEvent::BarrierHit {
@@ -208,15 +314,33 @@ impl Shots {
                         });
                         gone = true;
                     }
-                    Contact::Player { index, at } => {
+                    Contact::Player { index, .. } if index >= snap.players.len() => {
+                        gone = true;
+                    }
+                    Contact::Player { index, at, part } => {
                         let p = &snap.players[index];
+                        let head = f.bolt.extra.lance && part == Part::Head;
                         claims.push(HitClaim {
                             shot: f.shot,
                             pellet: f.pellet,
                             victim: p.id,
                             view: view as f32,
                             at,
+                            head,
                         });
+                        let damage = if head {
+                            rules.lance_head_damage
+                        } else {
+                            f.bolt.extra.damage.max(1)
+                        };
+                        let counts = p.shield <= 0.0 && p.cooldown <= 0.0 && p.protect <= 0.0;
+                        if head && counts {
+                            out.push(SimEvent::Headshot {
+                                player: p.id,
+                                by: f.bolt.owner,
+                                pos: at,
+                            });
+                        }
                         hit.push_back((clock, p.id));
                         struck.push_back((clock, at));
                         // As the server will likely judge it.
@@ -236,7 +360,7 @@ impl Shots {
                                 player: p.id,
                                 by: f.bolt.owner,
                                 pos: at,
-                                hits: (p.hits + f.bolt.extra.damage.max(1)).min(rules.hits_to_tag),
+                                hits: (p.hits + damage).min(rules.hits_to_tag),
                             }
                         });
                         if f.bolt.extra.pierce {
@@ -247,7 +371,14 @@ impl Shots {
                     }
                     Contact::Arena { q, n } => {
                         struck.push_back((clock, q));
-                        if let Some(n) = shot::bounce(level, rules, &mut f.bolt, q) {
+                        if let Some(n) = shot::bounce(
+                            level,
+                            rules,
+                            &mut f.bolt,
+                            q,
+                            n,
+                            matches!(snap.event, Some((lt_sim::ArenaEvent::MirrorStorm, _))),
+                        ) {
                             out.push(SimEvent::Reflected {
                                 pos: q,
                                 normal: n,
@@ -287,14 +418,20 @@ impl Shots {
     /// state as predicted (the HUD's ammo).
     pub fn show(&self, snap: &mut Snapshot, me: PlayerId) {
         snap.bolts.retain(|b| b.owner != me || b.team.is_none());
-        snap.bolts.extend(self.bolts.iter().map(|f| BoltSnap {
-            id: f.bolt.id,
-            pos: f.bolt.pos,
-            vel: f.bolt.vel,
-            team: f.bolt.team,
-            beam: f.bolt.extra.pierce,
-            owner: me,
-        }));
+        snap.bolts.extend(
+            self.bolts
+                .iter()
+                .filter(|f| !f.bolt.extra.lance)
+                .map(|f| BoltSnap {
+                    id: f.bolt.id,
+                    pos: f.bolt.pos,
+                    vel: f.bolt.vel,
+                    team: f.bolt.team,
+                    beam: f.bolt.extra.pierce,
+                    owner: me,
+                    bounces: f.bolt.extra.bounces,
+                }),
+        );
         if let Some(p) = snap.players.iter_mut().find(|p| p.id == me) {
             p.ammo = self.gun.ammo;
             p.charging = self.gun.charging.unwrap_or(0.0);
@@ -308,7 +445,9 @@ impl Shots {
             | SimEvent::BeamFired { player, .. }
             | SimEvent::Empty { player }
             | SimEvent::Denied { player }
-            | SimEvent::ChargeFull { player } => player == me,
+            | SimEvent::ChargeFull { player }
+            | SimEvent::Streak { player, .. } => player == me,
+            SimEvent::Headshot { by, .. } => by == me,
             SimEvent::Hit { player, by, .. } if by == me => self.seen_hit(player),
             SimEvent::Blocked { player, .. } => self.seen_hit(player),
             SimEvent::BoltImpact { pos, .. }
@@ -351,13 +490,13 @@ mod tests {
     /// ticks) fires once at an enemy 3.5-5 m away; its predicted bolts fly against the server's
     /// sim (no delay) and their claims are applied. The events made here and the sim's.
     fn remote_shot(charge: bool, hold: u64) -> (Vec<SimEvent>, Vec<SimEvent>, PlayerId, PlayerId) {
-        remote_shot_lagged(charge, hold, 0, false)
+        remote_shot_lagged(charge.then_some(lt_sim::PickupKind::Charge), hold, 0, false)
     }
 
     /// `remote_shot` with `lag` ticks each way between the client and the sim (commands,
     /// snapshots and claims all late by that).
     fn remote_shot_lagged(
-        charge: bool,
+        gun: Option<lt_sim::PickupKind>,
         hold: u64,
         lag: usize,
         walk: bool,
@@ -391,8 +530,8 @@ mod tests {
             .expect("an open line");
         sim.teleport(a, p, lt_sim::sim::yaw_of(q - p));
         sim.teleport(b, q, 0.0);
-        if charge {
-            sim.give(a, lt_sim::PickupKind::Charge);
+        if let Some(k) = gun {
+            sim.give(a, k);
         }
         // The victim strafes across the line of fire.
         if walk {
@@ -516,10 +655,19 @@ mod tests {
     fn lagged_claims_count() {
         for walk in [false, true] {
             for lag in [2, 6, 12] {
-                let (_, server, a, b) = remote_shot_lagged(false, 1, lag, walk);
+                let (_, server, a, b) = remote_shot_lagged(None, 1, lag, walk);
                 assert_eq!(hits_on(&server, a, b), [1], "bolt, {lag} ticks: {server:?}");
-                let (_, server, a, b) = remote_shot_lagged(true, 70, lag, walk);
+                let (_, server, a, b) =
+                    remote_shot_lagged(Some(lt_sim::PickupKind::Charge), 70, lag, walk);
                 assert_eq!(hits_on(&server, a, b), [2], "beam, {lag} ticks: {server:?}");
+                let (events, server, a, b) =
+                    remote_shot_lagged(Some(lt_sim::PickupKind::Lance), 1, lag, walk);
+                assert_eq!(
+                    hits_on(&server, a, b),
+                    [1],
+                    "lance, {lag} ticks: {server:?}"
+                );
+                assert!(events.iter().any(|e| matches!(e, SimEvent::Streak { .. })));
             }
         }
     }

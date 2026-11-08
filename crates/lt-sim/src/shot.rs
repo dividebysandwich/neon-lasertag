@@ -14,7 +14,7 @@ use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::collide::World;
-use crate::hitbox::first_hit;
+use crate::hitbox::{Part, first_hit};
 use crate::level::Level;
 use crate::rules::Rules;
 use crate::sim::{Barrier, Bolt, BoltExtra, EYE, TICK};
@@ -26,6 +26,10 @@ pub enum Shot {
     Bolt,
     Spread,
     Beam,
+    /// A bolt that bounces off every wall.
+    Ricochet,
+    /// The prism lance's (all but) hitscan shot.
+    Lance,
 }
 
 /// The parts of a player the trigger works with.
@@ -36,8 +40,7 @@ pub struct Gun {
     pub charging: Option<f32>,
     pub ammo: u16,
     pub rapid: bool,
-    pub shotgun: bool,
-    pub charge: bool,
+    pub weapon: Weapon,
     /// The lockout after a hit.
     pub cooldown: f32,
 }
@@ -57,11 +60,13 @@ pub enum Trigger {
 impl Gun {
     /// Least time between shots.
     pub fn interval(&self, rules: &Rules) -> f32 {
-        if self.rapid {
-            rules.fire_cooldown * 0.5
-        } else {
-            rules.fire_cooldown
-        }
+        let base = match self.weapon {
+            Weapon::Ricochet => rules.ricochet_cooldown,
+            Weapon::Lance => rules.lance_cooldown,
+            Weapon::Dual => rules.dual_cooldown,
+            _ => rules.fire_cooldown,
+        };
+        if self.rapid { base * 0.5 } else { base }
     }
 
     /// The tick's timers (before `trigger`).
@@ -93,12 +98,15 @@ impl Gun {
             } else if self.ammo == 0 {
                 self.fire_cd = self.interval(rules);
                 return Some(Trigger::Empty);
-            } else if self.charge {
-                self.charging = Some(0.0);
-            } else if self.shotgun {
-                return Some(Trigger::Fire(Shot::Spread));
             } else {
-                return Some(Trigger::Fire(Shot::Bolt));
+                match self.weapon {
+                    Weapon::Charge => self.charging = Some(0.0),
+                    Weapon::Shotgun => return Some(Trigger::Fire(Shot::Spread)),
+                    Weapon::Blaster => return Some(Trigger::Fire(Shot::Bolt)),
+                    Weapon::Ricochet => return Some(Trigger::Fire(Shot::Ricochet)),
+                    Weapon::Lance => return Some(Trigger::Fire(Shot::Lance)),
+                    Weapon::Dual => return Some(Trigger::Fire(Shot::Bolt)),
+                }
             }
         }
         if let Some(t) = self.charging {
@@ -125,12 +133,18 @@ impl Gun {
     /// Pays for a shot.
     pub fn fired(&mut self, shot: Shot, rules: &Rules) {
         self.fire_cd = self.interval(rules);
-        let cost = if shot == Shot::Beam {
-            rules.beam_cost
-        } else {
-            1
-        };
-        self.ammo = self.ammo.saturating_sub(cost);
+        self.ammo = self.ammo.saturating_sub(shot.cost(rules));
+    }
+}
+
+impl Shot {
+    /// The shots it takes from the gun.
+    pub fn cost(self, rules: &Rules) -> u16 {
+        match self {
+            Shot::Beam => rules.beam_cost,
+            Shot::Lance => rules.lance_cost,
+            _ => 1,
+        }
     }
 }
 
@@ -155,6 +169,19 @@ pub fn muzzle(feet: Vec3, eye: Vec3, cmd: &PlayerCmd) -> (Vec3, Vec3) {
         dir = Quat::from_rotation_y(cmd.yaw) * Vec3::NEG_Z;
     }
     (from, dir.normalize())
+}
+
+/// `muzzle`, for the second of dual pistols (`PlayerCmd::muzzle2`) if `second`.
+pub fn muzzle_of(feet: Vec3, eye: Vec3, cmd: &PlayerCmd, second: bool) -> (Vec3, Vec3) {
+    if second {
+        let c = PlayerCmd {
+            muzzle: cmd.muzzle2,
+            ..*cmd
+        };
+        muzzle(feet, eye, &c)
+    } else {
+        muzzle(feet, eye, cmd)
+    }
 }
 
 /// The seed of a remote player's `seq`-th shot (the shotgun's spread), known to both sides.
@@ -189,6 +216,23 @@ pub fn shot_bolts(shot: Shot, dir: Vec3, rules: &Rules, seed: u64) -> Vec<(Vec3,
                 })
                 .collect()
         }
+        // (Across its whole range in a tick, and a tick more after a mirror.)
+        Shot::Lance => vec![(
+            dir * rules.lance_range / TICK,
+            TICK * (1 + rules.mirror_bounces as u32) as f32 - TICK * 0.5,
+            BoltExtra {
+                lance: true,
+                ..BoltExtra::default()
+            },
+        )],
+        Shot::Ricochet => vec![(
+            dir * rules.blaster_bolt_speed * 0.75,
+            rules.bolt_life,
+            BoltExtra {
+                ricochet: true,
+                ..BoltExtra::default()
+            },
+        )],
         Shot::Beam => vec![(
             dir * rules.beam_speed,
             rules.beam_range / rules.beam_speed,
@@ -199,6 +243,33 @@ pub fn shot_bolts(shot: Shot, dir: Vec3, rules: &Rules, seed: u64) -> Vec<(Vec3,
             },
         )],
     }
+}
+
+/// Infection (`infected`: under way): a phantom's (Red's) bolts fly only
+/// `Rules::phantom_range` and tag out at once.
+pub fn as_phantom(
+    bolts: Vec<(Vec3, f32, BoltExtra)>,
+    rules: &Rules,
+    team: Team,
+    infected: bool,
+) -> Vec<(Vec3, f32, BoltExtra)> {
+    if !infected || team != Team::Red {
+        return bolts;
+    }
+    bolts
+        .into_iter()
+        .map(|(vel, life, extra)| {
+            let speed = vel.length().max(1.0);
+            (
+                vel,
+                life.min(rules.phantom_range / speed),
+                BoltExtra {
+                    damage: rules.hits_to_tag,
+                    ..extra
+                },
+            )
+        })
+        .collect()
 }
 
 /// A player as a bolt can meet them.
@@ -217,15 +288,22 @@ pub struct BoltTarget<'a> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Contact {
     Clear,
-    /// A player (`index` as given with the targets), at `at`.
+    /// A player (`index` as given with the targets), at `at`, on `part`.
     Player {
         index: usize,
         at: Vec3,
+        part: Part,
     },
     /// A barrier (index into the barriers given).
     Barrier {
         index: usize,
         at: Vec3,
+    },
+    /// A mirror put up (index into the barriers given), at `at` with normal `n`.
+    Mirror {
+        index: usize,
+        at: Vec3,
+        n: Vec3,
     },
     /// The arena (a wall, a mirror, a target panel...), at `q` with normal `n`.
     Arena {
@@ -253,7 +331,7 @@ pub fn bolt_contact<'a>(
     }
     let mut barrier: Option<usize> = None;
     for (k, br) in barriers.iter().enumerate() {
-        if b.team == Some(br.team) {
+        if b.team == Some(br.team) && !br.mirror {
             continue;
         }
         if let Some(t) = br.crossed(b.pos, to, rules.barrier_w, rules.barrier_h)
@@ -263,7 +341,7 @@ pub fn bolt_contact<'a>(
             barrier = Some(k);
         }
     }
-    let mut victim: Option<usize> = None;
+    let mut victim: Option<(usize, Part)> = None;
     for (i, p) in targets {
         let passes = !p.alive
             || b.team.is_some() && (p.id == b.owner || b.team == Some(p.team))
@@ -271,18 +349,27 @@ pub fn bolt_contact<'a>(
         if passes {
             continue;
         }
-        if let Some((s, _)) = first_hit(p.feet, p.eye, p.cmd, b.pos, to)
+        if let Some((s, part)) = first_hit(p.feet, p.eye, p.cmd, b.pos, to)
             && s <= t_best
         {
             t_best = s;
-            victim = Some(i);
+            victim = Some((i, part));
         }
     }
     let at = b.pos + (to - b.pos) * t_best;
-    if let Some(index) = victim {
-        Contact::Player { index, at }
+    if let Some((index, part)) = victim {
+        Contact::Player { index, at, part }
     } else if let Some(index) = barrier {
-        Contact::Barrier { index, at }
+        let br = &barriers[index];
+        if br.mirror {
+            Contact::Mirror {
+                index,
+                at,
+                n: br.normal,
+            }
+        } else {
+            Contact::Barrier { index, at }
+        }
     } else if let Some((q, n)) = hit {
         Contact::Arena { q, n }
     } else {
@@ -295,19 +382,69 @@ pub fn on_box(q: Vec3, min: Vec3, max: Vec3) -> bool {
     q.cmpge(min - 0.01).all() && q.cmple(max + 0.01).all()
 }
 
-/// A bolt that struck the arena at `q`: off a mirror again if it struck one and may still
-/// bounce (the mirror's normal), from where it struck.
-pub fn bounce(level: &Level, rules: &Rules, b: &mut Bolt, q: Vec3) -> Option<Vec3> {
-    if b.extra.bounces >= rules.mirror_bounces {
-        return None;
-    }
-    let m = level.mirrors.iter().find(|m| on_box(q, m.min, m.max))?;
-    let n = m.normal;
+/// A bolt that struck the arena at `q` (normal `n`): off a mirror again if it struck one and may
+/// still bounce, or off any wall but a scoring panel for a ricochet bolt or in a mirror storm
+/// (`storm`; the normal it bounced off), from where it struck.
+pub fn bounce(
+    level: &Level,
+    rules: &Rules,
+    b: &mut Bolt,
+    q: Vec3,
+    n: Vec3,
+    storm: bool,
+) -> Option<Vec3> {
+    let n = if b.extra.ricochet {
+        if b.extra.bounces >= rules.ricochet_bounces || level.scores_at(q) {
+            return None;
+        }
+        n
+    } else {
+        if b.extra.bounces >= rules.mirror_bounces {
+            return None;
+        }
+        match level.mirrors.iter().find(|m| on_box(q, m.min, m.max)) {
+            Some(m) => m.normal,
+            None if storm && !level.scores_at(q) => n,
+            None => return None,
+        }
+    };
     b.vel -= 2.0 * b.vel.dot(n) * n;
     // (The flight moves it on by a tick's worth after this.)
     b.pos = q + n * 0.02 - b.vel * TICK;
     b.extra.bounces += 1;
     Some(n)
+}
+
+/// Bolts a mirror put up turns back: up to this many bounces in all.
+pub const MIRROR_MAX_BOUNCES: u8 = 4;
+
+/// A bolt that met a mirror put up at `at` (normal `n`): off it again unless it has bounced
+/// too often (the normal facing it).
+pub fn bounce_placed(b: &mut Bolt, at: Vec3, n: Vec3) -> Option<Vec3> {
+    if b.extra.bounces >= MIRROR_MAX_BOUNCES {
+        return None;
+    }
+    let n = if b.vel.dot(n) > 0.0 { -n } else { n };
+    b.vel -= 2.0 * b.vel.dot(n) * n;
+    b.pos = at + n * 0.02 - b.vel * TICK;
+    b.extra.bounces += 1;
+    Some(n)
+}
+
+/// The first mirror put up that the segment `a`..`b` crosses (of `barriers`): where along it
+/// (0..1), and its index.
+pub fn placed_mirror(
+    barriers: &[Barrier],
+    rules: &Rules,
+    a: Vec3,
+    b: Vec3,
+) -> Option<(f32, usize)> {
+    barriers
+        .iter()
+        .enumerate()
+        .filter(|(_, br)| br.mirror)
+        .filter_map(|(k, br)| Some((br.crossed(a, b, rules.barrier_w, rules.barrier_h)?, k)))
+        .min_by(|x, y| x.0.total_cmp(&y.0))
 }
 
 /// A remote client's word that one of its bolts hit a player, as it showed them.
@@ -321,4 +458,7 @@ pub struct HitClaim {
     pub view: f32,
     /// Where it met them.
     pub at: Vec3,
+    /// It met their head.
+    #[serde(default)]
+    pub head: bool,
 }

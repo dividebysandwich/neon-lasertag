@@ -651,6 +651,66 @@ def beam_fire():
     return echoes(zap + crack + punch + hiss, [0.09, 0.2], [0.3, 0.15], 5000)
 
 
+def lance_fire():
+    T = 0.9
+    x = seconds(T)
+    # A sharp crack and a high, glassy whine falling away (the prism lance).
+    crack = click(T, 2500, 15000, 0.002) * 1.8
+    f = 5200 * np.exp(-x / 0.06) + 900
+    whine = np.sin(2 * np.pi * phase(f)) * env(T, 0.0005, 0.18, hold=0.01) * 0.5
+    glass = ring(T, [2900, 4350, 6100], [0.25, 0.18, 0.12], [0.35, 0.25, 0.18]) * 0.4
+    punch = thump(T, 70, 0.08, drop=0.5) * 0.9
+    return echoes(crack + whine + glass + punch, [0.11, 0.26], [0.3, 0.15], 6000)
+
+
+def sensor_pulse():
+    T = 1.2
+    x = seconds(T)
+    # A sonar ping: a pure tone with a soft attack and a long, echoing tail.
+    f = 1320 * (1 - 0.04 * (1 - np.exp(-x / 0.3)))
+    ping = np.sin(2 * np.pi * phase(f)) * env(T, 0.004, 0.22) * 0.7
+    under = np.sin(2 * np.pi * phase(f * 0.5)) * env(T, 0.01, 0.15) * 0.25
+    return echoes(ping + under, [0.18, 0.36, 0.54], [0.4, 0.2, 0.1], 5000)
+
+
+def event_storm():
+    T = 2.2
+    x = seconds(T)
+    # Glass shimmering up: a cloud of bright rings sweeping upwards, over a rising whoosh.
+    out = np.zeros_like(x)
+    for k in range(9):
+        start = 0.08 * k
+        hz = 1400 * 2 ** (k / 6)
+        out += at(T, start, ring(T - start, [hz, hz * 1.5, hz * 2.1], [0.5, 0.35, 0.25],
+                                 [0.4, 0.25, 0.15])) * 0.35
+    whoosh = sweep_noise(T, 400, 9000) * env(T, 0.4, 0.6, hold=0.6) * 0.35
+    return echoes(out + whoosh, [0.12, 0.27], [0.35, 0.18], 7000)
+
+
+def event_lowgrav():
+    T = 2.4
+    x = seconds(T)
+    # A slow, wobbling rise: two detuned tones gliding up an octave, a soft airy swell.
+    f = 110 * 2 ** np.clip(x / 1.6, 0, 1)
+    wob = 1 + 0.03 * np.sin(2 * np.pi * 3.0 * x)
+    tones = (np.sin(2 * np.pi * phase(f * wob)) + 0.6 * np.sin(2 * np.pi * phase(f * 1.503))) \
+        * env(T, 0.3, 0.6, hold=1.1) * 0.5
+    air = sweep_noise(T, 300, 3000) * env(T, 0.6, 0.5, hold=0.8) * 0.2
+    return echoes(tones + air, [0.2, 0.4], [0.3, 0.15], 4000)
+
+
+def headshot():
+    T = 0.5
+    x = seconds(T)
+    # Two bright ascending pings over a hard knock.
+    pings = sum(
+        at(T, start, np.sin(2 * np.pi * hz * seconds(T - start)) * env(T - start, 0.001, 0.09))
+        for hz, start in ((1760, 0.0), (2637, 0.06))
+    ) * 0.5
+    knock = thump(T, 140, 0.05, drop=0.6) * 0.9 + click(T, 2000, 9000, 0.002) * 0.6
+    return pings + knock
+
+
 def barrier_up():
     T = 0.7
     x = seconds(T)
@@ -744,12 +804,17 @@ SOUNDS = {
     "charge_loop": (charge_loop, -26.0, 271),
     "charge_full": (charge_full, -21.0, 281),
     "beam_fire": (beam_fire, -14.0, 291),
+    "lance_fire": (lance_fire, -14.0, 292),
+    "headshot": (headshot, -15.0, 293),
+    "sensor_pulse": (sensor_pulse, -21.0, 294),
     "barrier_up": (barrier_up, -19.0, 301),
     "barrier_hit": (barrier_hit, -20.0, 311),
     "barrier_down": (barrier_down, -22.0, 321),
     "event_blackout": (event_blackout, -15.0, 331),
     "event_overdrive": (event_overdrive, -16.0, 341),
     "event_double": (event_double, -16.0, 351),
+    "event_storm": (event_storm, -16.0, 361),
+    "event_lowgrav": (event_lowgrav, -17.0, 371),
 }
 
 # Sounds played as loops.

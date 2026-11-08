@@ -23,7 +23,7 @@ use std::collections::VecDeque;
 
 use bevy::prelude::*;
 use lt_sim::sim::{look_rot, yaw_of};
-use lt_sim::{Hand, PickupKind, Pose, SimEvent, Team};
+use lt_sim::{Hand, PickupKind, Pose, SimEvent, Team, Weapon};
 
 use crate::assets::Models;
 use crate::game::{Game, GameEvent, InputSet, LocalCmd, Mover, PredictSet};
@@ -35,6 +35,9 @@ use crate::sevenseg::{Digit, show, spawn_digits};
 /// The holster, from the eyes (along the body's facing; x to the gun side). `LT_HOLSTER=x,y,z`
 /// puts it elsewhere.
 const HOLSTER: Vec3 = Vec3::new(0.23, -0.58, -0.07);
+
+/// Dual pistols: a second jump press within this long (s) dashes instead.
+const DOUBLE_TAP: f32 = 0.3;
 
 fn holster_offset() -> Vec3 {
     static AT: std::sync::OnceLock<Vec3> = std::sync::OnceLock::new();
@@ -124,6 +127,12 @@ pub struct VrState {
     pub rig: Transform,
     last_head: Option<Vec3>,
     pub gun: Option<Hand>,
+    /// Dual pistols: the hand holding the second (gripped anywhere, while the first is
+    /// drawn), and its trigger.
+    pub gun2: Option<Hand>,
+    firing2: bool,
+    /// Dual pistols: seconds since the last jump press (a second quick press dashes).
+    since_jump: f32,
     grenade: Option<Hand>,
     /// The hand that threw the last grenade.
     threw: Option<Hand>,
@@ -243,7 +252,15 @@ impl Plugin for VrPlugin {
             .add_systems(Update, menu_buttons.in_set(InputSet))
             .add_systems(
                 Update,
-                (place_rig, wrist, wrist_points, wrist_glance, holster)
+                (
+                    place_rig,
+                    wrist,
+                    wrist_points,
+                    wrist_glance,
+                    holster,
+                    crate::scope::place_scope,
+                    laser_sight,
+                )
                     .chain()
                     .in_set(PoseSet)
                     .run_if(resource_exists::<Game>),
@@ -266,6 +283,18 @@ impl Plugin for VrPlugin {
                     resource_exists::<Palette>
                         .and_then(resource_exists::<Models>)
                         .and_then(not(resource_exists::<Wrist>)),
+                ),
+            )
+            .add_systems(
+                Update,
+                spawn_sight
+                    .run_if(resource_exists::<Palette>.and_then(not(resource_exists::<Sight>))),
+            )
+            .add_systems(
+                Update,
+                crate::scope::spawn_scope.run_if(
+                    resource_exists::<Palette>
+                        .and_then(not(resource_exists::<crate::scope::Scope>)),
                 ),
             )
             .add_systems(
@@ -348,16 +377,18 @@ fn out_of_game(
 
 /// Testing without controllers (`LT_VR_FAKE_HANDS=1`): the right hand points ahead and a little
 /// down (at a panel's second button), the left one is at the holster (`LT_VR_FAKE_HANDS=wrist`:
-/// held up before the eyes, its wrist display turned to them).
+/// held up before the eyes, its wrist display turned to them; `scope`: the right hand draws
+/// the blaster and holds its scope, src/scope.rs, up to the eyes).
 fn fake_hands(
     mut input: ResMut<XrInput>,
     vr: Res<VrState>,
+    settings: Res<Settings>,
     mut mode: Local<Option<Option<String>>>,
 ) {
     let mode = mode.get_or_insert_with(|| {
         std::env::var("LT_VR_FAKE_HANDS")
             .ok()
-            .filter(|v| v == "1" || v == "wrist")
+            .filter(|v| v == "1" || v == "wrist" || v == "scope")
     });
     let Some(head) = input.head.filter(|_| mode.is_some()) else {
         return;
@@ -371,6 +402,28 @@ fn fake_hands(
         input.hands[0].aim = Some(t);
     }
     let rot = Quat::from_rotation_y(flat_yaw(head.rotation));
+    if mode.as_deref() == Some("scope") && input.hands[1].grip.is_none() {
+        // (Gripping only once at the holster: drawing takes a fresh grip.)
+        input.hands[1].squeeze = if vr.gun.is_some() || vr.near[1] {
+            1.0
+        } else {
+            0.0
+        };
+        let t = match (vr.gun, vr.holster) {
+            // Drawn: the gun level (its tilt in the hand undone), the lens before the eyes.
+            (Some(_), _) => {
+                let gun = rot;
+                let at = head.translation + rot * Vec3::new(0.0, -0.01, -0.1)
+                    - gun * crate::scope::LENS_AT;
+                Transform::from_translation(at)
+                    .with_rotation(gun * Quat::from_rotation_x(gun_tilt(&settings)))
+            }
+            (None, Some(h)) => Transform::from_translation(h).with_rotation(rot),
+            (None, None) => return,
+        };
+        input.hands[1].grip = Some(t);
+        input.hands[1].aim = Some(t);
+    }
     if input.hands[1].grip.is_none() {
         let at = head.translation + rot * Vec3::new(0.2, -0.25, -0.35);
         let target = head.translation + rot * Vec3::new(0.0, -0.17, -1.4);
@@ -465,16 +518,28 @@ fn read_controls(
     let want = if vr.stick_crouch { 1.0 } else { 0.0 };
     vr.crouch += (want - vr.crouch) * (1.0 - (-dt / STICK_CROUCH_TIME).exp());
     local.cmd.yaw = vr.yaw + input.head.map_or(0.0, |h| flat_yaw(h.rotation));
+    // Dual pistols: the left stick's click is the shield, so a quick second jump press dashes.
+    let dual = game
+        .me
+        .and_then(|me| game.snap.players.iter().find(|p| p.id == me))
+        .is_some_and(|p| p.weapon == Weapon::Dual);
+    vr.since_jump += dt;
     // A or X: jump.
     for i in 0..2 {
         let down = input.hands[i].primary;
         if down && !vr.primary_held[i] && !vr.ui {
-            local.cmd.jumps = local.cmd.jumps.wrapping_add(1);
+            if dual && vr.since_jump < DOUBLE_TAP {
+                local.cmd.dashes = local.cmd.dashes.wrapping_add(1);
+                vr.since_jump = DOUBLE_TAP;
+            } else {
+                local.cmd.jumps = local.cmd.jumps.wrapping_add(1);
+                vr.since_jump = 0.0;
+            }
         }
         vr.primary_held[i] = down;
     }
     let click = input.hands[0].stick_click;
-    if click && !vr.stick_held && !vr.ui {
+    if click && !vr.stick_held && !vr.ui && !dual {
         local.cmd.dashes = local.cmd.dashes.wrapping_add(1);
     }
     vr.stick_held = click;
@@ -531,7 +596,28 @@ fn read_controls(
             vr.gripping[i] = gripping;
         }
     }
+    // Dual pistols: the other hand gripping holds the second (only with the first drawn).
+    let other = vr.gun.map(|h| match h {
+        Hand::Left => Hand::Right,
+        Hand::Right => Hand::Left,
+    });
+    match (vr.gun2, other) {
+        (Some(h), Some(o)) if dual && h == o => {
+            if input.hands[h.index()].squeeze < 0.4 {
+                vr.gun2 = None;
+                rumble.play(h.index(), 0.0, 0.035, 0.85);
+            }
+        }
+        (_, Some(o)) if dual && vr.grenade != Some(o) && input.hands[o.index()].squeeze > 0.6 => {
+            if vr.gun2.is_none() {
+                rumble.play(o.index(), 0.0, 0.035, 0.85);
+            }
+            vr.gun2 = Some(o);
+        }
+        _ => vr.gun2 = None,
+    }
     local.cmd.gun_hand = vr.gun;
+    local.cmd.gun2_hand = vr.gun2;
     local.cmd.vr = true;
     let trigger = vr.gun.map_or(0.0, |h| input.hands[h.index()].trigger);
     let was = vr.firing;
@@ -542,6 +628,17 @@ fn read_controls(
     if vr.firing && !was && alive && !blocked {
         local.fire_latch = true;
     }
+    let trigger2 = vr.gun2.map_or(0.0, |h| input.hands[h.index()].trigger);
+    let was2 = vr.firing2;
+    vr.firing2 = if was2 {
+        trigger2 > 0.5
+    } else {
+        trigger2 > 0.75
+    };
+    local.cmd.fire2 = vr.firing2 && alive && !blocked;
+    if vr.firing2 && !was2 && alive && !blocked {
+        local.fire2_latch = true;
+    }
 
     // The shield: the trigger of the hand without the blaster (the left one, unless it holds
     // the blaster).
@@ -551,15 +648,23 @@ fn read_controls(
         Hand::Left
     };
     local.cmd.shield = alive && !blocked && input.hands[free.index()].trigger > 0.75;
-    // The barrier: gripping with that hand away from the holster.
-    local.cmd.barrier =
+    // The gadget: gripping with that hand away from the holster.
+    local.cmd.gadget =
         alive && !blocked && !vr.near[free.index()] && input.hands[free.index()].squeeze > 0.75;
+    // Dual pistols: both hands full; the shield on the left stick's click, the gadget on B or Y
+    // held.
+    if dual {
+        local.cmd.shield = alive && !blocked && input.hands[0].stick_click;
+        local.cmd.gadget =
+            alive && !blocked && (input.hands[0].secondary || input.hands[1].secondary);
+    }
 
-    // The menu (its button: `menu_buttons`), or B / Y held without taking a grenade.
+    // The menu (its button: `menu_buttons`), or B / Y held without taking a grenade (not with
+    // dual pistols: B / Y is the gadget).
     for i in 0..2 {
         let hand = &input.hands[i];
         let (held, opened) = vr.hold[i];
-        if hand.secondary && vr.grenade != Some(hand_of(i)) {
+        if hand.secondary && vr.grenade != Some(hand_of(i)) && !dual {
             let held = held + dt;
             let open = held >= MENU_HOLD && !opened;
             if open {
@@ -599,10 +704,13 @@ fn read_controls(
             let has = game
                 .me
                 .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
-                .is_some_and(|p| p.grenades > 0);
+                .is_some_and(|p| p.grenades > 0)
+                // (A prism carried is thrown as a grenade.)
+                || game.me.is_some() && game.snap.prisms.iter().any(|p| p.carrier == game.me);
             for h in [Hand::Right, Hand::Left] {
                 // (Not while B / Y is held for the menu, nor with a panel up.)
                 if has
+                    && !dual
                     && input.hands[h.index()].secondary
                     && vr.gun != Some(h)
                     && vr.hold[h.index()].0 < 0.25
@@ -693,7 +801,7 @@ fn place_rig(
         let shotgun = game
             .me
             .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
-            .is_some_and(|p| p.shotgun);
+            .is_some_and(|p| p.weapon == Weapon::Shotgun);
         let muzzle = p.pos
             + p.rot
                 * if shotgun {
@@ -706,12 +814,115 @@ fn place_rig(
             rot: look_rot(p.rot * Vec3::NEG_Z),
         };
     }
+    // Dual pistols: the second, held as the first.
+    if let Some(gh) = vr.gun2 {
+        let tilt = gun_tilt(&settings);
+        let hand = &mut local.cmd.hands[gh.index()];
+        hand.rot *= Quat::from_rotation_x(-tilt);
+        let p = *hand;
+        local.cmd.muzzle2 = Pose {
+            pos: p.pos + p.rot * models.muzzle,
+            rot: look_rot(p.rot * Vec3::NEG_Z),
+        };
+    }
     // The holster in the world: muzzle down, tilted a little forward.
     vr.holster_world = vr.holster.zip(vr.body_yaw).map(|(at, body)| {
         let rot =
             Quat::from_rotation_y(body) * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2 + 0.3);
         rig_t * Transform::from_translation(at).with_rotation(rot)
     });
+}
+
+/// The prism lance's laser sight: a thin beam from its muzzle and a dot where it meets the
+/// arena (the beam hidden while looking through the scope, src/scope.rs: it would run down the
+/// middle of its view).
+#[derive(Resource)]
+struct Sight {
+    beam: Entity,
+    dot: Entity,
+    team: Option<Team>,
+}
+
+fn spawn_sight(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, palette: Res<Palette>) {
+    let beam = commands
+        .spawn((
+            Mesh3d(meshes.add(Cylinder::new(0.0025, 1.0))),
+            MeshMaterial3d(palette.bolt_for(None)),
+            Transform::default(),
+            Visibility::Hidden,
+        ))
+        .id();
+    let dot = commands
+        .spawn((
+            Mesh3d(meshes.add(Sphere::new(0.012).mesh().ico(2).unwrap())),
+            MeshMaterial3d(palette.bolt_for(None)),
+            Transform::default(),
+            Visibility::Hidden,
+        ))
+        .id();
+    commands.insert_resource(Sight {
+        beam,
+        dot,
+        team: None,
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn laser_sight(
+    mut commands: Commands,
+    sight: Option<ResMut<Sight>>,
+    vr: Res<VrState>,
+    game: Res<Game>,
+    local: Res<LocalCmd>,
+    mover: Res<Mover>,
+    palette: Res<Palette>,
+    scope: Option<Res<crate::scope::Scope>>,
+    lenses: Query<&crate::scope::ScopeLens>,
+    mut q: Query<(&mut Transform, &mut Visibility), Without<crate::scope::ScopeLens>>,
+) {
+    let Some(mut sight) = sight else { return };
+    let scoped = crate::scope::scope_on(scope.as_deref(), &lenses);
+    let me = game
+        .me
+        .and_then(|me| game.snap.players.iter().find(|p| p.id == me));
+    let team = me.map(|p| p.team);
+    if team != sight.team {
+        sight.team = team;
+        for e in [sight.beam, sight.dot] {
+            commands
+                .entity(e)
+                .insert(MeshMaterial3d(palette.bolt_for(team)));
+        }
+    }
+    let on =
+        vr.gun.is_some() && me.is_some_and(|p| p.weapon == Weapon::Lance && p.respawn.is_none());
+    let from = mover.feet + local.cmd.muzzle.pos;
+    let dir = local.cmd.muzzle.forward();
+    let reach = game.rules.lance_range;
+    let end = game
+        .world
+        .ray(from, from + dir * reach)
+        .map_or(from + dir * reach, |h| h.1);
+    let len = from.distance(end);
+    let show = |v: &mut Visibility, yes: bool| {
+        *v = if yes {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+    };
+    if let Ok((mut t, mut v)) = q.get_mut(sight.beam) {
+        show(&mut v, on && len > 0.05 && !scoped);
+        *t = Transform::from_translation((from + end) / 2.0)
+            .with_rotation(Quat::from_rotation_arc(Vec3::Y, dir))
+            .with_scale(Vec3::new(1.0, len, 1.0));
+    }
+    if let Ok((mut t, mut v)) = q.get_mut(sight.dot) {
+        show(&mut v, on);
+        // (As big to the eye however far.)
+        *t = Transform::from_translation(end - dir * 0.01)
+            .with_scale(Vec3::splat((len / 4.0).clamp(1.0, 6.0)));
+    }
 }
 
 /// The blaster in its holster (with a faint ring) while no hand holds it.
@@ -789,7 +1000,7 @@ fn holster(
         .me
         .and_then(|me| game.snap.players.iter().find(|p| p.id == me));
     let team = me.map(|p| p.team);
-    let shotgun = me.is_some_and(|p| p.shotgun);
+    let shotgun = me.is_some_and(|p| p.weapon == Weapon::Shotgun);
     // The blaster (or the shotgun) in the team's colours.
     if team != h.team || shotgun != h.shotgun {
         h.team = team;
@@ -1522,6 +1733,43 @@ fn haptics(
                 rumble.play(gun, 0.08, 0.01, 0.3);
             }
             SimEvent::Denied { player } if player == me => rumble.play(gun, 0.0, 0.015, 0.2),
+            // The prism lance: a long, heavy kick; a head hit, a crisp double tap.
+            SimEvent::Streak { player, .. } if player == me => {
+                rumble.fade(gun, 0.0, 0.18, 0.9);
+            }
+            SimEvent::Headshot { by, .. } if by == me => {
+                rumble.play(gun, 0.05, 0.02, 0.9);
+                rumble.play(gun, 0.12, 0.02, 0.9);
+            }
+            // Gadgets: a soft push in the free hand.
+            SimEvent::BarrierUp { player, .. }
+            | SimEvent::SensorThrown { player, .. }
+            | SimEvent::DecoyOut { player, .. }
+                if player == me =>
+            {
+                rumble.fade(1 - gun, 0.0, 0.1, 0.4);
+            }
+            // One's pulse sensor finding enemies: a faint tick.
+            SimEvent::Pulse { team, seen, .. }
+                if seen != 0
+                    && game
+                        .snap
+                        .players
+                        .iter()
+                        .any(|p| p.id == me && p.team == team) =>
+            {
+                rumble.both(0.0, 0.02, 0.15);
+            }
+            // Mending a team mate: a pulse in the beam's hand.
+            SimEvent::Mended { by, .. } if by == me => rumble.play(1 - gun, 0.0, 0.05, 0.35),
+            // A decoy of one's own popped.
+            SimEvent::DecoyPopped { id, .. }
+                if game.prev.decoys.iter().any(|d| d.id == id && d.owner == me) =>
+            {
+                rumble.play(1 - gun, 0.0, 0.03, 0.5);
+            }
+            // A bounty on oneself: a long warning swell.
+            SimEvent::BountyOn { player } if player == me => rumble.both(0.0, 0.4, 0.5),
             SimEvent::PickedUp { player, .. } if player == me => {
                 rumble.both(0.0, 0.05, 0.3);
                 rumble.both(0.12, 0.05, 0.3);
@@ -1578,8 +1826,8 @@ fn haptics(
                 rumble.play(1 - gun, 0.0, 0.03, 0.45);
                 rumble.play(1 - gun, 0.1, 0.03, 0.45);
             }
-            // Healed: two soft pulses in both hands.
-            SimEvent::Healed { player } if player == me => {
+            // Healed (or mended a hit): two soft pulses in both hands.
+            SimEvent::Healed { player } | SimEvent::Mended { player, .. } if player == me => {
                 rumble.both(0.0, 0.08, 0.25);
                 rumble.both(0.15, 0.08, 0.25);
             }

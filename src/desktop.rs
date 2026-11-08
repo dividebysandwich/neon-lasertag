@@ -10,11 +10,11 @@ use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use lt_sim::sim::{EYE, eye_on_neck, look_rot};
-use lt_sim::{Hand, Pose, SimEvent};
+use lt_sim::{Hand, Pose, SimEvent, Weapon};
 
 use crate::assets::Models;
 use crate::game::{Game, GameEvent, InputSet, LocalCmd, Mover, PredictSet, alpha};
-use crate::settings::{Action, Inputs, Settings};
+use crate::settings::{Action, Inputs, Settings, WheelState};
 
 #[derive(Component)]
 pub struct MainCamera;
@@ -30,6 +30,12 @@ pub struct Look {
     pub crouch: f32,
     /// Crouching by toggle (`Settings::toggle_crouch`): down until pressed again.
     pub crouch_on: bool,
+    /// Zooming in with the prism lance: 0 not at all, 1 all the way (eased).
+    pub zoom: f32,
+    /// The mouse wheel held as a button (rolled up, not down since: `WheelState`).
+    pub wheel: bool,
+    /// Dual pistols: the left one's turn to fire (they take turns, a click each).
+    pub left_turn: bool,
 }
 
 /// How far crouching lowers the eyes (m), how long it takes (time constant, s), and how much
@@ -142,9 +148,19 @@ pub fn camera_bundle() -> impl Bundle {
     )
 }
 
-/// The field of view from the settings (`Settings::fov`).
-fn apply_fov(settings: Res<Settings>, mut cams: Query<&mut Projection, With<MainCamera>>) {
-    let want = settings.fov.to_radians();
+/// How far the prism lance's zoom narrows the view, and how long it takes (time constant, s).
+const ZOOM: f32 = 2.5;
+const ZOOM_TIME: f32 = 0.06;
+
+/// The field of view from the settings (`Settings::fov`), narrowed by the zoom.
+fn apply_fov(
+    settings: Res<Settings>,
+    look: Res<Look>,
+    mut cams: Query<&mut Projection, With<MainCamera>>,
+) {
+    let fov = settings.fov.to_radians();
+    let zoomed = 2.0 * ((fov / 2.0).tan() / ZOOM).atan();
+    let want = fov + (zoomed - fov) * look.zoom;
     for mut p in &mut cams {
         let off = matches!(&*p, Projection::Perspective(pp) if (pp.fov - want).abs() > 1e-4);
         if off && let Projection::Perspective(pp) = &mut *p {
@@ -222,6 +238,7 @@ fn read_input(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
+    scroll: Res<bevy::input::mouse::AccumulatedMouseScroll>,
     cursor: Query<&CursorOptions, With<PrimaryWindow>>,
     models: Res<Models>,
     time: Res<Time<Fixed>>,
@@ -237,15 +254,32 @@ fn read_input(
         && cursor
             .single()
             .is_ok_and(|c| c.grab_mode != CursorGrabMode::None);
+    let lance = game
+        .me
+        .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
+        .is_some_and(|p| p.weapon == Weapon::Lance && p.respawn.is_none());
+    // (A wheel held lets go with the lance, or out of the game: no zoom held over.)
+    if !grabbed || !lance {
+        look.wheel = false;
+    }
+    let dy = if grabbed { scroll.delta.y } else { 0.0 };
     let input = Inputs {
         keys: &keys,
         mouse: &mouse,
+        wheel: WheelState::roll(&mut look.wheel, dy),
     };
     let on = |a: Action| settings.pressed(a, &input);
     let dt = real.delta_secs().clamp(1e-4, 0.05);
     let mut turned = Vec2::ZERO;
+    let zoom = if grabbed && lance && on(Action::Zoom) {
+        1.0
+    } else {
+        0.0
+    };
+    look.zoom += (zoom - look.zoom) * (1.0 - (-dt / ZOOM_TIME).exp());
     if grabbed {
-        let s = 0.0022 * settings.sensitivity;
+        // (Slower zoomed in, as the view.)
+        let s = 0.0022 * settings.sensitivity / (1.0 + (ZOOM - 1.0) * look.zoom);
         let dy = if settings.invert_y {
             -motion.delta.y
         } else {
@@ -307,10 +341,12 @@ fn read_input(
     // The camera stays over the feet; the head others see turns on its neck in front of it.
     let cam = Vec3::Y * look.eye_height();
     let head = eye_on_neck(cam, view);
-    let shotgun = game
+    let weapon = game
         .me
         .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
-        .is_some_and(|p| p.shotgun);
+        .map(|p| p.weapon);
+    let shotgun = weapon == Some(Weapon::Shotgun);
+    let dual = weapon == Some(Weapon::Dual);
     // (The shotgun further out, its stock clear of the eye.)
     let hold = if shotgun { SHOTGUN_GRIP } else { GRIP };
     let grip = cam + view * (hold + gun_offset);
@@ -351,7 +387,31 @@ fn read_input(
         pos: muzzle,
         rot: muzzle_rot,
     };
-    cmd.fire = grabbed && !overlays.hold_fire && on(Action::Fire);
+    // Dual pistols: the second in the left hand, mirrored; a click fires each in turn.
+    let pull = grabbed && !overlays.hold_fire && settings.just_pressed(Action::Fire, &input);
+    if dual {
+        let flip = Vec3::new(-1.0, 1.0, 1.0);
+        let grip2 = cam + view * ((hold + gun_offset) * flip);
+        let muzzle2 = grip2 + grip_rot * models.muzzle;
+        cmd.gun2_hand = Some(Hand::Left);
+        cmd.hands[0] = Pose {
+            pos: grip2,
+            rot: grip_rot,
+        };
+        cmd.muzzle2 = Pose {
+            pos: muzzle2,
+            rot: look_rot(aim - (feet + muzzle2)),
+        };
+        if pull {
+            look.left_turn = !look.left_turn;
+        }
+    } else {
+        cmd.gun2_hand = None;
+        look.left_turn = false;
+    }
+    let held = grabbed && !overlays.hold_fire && on(Action::Fire);
+    cmd.fire = held && !(dual && look.left_turn);
+    cmd.fire2 = held && dual && look.left_turn;
     if grabbed && settings.just_pressed(Action::Jump, &input) {
         cmd.jumps = cmd.jumps.wrapping_add(1);
     }
@@ -359,23 +419,33 @@ fn read_input(
         cmd.dashes = cmd.dashes.wrapping_add(1);
     }
     cmd.shield = grabbed && on(Action::Shield);
-    cmd.barrier = grabbed && on(Action::Barrier);
-    if grabbed && !overlays.hold_fire && settings.just_pressed(Action::Fire, &input) {
-        local.fire_latch = true;
+    cmd.gadget = grabbed && on(Action::Gadget);
+    if pull {
+        if dual && look.left_turn {
+            local.fire2_latch = true;
+        } else {
+            local.fire_latch = true;
+        }
     }
     let cmd = &mut local.cmd;
     let has = game
         .me
         .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
-        .is_some_and(|p| p.grenades > 0);
+        .is_some_and(|p| p.grenades > 0)
+        // (No grenades with dual pistols: both hands are full.)
+        && !dual
+        // (A prism carried is thrown as a grenade.)
+        || game.me.is_some() && game.snap.prisms.iter().any(|p| p.carrier == game.me);
     // (`.1`: shown for testing, `LT_DEV` "arc".)
     let holding = grabbed && has && on(Action::Grenade) || arc.1;
     let released = settings.just_released(Action::Grenade, &input);
     let off_hand = cam + view * Vec3::new(-0.22, -0.18, -0.35);
-    cmd.hands[0] = Pose {
-        pos: off_hand,
-        rot: view,
-    };
+    if !dual {
+        cmd.hands[0] = Pose {
+            pos: off_hand,
+            rot: view,
+        };
+    }
     let throw_vel = view * Vec3::NEG_Z * 11.0 + Vec3::Y * 2.5;
     arc.0 = None;
     if holding {
@@ -478,6 +548,7 @@ fn draw_arc(
             &game.rules,
             *from,
             *vel,
+            lt_sim::sim::gravity_for(game.snap.event, &game.rules),
         )),
         _ => None,
     };

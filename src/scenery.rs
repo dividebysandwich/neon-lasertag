@@ -1286,6 +1286,20 @@ fn pulse(
     }
 }
 
+/// Debugging: `LT_CHASE=distance,height,degrees` follows the local player from outside (at
+/// that distance, height and angle from straight behind), showing its own avatar.
+pub fn chase() -> Option<Vec3> {
+    static CHASE: std::sync::OnceLock<Option<Vec3>> = std::sync::OnceLock::new();
+    *CHASE.get_or_init(|| {
+        let n: Vec<f32> = std::env::var("LT_CHASE")
+            .ok()?
+            .split(',')
+            .filter_map(|t| t.parse().ok())
+            .collect();
+        (n.len() >= 3).then(|| Vec3::new(n[0], n[1], n[2]))
+    })
+}
+
 /// Debugging: `LT_VIEW=x,y,z,tx,ty,tz` puts the flat screen's camera (or the headset's
 /// tracking space, turned to look along the same heading) at x,y,z looking at tx,ty,tz.
 fn debug_view(
@@ -1293,7 +1307,21 @@ fn debug_view(
     rig: Option<Res<crate::vr::XrRig>>,
     mut all: Query<&mut Transform, Without<Camera3d>>,
     mut view: Local<Option<Option<(Vec3, Vec3)>>>,
+    game: Option<Res<Game>>,
 ) {
+    if let Some(c) = chase()
+        && let Some(game) = game
+        && let Some(p) = game
+            .me
+            .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
+    {
+        let back = Quat::from_rotation_y(p.yaw + c.z.to_radians()) * Vec3::new(0.0, c.y, c.x);
+        let target = p.feet + Vec3::Y * 1.0;
+        for mut tf in &mut cams {
+            *tf = Transform::from_translation(p.feet + back).looking_at(target, Vec3::Y);
+        }
+        return;
+    }
     let view = view.get_or_insert_with(|| {
         let n: Vec<f32> = std::env::var("LT_VIEW")
             .ok()?

@@ -4,7 +4,7 @@
 
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use lt_sim::{PickupKind, PlayerId, SimEvent, Team};
+use lt_sim::{PickupKind, PlayerId, SimEvent, Team, Weapon};
 
 use crate::desktop::{MainCamera, Overlays};
 use crate::game::{Game, GameEvent};
@@ -311,7 +311,7 @@ fn spawn(mut commands: Commands) {
         BackgroundGradient::default(),
     ));
     // The marked places.
-    for k in 0..2 + MAX_GOALS {
+    for k in 0..2 + MAX_GOALS + MAX_REVEALED {
         commands.spawn((
             HudRoot,
             ObjMarker(k),
@@ -925,6 +925,14 @@ fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMu
                 feed.points.remove(0);
             }
         }
+        if let SimEvent::Headshot { by, .. } = *e
+            && Some(by) == game.me
+        {
+            feed.points.push(("HEADSHOT".to_string(), POINTS_LIFE));
+            if feed.points.len() > POINTS_LINES {
+                feed.points.remove(0);
+            }
+        }
         feed.lines.extend(feed_entries(e, &game));
         match *e {
             SimEvent::Hit {
@@ -1096,6 +1104,18 @@ fn clock_events(snap: &lt_sim::sim::Snapshot) -> (String, Color) {
         parts.push(format!("BLACKOUT {:.0}", left.ceil()));
         color = Color::srgb(0.75, 0.78, 0.95);
     }
+    if let Some((lt_sim::ArenaEvent::Bounty, left)) = snap.event {
+        parts.push(format!("BOUNTY {:.0}", left.ceil()));
+        color = BOUNTY_GOLD;
+    }
+    if let Some((lt_sim::ArenaEvent::LowGravity, left)) = snap.event {
+        parts.push(format!("LOW GRAVITY {:.0}", left.ceil()));
+        color = Color::srgb(0.7, 1.0, 0.6);
+    }
+    if let Some((lt_sim::ArenaEvent::MirrorStorm, left)) = snap.event {
+        parts.push(format!("MIRROR STORM {:.0}", left.ceil()));
+        color = Color::srgb(0.75, 0.95, 1.0);
+    }
     if snap.double {
         parts.push("2X POINTS".to_string());
     }
@@ -1265,34 +1285,61 @@ pub fn next_hint(
 
 /// The rules in short, for the in-game menus (capitals, digits and `- : ' ( )` only, for VR's
 /// stroke font).
-pub fn rules_lines(rules: &lt_sim::Rules, mega: bool) -> Vec<String> {
-    let mut out = vec![
-        format!(
-            "{} HITS TAG YOU OUT - AFTER A HIT YOU CAN'T SHOOT OR BE HIT FOR {:.0} S",
-            rules.hits_to_tag, rules.hit_cooldown
-        ),
-        format!(
+pub fn rules_lines(rules: &lt_sim::Rules, mode: lt_sim::level::GameMode) -> Vec<String> {
+    use lt_sim::level::GameMode;
+    let mega = mode == GameMode::Megatarget;
+    let mut out = vec![format!(
+        "{} HITS TAG YOU OUT - AFTER A HIT YOU CAN'T SHOOT OR BE HIT FOR {:.0} S",
+        rules.hits_to_tag, rules.hit_cooldown
+    )];
+    match mode {
+        GameMode::Classic | GameMode::Megatarget => out.push(format!(
             "TAG OUT AN ENEMY: {} - ASSIST: {} - DEFEND YOUR {}: +{}",
             rules.tag_points,
             rules.assist_points,
             if mega { "DOORWAY" } else { "TARGETS" },
             rules.defend_points
-        ),
-    ];
-    if mega {
-        out.push(format!(
-            "HIT BOTH SECONDARY TARGETS ({} EACH) TO PASS THE FORCEFIELDS FOR {:.0} S",
-            rules.secondary_points, rules.power_time
-        ));
-        out.push(format!(
-            "THEN THE MEGATARGET IN THE MIDDLE ROOM: {}",
-            rules.megatarget_points
-        ));
-    } else {
-        out.push(format!(
+        )),
+        _ => out.push(format!(
+            "TAG OUT AN ENEMY: {} - ASSIST: {}",
+            rules.tag_points, rules.assist_points
+        )),
+    }
+    match mode {
+        GameMode::Megatarget => {
+            out.push(format!(
+                "HIT BOTH SECONDARY TARGETS ({} EACH) TO PASS THE FORCEFIELDS FOR {:.0} S",
+                rules.secondary_points, rules.power_time
+            ));
+            out.push(format!(
+                "THEN THE MEGATARGET IN THE MIDDLE ROOM: {}",
+                rules.megatarget_points
+            ));
+        }
+        GameMode::Classic => out.push(format!(
             "ENEMY TARGETS: {} A HIT - SHOOT THEM FROM BEHIND OR BELOW",
             rules.target_points
-        ));
+        )),
+        GameMode::Prism => {
+            out.push(format!(
+                "TAKE THE ENEMY PRISM TO YOURS (WHILE IT'S HOME): {}",
+                rules.prism_points
+            ));
+            out.push(
+                "NO SHOOTING WITH A PRISM - THROW IT TO A TEAM MATE - TOUCH YOURS TO SEND IT HOME"
+                    .into(),
+            );
+        }
+        GameMode::Infection => {
+            out.push(format!(
+                "RED PHANTOMS ARE CLOAKED AND TAG OUT IN ONE HIT - THEIR BOLTS FLY {:.0} M",
+                rules.phantom_range
+            ));
+            out.push(format!(
+                "BLUE SURVIVORS TAGGED OUT TURN PHANTOM - EACH SCORES {} EVERY {:.0} S",
+                rules.survive_points, rules.survive_every
+            ));
+        }
     }
     out.push("YOUR SPAWN PADS HEAL YOU - THEY AND THE WHITE STATIONS REFILL YOUR BLASTER".into());
     out.push(format!("THE LAST {:.0} S COUNT DOUBLE", rules.double_last));
@@ -1355,6 +1402,12 @@ pub fn my_points(e: &SimEvent, game: &Game) -> Option<(&'static str, u32)> {
         SimEvent::TargetHit { by, .. } if by == me => ("TARGET", r.target_points),
         SimEvent::SecondaryHit { by, .. } if by == me => ("SECONDARY", r.secondary_points),
         SimEvent::MegaHit { by, .. } if by == me => ("MEGATARGET", r.megatarget_points),
+        // (On top of the tag's.)
+        SimEvent::BountyClaimed { by, .. } if by == me => {
+            ("BOUNTY", r.bounty_points.saturating_sub(r.tag_points))
+        }
+        SimEvent::BountySurvived { player } if player == me => ("BOUNTY", r.bounty_points),
+        SimEvent::PrismCaptured { by, .. } if by == me => ("CAPTURE", r.prism_points),
         _ => return None,
     };
     Some((what, if game.snap.double { points * 2 } else { points }))
@@ -1669,6 +1722,19 @@ fn objective_markers(
         }
     }
     shown.resize(2 + MAX_GOALS, None);
+    // The enemies a pulse sensor shows.
+    if let Some(p) = me.filter(|p| p.respawn.is_none()) {
+        let c = crate::materials::team_color(Some(p.team.other()));
+        let c = Color::linear_rgb(c.x, c.y, c.z).with_alpha(pulse);
+        for (pos, bounty) in revealed(&game, p) {
+            shown.push(Some(if bounty {
+                (pos, BOUNTY_GOLD.with_alpha(pulse), "BOUNTY".to_string())
+            } else {
+                (pos, c, "SEEN".to_string())
+            }));
+        }
+    }
+    shown.resize(2 + MAX_GOALS + MAX_REVEALED, None);
     let size = Vec2::new(window.width(), window.height());
     let inv = gt.affine().inverse();
     for (m, mut node, mut border) in &mut marks {
@@ -1768,6 +1834,10 @@ pub enum GoalKind {
     /// Megatarget mode: a secondary target still to hit, and (both hit) the megatarget.
     Secondary,
     Core,
+    /// Prism mode: the enemy's prism, one's own away from home, and home (carrying theirs).
+    Prism,
+    Rescue,
+    Home,
 }
 
 impl GoalKind {
@@ -1777,12 +1847,46 @@ impl GoalKind {
             GoalKind::Defend => "DEFEND",
             GoalKind::Secondary => "SECONDARY",
             GoalKind::Core => "MEGATARGET",
+            GoalKind::Prism => "PRISM",
+            GoalKind::Rescue => "RESCUE",
+            GoalKind::Home => "HOME",
         }
     }
 }
 
 /// Goal markers at most (two targets a team, or two secondary targets).
 pub const MAX_GOALS: usize = 4;
+/// Enemies a pulse sensor shows, marked at most.
+pub const MAX_REVEALED: usize = 6;
+
+/// The players marked for `me`: the one with a bounty on them (anyone's but one's own, first),
+/// and the enemies a pulse sensor of its team shows now (nearest first); over their heads, and
+/// whether it's the bounty.
+pub fn revealed(game: &Game, me: &lt_sim::sim::PlayerSnap) -> Vec<(Vec3, bool)> {
+    let over = |o: &lt_sim::sim::PlayerSnap| o.feet + Vec3::Y * 2.3;
+    let bounty = game
+        .snap
+        .bounty
+        .filter(|id| *id != me.id)
+        .and_then(|id| game.snap.players.iter().find(|o| o.id == id))
+        .filter(|o| o.respawn.is_none());
+    let mut seen: Vec<Vec3> = game
+        .snap
+        .players
+        .iter()
+        .filter(|o| o.team != me.team && o.revealed > 0.0 && o.respawn.is_none())
+        .filter(|o| Some(o.id) != bounty.map(|b| b.id))
+        .map(over)
+        .collect();
+    seen.sort_by(|a, b| a.distance(me.feet).total_cmp(&b.distance(me.feet)));
+    let mut out: Vec<(Vec3, bool)> = bounty.map(|b| (over(b), true)).into_iter().collect();
+    out.extend(seen.into_iter().map(|p| (p, false)));
+    out.truncate(MAX_REVEALED);
+    out
+}
+
+/// The bounty's colour.
+pub const BOUNTY_GOLD: Color = Color::srgb(1.0, 0.82, 0.2);
 
 /// The places `p` (alive) has to go for: Classic mode, every team target (marked over it);
 /// Megatarget mode, the secondary targets it hasn't hit yet, or, both hit, the megatarget
@@ -1804,6 +1908,23 @@ pub fn goals(game: &Game, p: &lt_sim::sim::PlayerSnap) -> Vec<(Vec3, GoalKind)> 
             (t.centre() + Vec3::Y * 0.8, kind)
         })
         .collect();
+    // Prism mode: home with theirs; else theirs, and one's own when it's away.
+    if let Some(homes) = game.level.prisms {
+        let above = Vec3::Y * 0.9;
+        if game.snap.prisms.iter().any(|x| x.carrier == Some(p.id)) {
+            out.push((homes[p.team.index()] + above, GoalKind::Home));
+        } else if let Some(x) = game.snap.prisms.iter().find(|x| x.team != p.team) {
+            out.push((x.pos + above, GoalKind::Prism));
+        }
+        if let Some(x) = game
+            .snap
+            .prisms
+            .iter()
+            .find(|x| x.team == p.team && !x.at_home())
+        {
+            out.push((x.pos + above, GoalKind::Rescue));
+        }
+    }
     if let Some(m) = &game.level.mega {
         if p.power.is_some() {
             let below = Vec3::Y * (lt_sim::level::CORE_HALF + 0.6);
@@ -1827,8 +1948,10 @@ pub const GOAL_ALPHA: f32 = 0.6;
 /// The flat screen's colour for a goal marker of `kind` (`mine`: the local player's team).
 fn goal_color(kind: GoalKind, mine: Team) -> Color {
     match kind {
-        GoalKind::Attack => crate::endscreen::team_ui_color(Some(mine.other())),
-        GoalKind::Defend => crate::endscreen::team_ui_color(Some(mine)),
+        GoalKind::Attack | GoalKind::Prism => crate::endscreen::team_ui_color(Some(mine.other())),
+        GoalKind::Defend | GoalKind::Rescue | GoalKind::Home => {
+            crate::endscreen::team_ui_color(Some(mine))
+        }
         GoalKind::Secondary => neonui::AMBER,
         GoalKind::Core => neonui::MAGENTA,
     }
@@ -1935,6 +2058,7 @@ pub fn resupply_banner(e: &SimEvent, game: &Game) -> Option<Banner> {
     let (title, color) = match *e {
         SimEvent::Reloaded { player } if player == me => ("BLASTER FULL", neonui::CYAN),
         SimEvent::Healed { player } if player == me => ("HEALED", neonui::GREEN),
+        SimEvent::Mended { player, .. } if player == me => ("MENDED", neonui::GREEN),
         _ => return None,
     };
     Some(Banner {
@@ -2058,8 +2182,13 @@ fn powerup_chip(
     };
     match kind {
         PickupKind::Rapid if p.rapid => chip("RAPID FIRE".into(), None, false),
-        PickupKind::Shotgun if p.shotgun => chip("SHOTGUN".into(), None, false),
-        PickupKind::Charge if p.charge => {
+        PickupKind::Shotgun if p.weapon == Weapon::Shotgun => chip("SHOTGUN".into(), None, false),
+        PickupKind::Lance if p.weapon == Weapon::Lance => chip("PRISM LANCE".into(), None, false),
+        PickupKind::Dual if p.weapon == Weapon::Dual => chip("DUAL PISTOLS".into(), None, false),
+        PickupKind::Ricochet if p.weapon == Weapon::Ricochet => {
+            chip("RICOCHET".into(), None, false)
+        }
+        PickupKind::Charge if p.weapon == Weapon::Charge => {
             if p.charging >= rules.charge_time {
                 chip("CHARGED - LET GO".into(), Some(1.0), true)
             } else if p.charging > 0.0 {
@@ -2080,7 +2209,25 @@ fn powerup_chip(
         PickupKind::Speed if p.speed > 0.0 => timed("SPEED", p.speed, rules.speed_time),
         PickupKind::Shield if p.shield > 0.0 => timed("SHIELD", p.shield, rules.shield_time),
         PickupKind::Shield if p.shields > 0 => carried("SHIELD", p.shields, Action::Shield),
-        PickupKind::Barrier if p.barriers > 0 => carried("BARRIER", p.barriers, Action::Barrier),
+        PickupKind::Medbeam if p.gadget_kind() == Some(lt_sim::Gadget::Medbeam) => chip(
+            format!(
+                "{} {:.0}  [{}]",
+                if p.mending.is_some() {
+                    "MENDING"
+                } else {
+                    "MED BEAM"
+                },
+                p.medbeam_left.ceil(),
+                key_hint(settings, Action::Gadget)
+            ),
+            Some(p.medbeam_left / rules.medbeam_time.max(0.01)),
+            false,
+        ),
+        _ if let Some((g, n)) = p.gadget
+            && kind.gadget() == Some(g) =>
+        {
+            carried(&g.name().to_uppercase(), n, Action::Gadget)
+        }
         _ => None,
     }
 }
@@ -2156,8 +2303,53 @@ pub fn pickup_banner(
         ),
         PickupKind::Barrier => format!(
             "{}: A WALL THAT STOPS ENEMY BOLTS FOR {:.0} S",
-            key(Action::Barrier, "GRIP OF THE FREE HAND"),
+            key(Action::Gadget, "GRIP OF THE FREE HAND"),
             rules.barrier_time
+        ),
+        PickupKind::Dual => format!(
+            "A PISTOL IN EACH HAND{}",
+            match controls {
+                Controls::Keys => " - THEY FIRE IN TURN".to_string(),
+                Controls::Vr => {
+                    " - GRIP THE OTHER ONE - SHIELD: LEFT STICK - GADGET: HOLD B OR Y".to_string()
+                }
+            }
+        ),
+        PickupKind::Medbeam => format!(
+            "HOLD {} ON A TEAM MATE: IT HEALS THEIR HITS AND REFILLS THEIR BLASTER",
+            match controls {
+                Controls::Keys => key_hint(settings, Action::Gadget),
+                Controls::Vr => "THE GRIP OF THE FREE HAND".to_string(),
+            }
+        ),
+        PickupKind::Decoy => format!(
+            "{}: A COPY OF YOU RUNS AHEAD FOR {:.0} S AND DRAWS FIRE",
+            key(Action::Gadget, "GRIP OF THE FREE HAND"),
+            rules.decoy_time
+        ),
+        PickupKind::Sensor => format!(
+            "{}: THROW IT - IT SHOWS ENEMIES WITHIN {:.0} M FOR {:.0} S",
+            key(Action::Gadget, "GRIP OF THE FREE HAND"),
+            rules.sensor_range,
+            rules.sensor_time
+        ),
+        PickupKind::Mirror => format!(
+            "{}: A MIRROR THAT TURNS BACK EVERY BOLT FOR {:.0} S",
+            key(Action::Gadget, "GRIP OF THE FREE HAND"),
+            rules.mirror_time
+        ),
+        PickupKind::Lance => format!(
+            "{}A SHOT THAT HITS AT ONCE - A HEAD HIT COUNTS {} ({} SHOTS)",
+            match controls {
+                Controls::Keys => format!("HOLD {} TO ZOOM - ", key_hint(settings, Action::Zoom)),
+                Controls::Vr => String::new(),
+            },
+            rules.lance_head_damage,
+            rules.lance_cost
+        ),
+        PickupKind::Ricochet => format!(
+            "BOLTS BOUNCE OFF EVERY WALL - UP TO {} TIMES",
+            rules.ricochet_bounces
         ),
     };
     Banner {
@@ -2175,6 +2367,11 @@ pub fn pickup_banner(
 }
 
 /// The banner for an arena event starting or ending, if `e` is one.
+/// A team's colour for the HUD.
+fn team_ui(team: Team) -> Color {
+    crate::endscreen::team_ui_color(Some(team))
+}
+
 pub fn event_banner_for(e: &SimEvent, rules: &lt_sim::Rules) -> Option<Banner> {
     let pale = Color::srgb(0.75, 0.78, 0.95);
     let gold = Color::srgb(1.0, 0.82, 0.25);
@@ -2207,6 +2404,101 @@ pub fn event_banner_for(e: &SimEvent, rules: &lt_sim::Rules) -> Option<Banner> {
             "EVERY GRENADE AND POWERUP RESPAWNED".to_string(),
             gold,
         )),
+        SimEvent::EventStart {
+            kind: lt_sim::ArenaEvent::MirrorStorm,
+        } => Some(banner(
+            "MIRROR STORM",
+            format!("EVERY WALL TURNS BOLTS BACK FOR {:.0} S", rules.storm_time),
+            Color::srgb(0.75, 0.95, 1.0),
+        )),
+        SimEvent::EventEnd {
+            kind: lt_sim::ArenaEvent::MirrorStorm,
+        } => Some(Banner {
+            time: 2.0,
+            ..banner("STORM OVER", String::new(), Color::srgb(0.75, 0.95, 1.0))
+        }),
+        SimEvent::EventStart {
+            kind: lt_sim::ArenaEvent::LowGravity,
+        } => Some(banner(
+            "LOW GRAVITY",
+            format!(
+                "JUMP HIGH - EVERYTHING FALLS SLOWLY FOR {:.0} S",
+                rules.lowgrav_time
+            ),
+            Color::srgb(0.7, 1.0, 0.6),
+        )),
+        SimEvent::EventEnd {
+            kind: lt_sim::ArenaEvent::LowGravity,
+        } => Some(Banner {
+            time: 2.0,
+            ..banner("GRAVITY BACK", String::new(), Color::srgb(0.7, 1.0, 0.6))
+        }),
+        SimEvent::EventStart {
+            kind: lt_sim::ArenaEvent::Bounty,
+        } => Some(banner(
+            "BOUNTY",
+            format!(
+                "TAG THE MARKED PLAYER OUT FOR {} - OR LAST {:.0} S",
+                rules.bounty_points, rules.bounty_time
+            ),
+            BOUNTY_GOLD,
+        )),
+        SimEvent::BountyClaimed { .. } => Some(Banner {
+            time: 2.0,
+            ..banner("BOUNTY CLAIMED", String::new(), BOUNTY_GOLD)
+        }),
+        SimEvent::BountySurvived { .. } => Some(Banner {
+            time: 2.0,
+            ..banner("BOUNTY SURVIVED", String::new(), BOUNTY_GOLD)
+        }),
+        SimEvent::PrismCaptured { team, .. } => Some(banner(
+            "PRISM CAPTURED",
+            format!(
+                "{} SCORES {}",
+                if team == Team::Red { "BLUE" } else { "RED" },
+                rules.prism_points
+            ),
+            Color::srgb(0.85, 0.9, 1.0),
+        )),
+        SimEvent::PrismTaken { team, .. } => Some(Banner {
+            time: 2.0,
+            small: true,
+            ..banner(
+                if team == Team::Red {
+                    "RED PRISM TAKEN"
+                } else {
+                    "BLUE PRISM TAKEN"
+                },
+                String::new(),
+                team_ui(team),
+            )
+        }),
+        SimEvent::PrismDropped { team, .. } => Some(Banner {
+            time: 2.0,
+            small: true,
+            ..banner(
+                if team == Team::Red {
+                    "RED PRISM DROPPED"
+                } else {
+                    "BLUE PRISM DROPPED"
+                },
+                String::new(),
+                team_ui(team),
+            )
+        }),
+        SimEvent::PrismReturned { team, .. } => Some(Banner {
+            time: 2.0,
+            small: true,
+            ..banner(
+                if team == Team::Red {
+                    "RED PRISM HOME"
+                } else {
+                    "BLUE PRISM HOME"
+                },
+                String::new(),
+                team_ui(team),
+            )
+        }),
         SimEvent::Countdown { n } => Some(Banner {
             time: 0.95,
             ..banner(
@@ -2264,6 +2556,19 @@ pub fn mega_banner_for(e: &SimEvent, game: &Game) -> Option<Banner> {
         small,
     };
     match *e {
+        // Infection: one's own fate.
+        SimEvent::Infected { player } if player == me => Some(banner(
+            "YOU ARE A PHANTOM",
+            "CLOAKED - YOUR BOLTS TAG OUT AT ONCE BUT FLY SHORT - HUNT THE SURVIVORS".to_string(),
+            crate::endscreen::team_ui_color(Some(Team::Red)),
+            false,
+        )),
+        SimEvent::Go if game.level.mode == lt_sim::level::GameMode::Infection => Some(banner(
+            "INFECTION",
+            "PHANTOMS ARE CLOAKED - SURVIVORS SCORE FOR STAYING UNTAGGED".to_string(),
+            neonui::GREEN,
+            true,
+        )),
         SimEvent::SecondaryHit {
             by, charged: true, ..
         } if by == me => Some(banner(

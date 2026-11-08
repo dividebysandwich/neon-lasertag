@@ -181,7 +181,7 @@ fn help(p: &mut ChildSpawnerCommands, settings: &Settings, game: &Game) {
             });
             p.spawn(column(300.0)).with_children(|p| {
                 p.spawn(neonui::text_w("RULES", 17.0, neonui::VIOLET, 800));
-                for line in crate::hud::rules_lines(&game.rules, game.level.mega.is_some()) {
+                for line in crate::hud::rules_lines(&game.rules, game.level.mode) {
                     p.spawn(neonui::text(line, 12.0, neonui::TEXT));
                     p.spawn(neonui::gap(2.0));
                 }

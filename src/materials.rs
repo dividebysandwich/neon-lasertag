@@ -4,6 +4,7 @@
 //! `NeonGlobals` (time, team colours, event pulses), copied into them every frame.
 //! Shader: assets/shaders/neon.wgsl (and its GL port assets/shaders/gl/neon.glsl).
 
+use bevy::material::OpaqueRendererMethod;
 use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::pbr::{MaterialPipeline, MaterialPipelineKey};
 use bevy::prelude::*;
@@ -44,6 +45,13 @@ pub fn pickup_color(kind: PickupKind) -> Vec3 {
         PickupKind::Speed => Vec3::new(0.6, 1.0, 0.05),
         PickupKind::Charge => Vec3::new(1.0, 0.1, 0.6),
         PickupKind::Barrier => Vec3::new(0.0, 1.0, 0.45),
+        PickupKind::Ricochet => Vec3::new(1.0, 1.0, 0.2),
+        PickupKind::Lance => Vec3::new(0.55, 0.75, 1.0),
+        PickupKind::Mirror => Vec3::new(0.8, 0.95, 1.0),
+        PickupKind::Sensor => Vec3::new(0.2, 1.0, 0.8),
+        PickupKind::Decoy => Vec3::new(1.0, 0.55, 0.85),
+        PickupKind::Medbeam => Vec3::new(0.3, 1.0, 0.3),
+        PickupKind::Dual => Vec3::new(1.0, 0.3, 0.2),
     }
 }
 
@@ -197,6 +205,20 @@ impl Material for AccentMaterial {
         SHADER.into()
     }
 
+    fn deferred_fragment_shader() -> ShaderRef {
+        SHADER.into()
+    }
+
+    /// Deferred while reflections are on (`DefaultOpaqueRendererMethod`, src/reflections.rs),
+    /// so they show in them; overlays always forward (they set their own depth).
+    fn opaque_render_method(&self) -> OpaqueRendererMethod {
+        if self.overlay {
+            OpaqueRendererMethod::Forward
+        } else {
+            OpaqueRendererMethod::Auto
+        }
+    }
+
     fn enable_shadows() -> bool {
         false
     }
@@ -312,6 +334,8 @@ pub struct Palette {
     pub suit: Handle<StandardMaterial>,
     /// Lighter surfaces of the avatars (muzzles, patches).
     pub fur: Handle<StandardMaterial>,
+    /// The whites of the avatars' eyes (a little self-lit, so they read in the dark).
+    pub sclera: Handle<StandardMaterial>,
     pub arena_accent: Handle<AccentMaterial>,
     pub arena_glow: Handle<GlowMaterial>,
     /// The border walls around the arena: a fixed colour, turned slowly through the rainbow and
@@ -394,12 +418,20 @@ fn make_palette(
         perceptual_roughness: 0.8,
         ..default()
     });
+    let sclera = std.add(StandardMaterial {
+        base_color: Color::linear_rgb(0.62, 0.62, 0.66),
+        emissive: LinearRgba::new(0.05, 0.05, 0.06, 1.0),
+        perceptual_roughness: 0.35,
+        reflectance: 0.5,
+        ..default()
+    });
     let fixed = |c: Vec3, i: f32| NeonUniform::fixed(c, i);
     let colors = [RED, BLUE, WHITE];
     commands.insert_resource(Palette {
         body,
         suit,
         fur,
+        sclera,
         arena_accent: accents.add(AccentMaterial {
             overlay: false,
             neon: NeonUniform::team_zoned(3.0).dimmable(),
@@ -437,7 +469,7 @@ fn make_palette(
         eyes: colors.map(|c| {
             accents.add(AccentMaterial {
                 overlay: false,
-                neon: fixed(c, 7.0),
+                neon: fixed(c, 4.0),
             })
         }),
         flow: colors.map(|c| {

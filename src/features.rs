@@ -43,7 +43,14 @@ impl Plugin for FeaturesPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BarrierViews>().add_systems(
             Update,
-            (on_events, animate, sync_barriers)
+            (
+                on_events,
+                animate,
+                sync_barriers,
+                sync_sensors,
+                sync_tethers,
+                sync_prisms,
+            )
                 .chain()
                 .run_if(resource_exists::<Game>),
         );
@@ -438,9 +445,15 @@ fn sync_barriers(
     for b in &game.snap.barriers {
         let v = views.0.entry(b.id).or_insert_with(|| {
             let color = team_color(Some(b.team));
+            // (A mirror's sheet is a pale silver, its frame the team's.)
+            let sheet = if b.mirror {
+                Vec3::new(0.75, 0.9, 1.0)
+            } else {
+                color
+            };
             let sheet_mat = glows.add(GlowMaterial {
                 overlay: false,
-                neon: NeonUniform::fixed(color, 2.0).shield(),
+                neon: NeonUniform::fixed(sheet, 2.0).shield(),
             });
             let posts = accents.add(AccentMaterial {
                 overlay: false,
@@ -452,7 +465,7 @@ fn sync_barriers(
                     ArenaPart,
                     Transform::from_translation(b.centre).with_rotation(rot),
                     Visibility::default(),
-                    Name::new("barrier"),
+                    Name::new(if b.mirror { "mirror" } else { "barrier" }),
                 ))
                 .id();
             // The sheet: uv 0..1 across and up, seen from both sides.
@@ -494,7 +507,12 @@ fn sync_barriers(
         });
         v.3 = (v.3 - dt * 3.0).max(0.0);
         // Going up: swelling in; the last second: flickering out.
-        let rise = ((game.rules.barrier_time - b.left) / 0.25).clamp(0.0, 1.0);
+        let total = if b.mirror {
+            game.rules.mirror_time
+        } else {
+            game.rules.barrier_time
+        };
+        let rise = ((total - b.left) / 0.25).clamp(0.0, 1.0);
         let fade = if b.left < 1.0 {
             if (t * 12.0).fract() < 0.5 {
                 b.left
@@ -514,16 +532,268 @@ fn sync_barriers(
     }
 }
 
+/// Pulse sensors: a small glowing core in the team's colour on a dark shell, its light
+/// flaring with every pulse.
+#[allow(clippy::too_many_arguments)]
+fn sync_sensors(
+    mut commands: Commands,
+    game: Res<Game>,
+    time: Res<Time>,
+    palette: Res<crate::materials::Palette>,
+    mut views: Local<std::collections::HashMap<u32, Entity>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut ball: Local<Option<Handle<Mesh>>>,
+    mut q: Query<&mut Transform>,
+) {
+    let ball = ball
+        .get_or_insert_with(|| meshes.add(Sphere::new(0.07).mesh().ico(2).unwrap()))
+        .clone();
+    views.retain(|id, e| {
+        let keep = game.snap.sensors.iter().any(|s| s.id == *id);
+        if !keep && let Ok(mut c) = commands.get_entity(*e) {
+            c.despawn();
+        }
+        keep
+    });
+    let t = time.elapsed_secs();
+    for s in &game.snap.sensors {
+        let e = *views.entry(s.id).or_insert_with(|| {
+            let c = team_color(Some(s.team));
+            let root = commands
+                .spawn((
+                    ArenaPart,
+                    Mesh3d(ball.clone()),
+                    MeshMaterial3d(palette.bolt_for(Some(s.team))),
+                    Transform::from_translation(s.pos),
+                    Visibility::default(),
+                    Name::new("sensor"),
+                ))
+                .id();
+            commands.spawn((
+                PointLight {
+                    color: Color::linear_rgb(c.x, c.y, c.z),
+                    intensity: 8_000.0,
+                    range: 3.0,
+                    shadow_maps_enabled: false,
+                    ..default()
+                },
+                Transform::IDENTITY,
+                ChildOf(root),
+            ));
+            root
+        });
+        if let Ok(mut tr) = q.get_mut(e) {
+            tr.translation = s.pos;
+            // (A quick swell at each pulse, a slow breath between.)
+            let since = game.rules.sensor_every - s.next_pulse;
+            let flare = if s.stuck {
+                (1.0 - since / 0.3).max(0.0)
+            } else {
+                0.0
+            };
+            tr.scale = Vec3::splat(1.0 + 0.15 * (t * 3.0).sin() + 1.2 * flare);
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+/// Med beams on team mates: a green tether from the healer's gun (or chest) to the chest of
+/// the one it heals, shimmering.
+fn sync_tethers(
+    mut commands: Commands,
+    game: Res<Game>,
+    time: Res<Time>,
+    mut views: Local<std::collections::HashMap<lt_sim::PlayerId, Entity>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut glows: ResMut<Assets<GlowMaterial>>,
+    mut look: Local<Option<(Handle<Mesh>, Handle<GlowMaterial>)>>,
+    mut q: Query<&mut Transform>,
+) {
+    let (mesh, mat) = look
+        .get_or_insert_with(|| {
+            (
+                meshes.add(Cylinder::new(0.02, 1.0)),
+                glows.add(GlowMaterial {
+                    overlay: false,
+                    neon: NeonUniform::fixed(Vec3::new(0.3, 1.0, 0.35), 3.0),
+                }),
+            )
+        })
+        .clone();
+    let chest = |p: &lt_sim::sim::PlayerSnap| {
+        lt_sim::sim::chest_top(p.feet + p.head.pos, p.head.rot)
+            - Vec3::Y * lt_sim::hitbox::CHEST_HALF.y
+    };
+    let mut on = Vec::new();
+    for p in &game.snap.players {
+        let Some(t) = p.mending.filter(|_| p.respawn.is_none()) else {
+            continue;
+        };
+        let Some(o) = game.snap.players.iter().find(|o| o.id == t) else {
+            continue;
+        };
+        let from = p
+            .gun_hand
+            .map_or(chest(p), |h| p.feet + p.hands[h.index()].pos);
+        let to = chest(o);
+        let len = from.distance(to);
+        if len < 0.05 {
+            continue;
+        }
+        on.push(p.id);
+        let e = *views.entry(p.id).or_insert_with(|| {
+            commands
+                .spawn((
+                    ArenaPart,
+                    Mesh3d(mesh.clone()),
+                    MeshMaterial3d(mat.clone()),
+                    Transform::default(),
+                    Name::new("tether"),
+                ))
+                .id()
+        });
+        if let Ok(mut tr) = q.get_mut(e) {
+            let wobble = 1.0 + 0.3 * (time.elapsed_secs() * 20.0 + p.id as f32).sin();
+            *tr = Transform::from_translation((from + to) / 2.0)
+                .with_rotation(Quat::from_rotation_arc(Vec3::Y, (to - from) / len))
+                .with_scale(Vec3::new(wobble, len, wobble));
+        }
+    }
+    views.retain(|id, e| {
+        let keep = on.contains(id);
+        if !keep && let Ok(mut c) = commands.get_entity(*e) {
+            c.despawn();
+        }
+        keep
+    });
+}
+
+/// Prism mode: each prism a spinning octahedron of light in its team's colour (over its
+/// carrier's head when carried), and a ring on the floor at its home.
+#[allow(clippy::too_many_arguments)]
+fn sync_prisms(
+    mut commands: Commands,
+    game: Res<Game>,
+    time: Res<Time>,
+    palette: Res<crate::materials::Palette>,
+    mut views: Local<Option<(u64, [Entity; 2])>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut q: Query<&mut Transform>,
+) {
+    let Some(homes) = game.level.prisms else {
+        return;
+    };
+    // (Again for a new arena, or the same one rebuilt.)
+    if views.is_none_or(|v| v.0 != game.level.seed || q.get(v.1[0]).is_err()) {
+        // An octahedron, 0.5 m tall.
+        let mut m = MeshData::default();
+        let (h, r) = (0.25, 0.16);
+        let pts = [
+            Vec3::Y * h,
+            Vec3::NEG_Y * h,
+            Vec3::X * r,
+            Vec3::Z * r,
+            Vec3::NEG_X * r,
+            Vec3::NEG_Z * r,
+        ];
+        for (tip, sign) in [(0usize, 1.0f32), (1, -1.0)] {
+            for k in 0..4 {
+                let (a, b) = (pts[2 + k], pts[2 + (k + 1) % 4]);
+                let (a, b) = if sign > 0.0 { (b, a) } else { (a, b) };
+                let n = (a - pts[tip]).cross(b - pts[tip]).normalize();
+                for v in [pts[tip], a, b] {
+                    m.pos.push(v.to_array());
+                    m.nrm.push(n.to_array());
+                    m.uv.push([0.0, 0.0]);
+                }
+                let i = m.idx.len() as u32;
+                m.idx.extend([i, i + 1, i + 2]);
+            }
+        }
+        let mesh = meshes.add(m.to_mesh());
+        let ring = meshes.add(Torus::new(0.55, 0.65));
+        let mut ents = [Entity::PLACEHOLDER; 2];
+        for team in [lt_sim::Team::Red, lt_sim::Team::Blue] {
+            let c = team_color(Some(team));
+            let e = commands
+                .spawn((
+                    ArenaPart,
+                    Mesh3d(mesh.clone()),
+                    MeshMaterial3d(palette.bolt_for(Some(team))),
+                    Transform::from_translation(homes[team.index()]),
+                    Name::new("prism"),
+                ))
+                .id();
+            commands.spawn((
+                PointLight {
+                    color: Color::linear_rgb(c.x, c.y, c.z),
+                    intensity: 20_000.0,
+                    range: 4.0,
+                    shadow_maps_enabled: false,
+                    ..default()
+                },
+                Transform::IDENTITY,
+                ChildOf(e),
+            ));
+            commands.spawn((
+                ArenaPart,
+                Mesh3d(ring.clone()),
+                MeshMaterial3d(palette.accent_for(Some(team))),
+                Transform::from_translation(
+                    homes[team.index()] - Vec3::Y * (lt_sim::level::PRISM_HOVER - 0.03),
+                )
+                .with_scale(Vec3::new(1.0, 0.3, 1.0)),
+                Name::new("prism home"),
+            ));
+            ents[team.index()] = e;
+        }
+        *views = Some((game.level.seed, ents));
+    }
+    let Some((_, ents)) = *views else { return };
+    let t = time.elapsed_secs();
+    for p in &game.snap.prisms {
+        if let Ok(mut tr) = q.get_mut(ents[p.team.index()]) {
+            let bob = if p.at_home() {
+                0.08 * (t * 2.0).sin()
+            } else {
+                0.0
+            };
+            tr.translation = p.pos + Vec3::Y * bob;
+            tr.rotation = Quat::from_rotation_y(t * 1.5);
+            // (Pulsing while it lies away from home.)
+            let s = if p.dropped.is_some() {
+                1.0 + 0.2 * (t * 8.0).sin()
+            } else {
+                1.0
+            };
+            tr.scale = Vec3::splat(s);
+        }
+    }
+}
+
 fn on_events(
     mut events: MessageReader<GameEvent>,
     mut mirrors: Query<&mut MirrorView>,
     mut pads: Query<&mut PadView>,
     mut gates: Query<&mut GateView>,
     mut barriers: ResMut<BarrierViews>,
+    game: Option<Res<Game>>,
 ) {
     for GameEvent(e) in events.read() {
         if let SimEvent::BarrierHit { id, .. } = *e
             && let Some(v) = barriers.0.get_mut(&id)
+        {
+            v.3 = 1.0;
+        }
+        // (A bolt turned back by a mirror put up: it flashes as a barrier hit.)
+        if let SimEvent::Reflected { pos, .. } = *e
+            && let Some(b) = game.as_ref().and_then(|g| {
+                g.snap
+                    .barriers
+                    .iter()
+                    .find(|b| b.mirror && b.centre.distance(pos) < 1.5)
+            })
+            && let Some(v) = barriers.0.get_mut(&b.id)
         {
             v.3 = 1.0;
         }

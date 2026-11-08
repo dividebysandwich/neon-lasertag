@@ -11,9 +11,20 @@
 // Halos fade with uv.y (0 at the strip, 1 at the outer edge); volume halos (light cones) also
 // fade where they are seen edge on; forcefields (shape 3) are translucent sheets of their own;
 // cloaks (shape 4) are a faint shimmer, brightest at the silhouette.
+//
+// With reflections on (src/reflections.rs) the accents are drawn deferred: their colour goes
+// into the G-buffer as unlit, so the screen-space reflections on the glossy surfaces show them.
 
-#import bevy_pbr::forward_io::VertexOutput
 #import bevy_pbr::mesh_view_bindings::view
+#ifdef PREPASS_PIPELINE
+#import bevy_pbr::{
+    prepass_io::{VertexOutput, FragmentOutput},
+    pbr_deferred_functions::deferred_output,
+    pbr_types::{pbr_input_new, STANDARD_MATERIAL_FLAGS_UNLIT_BIT},
+}
+#else
+#import bevy_pbr::forward_io::VertexOutput
+#endif
 
 struct Neon {
     // rgb: fixed colour (modes 1, 2), a: intensity.
@@ -200,7 +211,19 @@ fn cloak(world: vec3<f32>, n: vec3<f32>, to_eye: vec3<f32>, t: f32) -> f32 {
 // Overlays (src/materials.rs NeonKey: the VR menus) are drawn over the world: their depth is
 // squeezed into the sliver next to the near plane (reversed depth, 1 there), keeping their
 // own order, so only what is within OVERLAY_DEPTH of the near plane comes in front.
-#ifdef OVERLAY
+#ifdef PREPASS_PIPELINE
+@fragment
+fn fragment(in: VertexOutput) -> FragmentOutput {
+    var pbr = pbr_input_new();
+    pbr.material.base_color = vec4<f32>(shade(in).rgb, 1.0);
+    pbr.material.flags |= STANDARD_MATERIAL_FLAGS_UNLIT_BIT;
+    pbr.frag_coord = in.position;
+    pbr.world_position = in.world_position;
+    pbr.world_normal = normalize(in.world_normal);
+    pbr.N = pbr.world_normal;
+    return deferred_output(in, pbr);
+}
+#else ifdef OVERLAY
 const OVERLAY_DEPTH: f32 = 0.01;
 
 struct OverlayOut {

@@ -2,7 +2,8 @@
 
     blender -b --factory-startup --python-exit-code 1 --python tools/models/avatars.py
 
-Players are floating parts: a head, a torso and two hands, no neck/arms/legs.
+Players are a head, a torso and two hands, joined by rigid body segments (neck, pelvis, arms,
+legs, boots) that the game poses by IK every frame.
 
 - `head_wolf`, `head_cat`, `head_deer`, `head_fox`, `head_bear`, `head_rabbit`, `head_owl`,
   `head_boar`: faceted low-poly animal heads. Origin at the midpoint between the eyes (the VR
@@ -13,6 +14,8 @@ Players are floating parts: a head, a torso and two hands, no neck/arms/legs.
 - `hand_left`, `hand_right`: gloved hands gripping, origin at the palm centre, fingers along
   -Z, palm facing +X (left) / -X (right). Built separately (mirror images), not mirrored at
   runtime.
+- `neck`, `pelvis`, `upper_arm`, `forearm`, `thigh`, `shin`, `boot`: rigid body segments, each
+  hanging from its joint (the origin) down -Y, front -Z; one mesh serves both sides.
 
 Materials: `body` (near-black), `fur_light` (mid grey: muzzles, cheeks, facial discs so the
 faces read in the dark), `accent` (noses, ear inners, trim; recoloured to the team colour by the
@@ -30,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ltlib as L  # noqa: E402
 from ltlib import add, sub, mul, dot, cross, norm, length, X, Y, Z, NX, NY, NZ  # noqa: E402
 
-HEADS = ("wolf", "cat", "deer", "fox", "bear", "rabbit", "owl", "boar")
+HEADS = ("wolf", "cat", "deer", "fox", "bear", "rabbit", "owl", "boar", "dragon")
 SOLID = ("body", "fur_light")
 
 
@@ -344,14 +347,27 @@ def translate(geo, off):
 
 
 # ---------------------------------------------------------------------------------------------
-# Heads.
+# Heads: cartoon animals with big eyes. The eyeballs and eyelids are two shared meshes
+# (`eyeball`, `eyelid`: unit radius, looking along -Z, +Y up) that the game instances at each
+# head's `head_<animal>_eye_l` / `_eye_r` nodes (origin at the eyeball's centre, -Z the eye's
+# forward, scaled by the eye's radius), turning the balls to look about and the lids to blink.
 
-ANG = (0, 22.5, 45, 67.5, 90, 112.5, 135, 157.5, 180)
+SIDES = 16
+ANG = tuple(180.0 * i / (SIDES // 2) for i in range(SIDES // 2 + 1))
+# How wide open each animal's eyes rest: the upper and the lower lid's edge, in degrees above
+# and below the eye's forward point (src/assets.rs ANIMALS keeps the same table for the game;
+# the blend file carries it on the eye empties for preview.py).
+LIDS = {"wolf": (40, 44), "cat": (46, 48), "deer": (54, 52), "fox": (36, 44), "bear": (48, 48),
+        "rabbit": (58, 54), "owl": (62, 58), "boar": (40, 42), "dragon": (42, 46)}
+# Lids closed: their edges meet this far below the forward point.
+LID_SHUT = -5
+# The skull surfaces shade smoothly across edges bending less than this (degrees).
+SMOOTH = 40.0
 
 
 def head_ring(z, cy, hw, hh, n=2.4, wt=1.0, wb=1.0):
-    """16-sided superellipse section at z (top and bottom vertices on the mirror plane);
-    wt/wb scale the width of the upper/lower half."""
+    """Superellipse section at z (top and bottom vertices on the mirror plane); wt/wb scale the
+    width of the upper/lower half."""
     half = []
     for a in ANG:
         s, c = math.sin(math.radians(a)), math.cos(math.radians(a))
@@ -360,89 +376,252 @@ def head_ring(z, cy, hw, hh, n=2.4, wt=1.0, wb=1.0):
     return half + [(-x, y, z) for x, y, z in reversed(half[1:-1])]
 
 
+def circle(c, n, r, k=12, phase=0.0, uhint=Y):
+    """k points of a circle of radius r around c in the plane with normal n."""
+    n = norm(n)
+    a = cross(uhint, n)
+    if length(a) < 1e-4:
+        a = cross(X, n)
+    a = norm(a)
+    b = cross(n, a)
+    return [add(c, add(mul(a, r * math.cos(math.radians(phase + 360.0 * i / k))),
+                       mul(b, r * math.sin(math.radians(phase + 360.0 * i / k)))))
+            for i in range(k)]
+
+
+def torus(geo, c, n, R, r, mat="accent", segs=18, sides=8, uhint=Y, arc=(0.0, 360.0)):
+    """A ring (or an arc of one) of radius R, r thick, around c in the plane with normal n."""
+    n = norm(n)
+    a = cross(uhint, n)
+    if length(a) < 1e-4:
+        a = cross(X, n)
+    a = norm(a)
+    b = cross(n, a)
+    closed = abs(arc[1] - arc[0] - 360.0) < 1e-6
+    k = segs if closed else segs + 1
+    rings = []
+    for i in range(k):
+        t = math.radians(arc[0] + (arc[1] - arc[0]) * i / segs)
+        rad = add(mul(a, math.cos(t)), mul(b, math.sin(t)))
+        cc = add(c, mul(rad, R))
+        rings.append([add(cc, add(mul(rad, r * math.cos(math.radians(360.0 * j / sides))),
+                                  mul(n, r * math.sin(math.radians(360.0 * j / sides)))))
+                      for j in range(sides)])
+    if closed:
+        rings.append(rings[0])
+    for A, B in zip(rings, rings[1:]):
+        for j in range(sides):
+            q = [A[j], A[(j + 1) % sides], B[(j + 1) % sides], B[j]]
+            cc = centroid(q)
+            rad = sub(cc, c)
+            rad = norm(sub(rad, mul(n, dot(rad, n))))
+            ring_c = add(c, mul(rad, R))
+            facet(geo, q, mat, sub(cc, ring_c))
+    if not closed:
+        geo.face(list(rings[0]), mat, want=sub(centroid(rings[0]), centroid(rings[1])))
+        geo.face(list(rings[-1]), mat, want=sub(centroid(rings[-1]), centroid(rings[-2])))
+
+
 class Head:
     """secs: (z, cy, hw, hh[, n, wt, wb]) from the back of the skull to the snout tip.
     eye: (target x, y, z, yaw) - a ray towards the target, turned `yaw` degrees outwards from
-    straight ahead, finds the right eye; its midpoint with the left eye becomes the origin."""
+    straight ahead, finds where the right eyeball sits; the ball (radius `radius`) is sunk
+    `sink` radii into the skull along that ray and looks ahead, turned `diverge` of the way
+    outwards. The midpoint between the eyeballs' centres becomes the origin."""
 
-    def __init__(self, secs, eye, paint=None, nose_mat="body"):
+    def __init__(self, secs, eye, radius, paint=None, nose_mat="body", sink=0.45, diverge=0.3):
         self.g = L.Geo()  # symmetric part
         self.h = L.Geo()  # +X half, mirrored in finish()
         self.rings = [head_ring(*s) for s in secs]
         self.secs = secs
+        self.snout = None
         loft(self.g, self.rings, paint=paint, cap1=nose_mat)
         tx, ty, tz, yaw = eye
-        self.eye_n_out = (math.sin(math.radians(yaw)), 0.0, -math.cos(math.radians(yaw)))
-        self.eye_u = (math.cos(math.radians(yaw)), 0.0, math.sin(math.radians(yaw)))
-        self.eye_c, self.eye_n = raycast([self.g], add((tx, ty, tz), mul(self.eye_n_out, 0.4)),
-                                         mul(self.eye_n_out, -1))
+        out = (math.sin(math.radians(yaw)), 0.0, -math.cos(math.radians(yaw)))
+        hit, _ = raycast([self.g], add((tx, ty, tz), mul(out, 0.4)), mul(out, -1))
+        self.eye_r = radius
+        self.eye_c = sub(hit, mul(out, sink * radius))
+        self.eye_fwd = norm(add(mul(NZ, 1.0 - diverge), mul(out, diverge)))
+        self.eye_out = out
+
+    def muzzle(self, secs, paint=None, nose_mat="body", throat="fur_light"):
+        """The muzzle: a second loft of sections (as the skull's) growing out of the face, from
+        inside the skull to the snout tip (then `front`); its back face, where the jaw hangs
+        below the skull, is the `throat`."""
+        loft(self.g, [head_ring(*s) for s in secs], paint=paint, cap0=throat, cap1=nose_mat)
+        self.snout = secs
 
     @property
     def front(self):
         """(centre, half width, half height) of the snout's end cap."""
-        s = self.secs[-1]
+        s = (self.snout or self.secs)[-1]
         return (0.0, s[1], s[0]), s[2], s[3]
 
-    def eye(self, shape, pupil=None, mat="eyes", halo=0.012, seg=0.022):
-        plate(self.h, self.eye_c, self.eye_n, shape, mat, uhint=self.eye_u)
-        if pupil:
-            plate(self.h, self.eye_c, self.eye_n, pupil, "body", h=0.0045, uhint=self.eye_u)
-        if halo:
-            eye_halo(self.h, [self.g], self.eye_c, self.eye_n, shape, halo, uhint=self.eye_u,
-                     seg=seg)
-
     def axis_y(self, z):
-        zs = [s[0] for s in self.secs]
-        if z >= zs[0]:
-            return self.secs[0][1]
-        for a, b in zip(self.secs, self.secs[1:]):
+        """The skull's (or, ahead of it, the muzzle's) centre line height at z."""
+        secs = list(self.secs)
+        if self.snout:
+            secs += [s for s in self.snout if s[0] < secs[-1][0]]
+        if z >= secs[0][0]:
+            return secs[0][1]
+        for a, b in zip(secs, secs[1:]):
             if b[0] <= z <= a[0]:
                 t = (a[0] - z) / (a[0] - b[0])
                 return a[1] + (b[1] - a[1]) * t
-        return self.secs[-1][1]
+        return secs[-1][1]
+
+    def surface(self, z, angle, lift=0.0):
+        """The skull's surface point at section z, `angle` degrees round the long axis from the
+        top (+Y) towards +X, and its face normal; lifted along the normal."""
+        d = (math.sin(math.radians(angle)), math.cos(math.radians(angle)), 0.0)
+        c = (0.0, self.axis_y(z), z)
+        p, n = raycast([self.g], add(c, mul(d, 0.5)), mul(d, -1))
+        return add(p, mul(n, lift)), n
 
     def flow(self, guide, w=0.005, step=0.01):
         """A light line over the skull through guide = [(z, angle)]: angle in degrees around
         the head's long axis from the top (+Y) towards +X; 0 everywhere puts one line on the
         mirror plane, otherwise it is drawn on the +X half and mirrored."""
         mid = all(abs(a) < 1e-6 for _, a in guide)
-
-        def ray(g):
-            z, a = g
-            d = (math.sin(math.radians(a)), math.cos(math.radians(a)), 0.0)
-            c = (0.0, self.axis_y(z), z)
-            return add(c, mul(d, 0.5)), mul(d, -1)
-        # Resample in metres (angles at a ~0.1 m radius).
         scaled = [(z, math.radians(a) * 0.1) for z, a in guide]
         pts = [(z, math.degrees(a / 0.1)) for z, a in resample(scaled, step)]
-        samples = [raycast([self.g], *ray(g)) for g in pts]
+        samples = [self.surface(z, a) for z, a in pts]
         return flow_strip(self.g if mid else self.h, samples, w, mid=mid)
 
-    def nose(self, shape, mat="accent", dy=0.0):
+    def brow(self, thick=0.3, lift=1.3, inner=0.0, outer=0.0, span=(10, 170), mat="body",
+             fwd=0.0):
+        """A ridge over the eye from its inner corner (span[0]) over the top to its outer corner:
+        a tube lying on the skull `lift` eye radii from the ball's centre, `thick` radii thick;
+        `inner`/`outer` lower those ends (radii) for a frown or a raised brow."""
+        r = self.eye_r
+        F = self.eye_fwd
+        R = norm(cross(Y, F))  # inwards (-X) for the right eye
+        path = []
+        n = 5
+        for i in range(n + 1):
+            t = i / n
+            a = math.radians(span[0] + (span[1] - span[0]) * t)
+            drop = inner + (outer - inner) * t
+            d = add(mul(R, math.cos(a)), mul(Y, math.sin(a) - drop))
+            p = add(add(self.eye_c, mul(d, lift * r)), mul(F, fwd * r))
+            path.append(project([self.g], p, self.eye_out, thick * r * 0.45))
+        tube(self.h, path, [thick * r] * len(path), sides=6, tip=False, mat=mat)
+
+    def nose(self, hw, hh, depth=0.012, mat="accent", dy=0.0, k=8):
+        """A rounded nose blob on the snout's end cap."""
         c, _, _ = self.front
-        plate(self.g, add(c, (0, dy, 0)), NZ, shape, mat, depth=0.004)
+        c = add(c, (0.0, dy, 0.004))
+        rings = []
+        for s, dz in ((1.0, 0.0), (0.92, -depth * 0.45), (0.65, -depth * 0.85)):
+            rings.append([add(c, (hw * s * math.cos(math.radians(360.0 * i / k)),
+                                  hh * s * math.sin(math.radians(360.0 * i / k)), dz))
+                          for i in range(k)])
+        rings.append([add(c, (0.0, 0.0, -depth))])
+        loft(self.g, rings, mat=mat, cap0=None, cap1=None)
 
-    def decal(self, target, d, shape, mat="accent", half=True, **kw):
-        return decal(self.h if half else self.g, [self.g], target, d, shape, mat, **kw)
+    def mouth(self, y, half=0.035, lift=0.012, w=0.0035, mat="body", z=None):
+        """A smile: a thin dark line on the muzzle's front from the middle out to each cheek,
+        rising `lift` at its ends (seen from the front)."""
+        c, _, _ = self.front
+        z0 = c[2] if z is None else z
+        guide = [(0.0, y, z0), (half * 0.5, y + lift * 0.15, z0), (half, y + lift, z0)]
+        ray_strip(self.h, [self.g], guide, lambda p: ((p[0], p[1], -0.5), Z), w, step=0.012,
+                  mat=mat, h=0.0012, depth=0.003)
 
-    def ear(self, bc, w, dz, apex, inner=0.55, inner_shift=0.0, tilt=0.0):
-        """Pointed ear: pyramid over a w x dz base (sunk into the skull at bc), the front face
-        carrying an accent inner."""
+    def ear(self, bc, w, dz, apex, inner=0.55, inner_shift=0.0, tilt=0.0, ch=0.3):
+        """Pointed ear: a pyramid over a rounded w x dz base (sunk into the skull at bc), the
+        front face carrying an accent inner."""
         hw, hd = w / 2, dz / 2
-        base = [add(bc, (-hw, -tilt, -hd)), add(bc, (hw, tilt, -hd)), add(bc, (hw, tilt, hd)),
-                add(bc, (-hw, -tilt, hd))]
+        base = [add(bc, (x, tilt * x / hw, z)) for x, z in
+                L.chamfer_rect(-hw, -hd, hw, hd, min(hw, hd) * ch)]
         sides = pyramid(self.h, base, apex)
-        front = sides[0]
+        front = min(sides, key=lambda f: centroid(f)[2])
         sh = mul(sub(apex, centroid(front)), inner_shift)
         face_plate(self.h, front, NZ, k=inner, shift=sh)
         return front
+
+    def headband(self, z, r=0.011, span=(0, 100), lift=0.55, flow_w=0.005, mat="body"):
+        """A headset's band over the crown at section z: a tube lying on the skull from the top
+        down to `span[1]` degrees each side, a light line running along its top."""
+        path, tops = [], []
+        k = 6
+        for i in range(k + 1):
+            a = span[0] + (span[1] - span[0]) * i / k
+            p, n = self.surface(z, a, r * lift)
+            path.append(p)
+            tops.append((add(p, mul(n, r)), n))
+        tube(self.h, path, [r] * len(path), sides=6, tip=False, mat=mat)
+        flow_strip(self.h, tops, flow_w)
+
+    def earcup(self, y, z, r=0.03, depth=0.022, ring=True):
+        """A headset's ear cup on the side of the skull: a short cylinder with an accent band
+        round it and a glowing disc on its face."""
+        p, n = raycast([self.g], (0.5, y, z), NX)
+        n = norm((1.0, n[1] * 0.3, n[2] * 0.3))
+        c0 = sub(p, mul(n, 0.006))
+        loft(self.h, [circle(c0, n, r, 10), circle(add(c0, mul(n, depth * 0.85)), n, r, 10),
+                      circle(add(c0, mul(n, depth)), n, r * 0.8, 10)], cap0=None)
+        if ring:
+            loft(self.h, [circle(add(c0, mul(n, depth * 0.45)), n, r * 1.04, 10),
+                          circle(add(c0, mul(n, depth * 0.7)), n, r * 1.04, 10)], mat="accent",
+                 cap0=None, cap1=None)
+        plate(self.h, add(c0, mul(n, depth)), n, L.ngon(0, 0, r * 0.4, 8), h=0.003, depth=0.006)
+
+    def goggles(self, z, angle, R=0.028, r=0.0055, lens=True):
+        """Goggles pushed up on the forehead: two accent rims (and dark lenses) lying on the skull
+        at section z, `angle` degrees out from the top, joined by a bridge, on a strap."""
+        p, n = self.surface(z, angle, r * 0.9)
+        torus(self.h, p, n, R, r, segs=12, sides=5)
+        if lens:
+            plate(self.h, sub(p, mul(n, r * 0.3)), n, L.ngon(0, 0, R - r * 0.5, 12), "body",
+                  h=0.0, depth=0.004)
+        # Bridge to the mirror plane, and the strap back round the head.
+        q, _ = self.surface(z, 0.0, r * 0.9)
+        a = norm(sub(p, q))
+        tube(self.h, [q, sub(p, mul(a, R))], [r * 0.8, r * 0.8], sides=4, tip=False,
+             mat="accent")
+        self.headband(z + 0.004, r=0.007, span=(angle + math.degrees(R / 0.12) + 6, 110),
+                      flow_w=0.0035)
+
+    def glasses(self, R=1.3, r=0.1, out=0.95, temple=True):
+        """Round glasses before the eyes: an accent rim (R, r in eye radii) `out` radii ahead of
+        each eyeball's centre, a bridge between them and temples back to the ears."""
+        er = self.eye_r
+        c = add(self.eye_c, mul(self.eye_fwd, out * er))
+        torus(self.h, c, self.eye_fwd, R * er, r * er, segs=14, sides=4)
+        inner = add(c, mul(norm(cross(Y, self.eye_fwd)), R * er))
+        mid = (0.0, inner[1] + 0.004, inner[2] + 0.003)
+        tube(self.h, [mid, inner], [r * er * 0.8, r * er * 0.8], sides=4, tip=False, mat="accent")
+        if temple:
+            outer = add(c, mul(norm(cross(self.eye_fwd, Y)), R * er))
+            back, n = raycast([self.g], (0.5, outer[1] + 0.01, c[2] + 0.11), NX)
+            tube(self.h, [outer, add(outer, (0.004, 0.002, 0.008)), add(back, mul(n, 0.004))],
+                 [r * er * 0.8, r * er * 0.7, r * er * 0.6], sides=4, tip=False, mat="accent")
+
+    def tooth(self, x, y, z, w=0.01, h=0.014, up=False, mat="sclera"):
+        """A fang hanging from the lip at (x, y, z) (or standing up from the jaw)."""
+        s = 1.0 if up else -1.0
+        base = [(x - w / 2, y, z - w * 0.4), (x + w / 2, y, z - w * 0.4), (x + w / 2, y, z + w * 0.4),
+                (x - w / 2, y, z + w * 0.4)]
+        pyramid(self.h if x > 1e-6 else self.g, base, (x, y + s * h, z - w * 0.2), mat=mat,
+                base_mat=mat)
 
     def finish(self):
         for f in self.h.faces:
             self.g.faces.append(f)
             self.g.faces.append(mirror_face(f))
-        translate(self.g, (0.0, -self.eye_c[1], -self.eye_c[2]))
+        off = (0.0, -self.eye_c[1], -self.eye_c[2])
+        translate(self.g, off)
+        self.eye_c = add(self.eye_c, off)
         return self.g
+
+    def eye_nodes(self, name, lids):
+        """The eye empties (right, then left mirrored), with the lids' rest angles."""
+        props = {"lid_top": lids[0], "lid_bot": lids[1], "radius": self.eye_r}
+        L.make_empty(name + "_eye_r", self.eye_c, fwd=self.eye_fwd, scale=self.eye_r, props=props)
+        cl = (-self.eye_c[0], self.eye_c[1], self.eye_c[2])
+        fl = (-self.eye_fwd[0], self.eye_fwd[1], self.eye_fwd[2])
+        L.make_empty(name + "_eye_l", cl, fwd=fl, scale=self.eye_r, props=props)
 
 
 def leaf_ear(geo, base, axis, fwd_hint, prof, tip, mat="body", strip=(0.22, 0.78)):
@@ -467,220 +646,390 @@ def leaf_ear(geo, base, axis, fwd_hint, prof, tip, mat="body", strip=(0.22, 0.78
                    k=1.0)
 
 
-ALMOND = [(-0.016, -0.003), (-0.004, -0.008), (0.012, -0.006), (0.019, 0.004), (0.006, 0.007),
-          (-0.012, 0.004)]
+def round_ear(geo, c, r, depth, inner=0.55, fwd=NZ):
+    """A round ear (bear): a short drum facing `fwd` with an accent inner disc."""
+    n = norm(fwd)
+    back = circle(sub(c, mul(n, depth * 0.5)), n, r, 10, phase=18)
+    front = circle(add(c, mul(n, depth * 0.5)), n, r, 10, phase=18)
+    loft(geo, [back, front])
+    plate(geo, add(c, mul(n, depth * 0.5)), n, L.ngon(0, 0, r * inner, 10, 18), h=0.003,
+          depth=0.006)
 
 
-def scale2(shape, s, sv=None):
-    sv = s if sv is None else sv
-    return [(u * s, v * sv) for u, v in shape]
+def eyeball(slit=False):
+    """Unit sphere looking along -Z: a black pupil (round, or a cat's vertical slit), a
+    team-coloured iris, a pale sclera and a white glint up and to the left."""
+    g = L.Geo()
+    pupil = "eyes" if slit else "body"
+    steps = [(7, pupil), (17, pupil), (25, "eyes"), (38, "eyes"), (49, "sclera"),
+             (70, "sclera"), (95, "sclera"), (125, "sclera")]
+    rings = []
+    for th, _ in steps:
+        t = math.radians(th)
+        rings.append([(math.sin(t) * math.cos(math.radians(360.0 * i / SIDES)),
+                       math.sin(t) * math.sin(math.radians(360.0 * i / SIDES)), -math.cos(t))
+                      for i in range(SIDES)])
+    rings.append([(0.0, 0.0, 1.0)])
+    loft(g, rings, mat=[m for _, m in steps], cap0=pupil, cap1=None)
+    if slit:
+        # A pointed vertical lens on the sphere: its outline just proud of the iris, fanned from
+        # a raised centre, with walls sunk into the ball.
+        k = 10
+        outline = [norm((0.075 * math.cos(2 * math.pi * i / k), 0.36 * math.sin(2 * math.pi * i / k),
+                         -1.0)) for i in range(k)]
+        top = [mul(p, 1.012) for p in outline]
+        bot = [mul(p, 0.96) for p in outline]
+        c = (0.0, 0.0, -1.016)
+        for i in range(k):
+            j = (i + 1) % k
+            g.face([c, top[i], top[j]], "body", want=NZ)
+            g.face([bot[i], bot[j], top[j], top[i]], "body", want=sub(top[i], c))
+    th, ph = math.radians(30), math.radians(135)
+    d = (math.sin(th) * math.cos(ph), math.sin(th) * math.sin(ph), -math.cos(th))
+    plate(g, d, d, L.ngon(0, 0, 0.17, 6), "glow_white", h=0.012, depth=0.05)
+    return g
+
+
+def eyelid():
+    """A lune of a shell round the eyeball (radii 1.05-1.11), between planes through its X axis:
+    from the lid's edge (towards -Z at rest) 118 degrees back over the top. The game turns it
+    about X to open and close (and the lower lid is the same, turned over). The edge and the
+    outer strip beside it glow in the team colour."""
+    g = L.Geo()
+    R0, R1 = 1.05, 1.11
+    lams = [0, 7, 30, 60, 90, 118]
+    inner_lams = [0, 30, 118]
+    psis = list(range(0, 181, 20))
+
+    def P(psi, lam, R):
+        s, c = math.sin(math.radians(psi)), math.cos(math.radians(psi))
+        lr = math.radians(lam)
+        return (R * c, R * s * math.sin(lr), -R * s * math.cos(lr))
+
+    def face(pts, mat, want):
+        q = []
+        for p in pts:
+            if not q or length(sub(p, q[-1])) > 1e-9:
+                q.append(p)
+        if length(sub(q[0], q[-1])) < 1e-9:
+            q.pop()
+        if len(q) >= 3:
+            geo_face(q, mat, want)
+
+    def geo_face(q, mat, want):
+        if len(q) == 4:
+            facet(g, q, mat, want)
+        else:
+            g.face(q, mat, want=want)
+    for i, (l0, l1) in enumerate(zip(lams, lams[1:])):
+        mat = "accent" if i == 0 else "body"
+        for p0, p1 in zip(psis, psis[1:]):
+            outer = [P(p0, l0, R1), P(p1, l0, R1), P(p1, l1, R1), P(p0, l1, R1)]
+            face(outer, mat, centroid(outer))
+    for l0, l1 in zip(inner_lams, inner_lams[1:]):
+        for p0, p1 in zip(psis, psis[1:]):
+            inner = [P(p0, l0, R0), P(p1, l0, R0), P(p1, l1, R0), P(p0, l1, R0)]
+            face(inner, "body", mul(centroid(inner), -1))
+    for lam, mat, s in ((lams[0], "accent", -1.0), (lams[-1], "body", 1.0)):
+        lr = math.radians(lam)
+        want = mul((0.0, math.cos(lr), math.sin(lr)), s)
+        for p0, p1 in zip(psis, psis[1:]):
+            face([P(p0, lam, R0), P(p1, lam, R0), P(p1, lam, R1), P(p0, lam, R1)], mat, want)
+    return g
 
 
 def head_wolf():
     def paint(c, n, k):
-        if c[2] < 0.0 and n[1] < -0.35:
+        if n[1] < -0.4 and c[2] < 0.04:
             return "fur_light"  # jaw and throat
-        if c[2] < -0.07 and c[1] < -0.035:
-            return "fur_light"  # lower muzzle
         return None
 
-    hd = Head([(0.13, 0.03, 0.06, 0.07), (0.09, 0.035, 0.095, 0.105), (0.03, 0.03, 0.112, 0.112),
-               (-0.02, 0.02, 0.105, 0.098), (-0.06, 0.0, 0.07, 0.07), (-0.085, -0.02, 0.058, 0.058, 2.6),
-               (-0.16, -0.032, 0.048, 0.045, 2.6), (-0.2, -0.036, 0.036, 0.032, 2.6)],
-              eye=(0.05, 0.035, 0.0, 15), paint=paint)
-    hd.eye(ALMOND)
-    hd.nose([(-0.016, 0.012), (0.016, 0.012), (0.022, 0.002), (0.0, -0.016), (-0.022, 0.002)],
-            dy=0.008)
-    hd.ear((0.06, 0.1, 0.045), 0.055, 0.035, (0.08, 0.2, 0.065), inner=0.6, inner_shift=-0.1)
-    hd.flow([(-0.06, 14), (-0.03, 22), (0.0, 18), (0.04, 10), (0.09, 10), (0.12, 14)])
-    hd.flow([(-0.07, 105), (-0.02, 112), (0.04, 108), (0.1, 100)])
-    return hd.finish()
+    hd = Head([(0.14, 0.03, 0.06, 0.065, 2.2), (0.1, 0.045, 0.11, 0.11, 2.3),
+               (0.04, 0.045, 0.125, 0.12, 2.4), (-0.01, 0.04, 0.115, 0.108, 2.5, 0.95, 1.05),
+               (-0.04, 0.04, 0.09, 0.085, 2.5, 0.9, 1.05), (-0.06, 0.045, 0.05, 0.045, 2.4)],
+              eye=(0.05, 0.045, -0.02, 22), radius=0.034, paint=paint)
+    # A long muzzle: a narrow bridge between the eyes over a wide jaw, pale underneath.
+    hd.muzzle([(-0.03, -0.01, 0.085, 0.07, 2.4, 0.4, 1.15), (-0.09, -0.015, 0.068, 0.062, 2.5, 0.7, 1.1),
+               (-0.14, -0.025, 0.055, 0.05, 2.6, 0.85, 1.05), (-0.175, -0.03, 0.045, 0.04, 2.8),
+               (-0.205, -0.035, 0.034, 0.03, 3.0)],
+              paint=lambda c, n, k: "fur_light" if n[1] < -0.15 else None)
+    hd.brow(thick=0.32, inner=0.3, outer=-0.05)
+    hd.nose(0.018, 0.013, depth=0.012, dy=0.008)
+    hd.mouth(-0.056, half=0.04, lift=0.014)
+    hd.tooth(0.024, -0.054, -0.17, w=0.007, h=0.012)
+    hd.ear((0.07, 0.1, 0.05), 0.095, 0.05, (0.1, 0.29, 0.07), inner=0.6, inner_shift=-0.1)
+    # Cheek ruffs: pale tufts sweeping out, down and back from behind the muzzle.
+    for base_y, apex in (((0.0, 0.035), (0.15, -0.03, 0.01)), ((-0.045, -0.01), (0.135, -0.08, 0.03))):
+        y0, y1 = base_y
+        pyramid(hd.h, [(0.09, y1, -0.03), (0.09, y1, 0.03), (0.09, y0, 0.03),
+                       (0.09, y0, -0.03)], apex, mat="fur_light", base_mat="fur_light")
+    hd.flow([(0.14, 0), (0.07, 0)])
+    hd.flow([(-0.05, 120), (0.0, 124), (0.07, 118)])
+    hd.headband(0.05)
+    hd.earcup(-0.005, 0.065)
+    return hd
 
 
 def head_fox():
     def paint(c, n, k):
-        if c[2] < 0.02 and c[1] < 0.005 and n[2] < 0.5:
-            return "fur_light"  # white cheeks, muzzle sides and throat
+        if n[1] < -0.4 and c[2] < 0.05:
+            return "fur_light"  # throat
         return None
 
-    hd = Head([(0.12, 0.03, 0.06, 0.065), (0.08, 0.035, 0.09, 0.095), (0.025, 0.025, 0.115, 0.095, 2.4, 0.9, 1.15),
-               (-0.02, 0.012, 0.1, 0.082, 2.4, 0.9, 1.1), (-0.06, -0.008, 0.05, 0.05),
-               (-0.13, -0.022, 0.027, 0.029), (-0.19, -0.03, 0.013, 0.015)],
-              eye=(0.045, 0.03, 0.0, 15), paint=paint)
-    hd.eye(ALMOND)
-    hd.nose([(-0.01, 0.008), (0.01, 0.008), (0.012, 0.0), (0.0, -0.01), (-0.012, 0.0)], dy=0.002)
-    hd.ear((0.058, 0.085, 0.035), 0.088, 0.035, (0.108, 0.25, 0.05), inner=0.62, inner_shift=-0.1)
-    # Cheek ruffs: pale pointed tufts sweeping out and down.
-    pyramid(hd.h, [(0.08, 0.015, -0.015), (0.08, 0.015, 0.04), (0.08, -0.05, 0.04),
-                   (0.08, -0.05, -0.015)], (0.145, -0.055, 0.03), mat="fur_light",
-            base_mat="fur_light")
-    # A tear line down from each eye along the muzzle.
-    hd.decal((0.045, 0.0, -0.04), (-0.3, 0.2, 0.93), [(-0.005, -0.03), (0.002, -0.03), (0.005, 0.0),
-                                                      (-0.002, 0.0)], uhint=X, vhint=Y)
-    hd.flow([(-0.12, 0), (0.11, 0)])
-    hd.flow([(-0.02, 60), (0.05, 70), (0.11, 60)])
-    return hd.finish()
+    hd = Head([(0.12, 0.03, 0.055, 0.06, 2.2), (0.09, 0.045, 0.1, 0.105, 2.3),
+               (0.03, 0.045, 0.118, 0.112, 2.4), (-0.01, 0.04, 0.105, 0.098, 2.5, 0.9, 1.1),
+               (-0.04, 0.04, 0.08, 0.075, 2.5, 0.9, 1.05), (-0.058, 0.045, 0.045, 0.04, 2.4)],
+              eye=(0.05, 0.042, -0.02, 18), radius=0.033, paint=paint)
+    # A slender pointed muzzle from a narrow bridge, white underneath.
+    hd.muzzle([(-0.03, -0.01, 0.075, 0.06, 2.4, 0.4, 1.15), (-0.085, -0.016, 0.052, 0.05, 2.5, 0.7, 1.1),
+               (-0.13, -0.026, 0.036, 0.036, 2.6, 0.85, 1.05), (-0.17, -0.034, 0.022, 0.022, 2.8),
+               (-0.195, -0.037, 0.014, 0.014, 3.0)],
+              paint=lambda c, n, k: "fur_light" if n[1] < -0.1 else None)
+    hd.brow(thick=0.28, inner=0.22, outer=-0.1)
+    hd.nose(0.012, 0.01, depth=0.011, dy=0.004)
+    hd.mouth(-0.058, half=0.035, lift=0.016)
+    hd.ear((0.065, 0.095, 0.045), 0.11, 0.045, (0.12, 0.31, 0.06), inner=0.62, inner_shift=-0.1)
+    # Big white cheek ruffs sweeping out and down.
+    for base_y, apex in (((-0.005, 0.03), (0.15, -0.04, 0.0)), ((-0.05, -0.015), (0.13, -0.09, 0.02))):
+        y0, y1 = base_y
+        pyramid(hd.h, [(0.08, y1, -0.03), (0.08, y1, 0.03), (0.08, y0, 0.03),
+                       (0.08, y0, -0.03)], apex, mat="fur_light", base_mat="fur_light")
+    hd.flow([(0.12, 0), (-0.06, 0)])
+    hd.flow([(-0.02, 62), (0.05, 70), (0.11, 62)])
+    hd.glasses()
+    return hd
 
 
 def head_cat():
-    def paint(c, n, k):
-        if c[2] < -0.035 and c[1] < -0.012:
-            return "fur_light"  # muzzle and chin
-        return None
-
-    hd = Head([(0.1, 0.02, 0.06, 0.065), (0.06, 0.03, 0.098, 0.1), (0.01, 0.025, 0.118, 0.1, 2.6, 0.95, 1.1),
-               (-0.03, 0.01, 0.108, 0.088, 2.6, 0.95, 1.05), (-0.055, -0.015, 0.06, 0.05),
-               (-0.08, -0.027, 0.046, 0.034)],
-              eye=(0.045, 0.02, 0.0, 12), paint=paint)
-    eye = [(-0.018, -0.006), (0.0, -0.013), (0.016, -0.008), (0.021, 0.008), (0.004, 0.012),
-           (-0.016, 0.006)]
-    hd.eye(eye, pupil=[(-0.0025, -0.011), (0.0025, -0.011), (0.0025, 0.01), (-0.0025, 0.01)])
-    hd.nose([(-0.012, 0.006), (0.012, 0.006), (0.0, -0.01)], dy=0.006)
-    hd.ear((0.07, 0.075, 0.025), 0.075, 0.04, (0.098, 0.18, 0.035), inner=0.6, inner_shift=-0.12)
+    hd = Head([(0.1, 0.03, 0.07, 0.07, 2.2), (0.07, 0.04, 0.12, 0.115, 2.3),
+               (0.01, 0.035, 0.14, 0.125, 2.5, 0.95, 1.1), (-0.03, 0.025, 0.135, 0.115, 2.6, 0.9, 1.15),
+               (-0.06, 0.015, 0.1, 0.09, 2.6, 0.85, 1.15), (-0.075, 0.0, 0.055, 0.055, 2.4)],
+              eye=(0.052, 0.04, -0.03, 14), radius=0.037)
+    # A small pale muzzle bump on a wide flat face.
+    hd.muzzle([(-0.045, -0.03, 0.05, 0.035, 2.6), (-0.075, -0.032, 0.045, 0.03, 2.6),
+               (-0.092, -0.034, 0.03, 0.02, 2.8)], paint=lambda c, n, k: "fur_light",
+              nose_mat="fur_light")
+    hd.brow(thick=0.2, inner=0.05, outer=-0.08)
+    hd.nose(0.011, 0.008, depth=0.009, dy=0.004)
+    hd.mouth(-0.04, half=0.03, lift=0.012, z=-0.085)
+    hd.ear((0.08, 0.095, 0.03), 0.1, 0.05, (0.115, 0.27, 0.04), inner=0.6, inner_shift=-0.12)
+    # Cheek tufts pointing out.
+    for base_y, apex in (((-0.02, 0.03), (0.185, -0.04, -0.01)), ((-0.06, -0.025), (0.16, -0.08, 0.0))):
+        y0, y1 = base_y
+        pyramid(hd.h, [(0.105, y1, -0.035), (0.105, y1, 0.02), (0.105, y0, 0.02),
+                       (0.105, y0, -0.035)], apex, mat="fur_light", base_mat="fur_light")
     # Whiskers: three thin glowing spikes from each side of the muzzle.
     for dy, ang in ((0.004, 12), (-0.006, 0), (-0.016, -12)):
         a = math.radians(ang)
-        p0 = (0.035, -0.02 + dy, -0.075)
-        tube(hd.h, [p0, add(p0, (0.075 * math.cos(a), 0.075 * math.sin(a), 0.02))],
+        p0 = (0.04, -0.03 + dy, -0.07)
+        tube(hd.h, [p0, add(p0, (0.085 * math.cos(a), 0.085 * math.sin(a), 0.02))],
              [0.0022, 0.0], sides=3, mat="accent")
-    hd.flow([(-0.05, 12), (-0.02, 15), (0.03, 12), (0.09, 12)])
-    hd.flow([(-0.03, 100), (0.02, 105), (0.07, 100)])
-    return hd.finish()
+    hd.flow([(-0.05, 118), (0.0, 122), (0.07, 118)])
+    hd.goggles(0.06, 36)
+    return hd
 
 
 def head_bear():
-    def paint(c, n, k):
-        if c[2] < -0.07:
-            return "fur_light"  # muzzle
-        return None
-
-    hd = Head([(0.12, 0.03, 0.08, 0.08), (0.08, 0.035, 0.12, 0.118), (0.02, 0.03, 0.135, 0.12),
-               (-0.03, 0.01, 0.12, 0.1), (-0.07, -0.025, 0.07, 0.06, 2.6), (-0.13, -0.035, 0.058, 0.048, 2.6),
-               (-0.15, -0.04, 0.042, 0.034, 2.6)],
-              eye=(0.045, 0.03, 0.0, 10), paint=paint)
-    hd.eye(scale2(L.ngon(0, 0, 0.011, 6), 1.0))
-    hd.nose([(-0.022, 0.012), (0.022, 0.012), (0.026, 0.0), (0.008, -0.012), (-0.008, -0.012),
-             (-0.026, 0.0)], dy=0.008)
-    # Round ears: short hexagonal discs facing forward, accent inners.
-    for _ in (0,):
-        c = (0.095, 0.13, 0.04)
-        r = 0.04
-        ring0 = [add(c, (r * math.cos(math.radians(a)), r * math.sin(math.radians(a)), 0.012))
-                 for a in range(-30, 211, 60)]
-        ring1 = [add(p, (0, 0, -0.03)) for p in ring0]
-        loft(hd.h, [ring0, ring1])
-        face_plate(hd.h, ring1, NZ, k=0.55, shift=(0, 0.006, 0))
-    hd.flow([(-0.07, 15), (-0.02, 25), (0.04, 25), (0.11, 20)])
-    hd.flow([(-0.06, 110), (0.0, 115), (0.08, 105)])
-    return hd.finish()
+    hd = Head([(0.15, 0.035, 0.08, 0.085, 2.2), (0.1, 0.045, 0.14, 0.135, 2.3),
+               (0.03, 0.04, 0.155, 0.14, 2.4), (-0.03, 0.03, 0.135, 0.12, 2.5, 0.95, 1.1),
+               (-0.065, 0.035, 0.1, 0.09, 2.5, 0.9, 1.05), (-0.085, 0.04, 0.055, 0.05, 2.4)],
+              eye=(0.055, 0.04, -0.035, 15), radius=0.034)
+    # A broad pale muzzle over a wide jaw.
+    hd.muzzle([(-0.05, -0.02, 0.095, 0.072, 2.5, 0.6, 1.15), (-0.11, -0.028, 0.078, 0.062, 2.5, 0.85, 1.08),
+               (-0.15, -0.032, 0.062, 0.05, 2.6), (-0.17, -0.034, 0.05, 0.042, 2.8)],
+              paint=lambda c, n, k: "fur_light",
+              nose_mat="fur_light")
+    hd.brow(thick=0.3, inner=0.12, outer=0.0)
+    hd.nose(0.024, 0.015, depth=0.014, dy=0.01)
+    hd.mouth(-0.058, half=0.045, lift=0.012)
+    round_ear(hd.h, (0.115, 0.16, 0.045), 0.058, 0.035, fwd=(0.3, 0.3, -1.0))
+    hd.flow([(0.13, 0), (0.0, 0)])
+    hd.flow([(-0.06, 118), (-0.01, 122), (0.06, 118)])
+    hd.headband(0.06, r=0.012)
+    hd.earcup(0.0, 0.07, r=0.04, depth=0.028)
+    return hd
 
 
 def head_rabbit():
     def paint(c, n, k):
-        if c[2] < -0.035 and c[1] < 0.0:
-            return "fur_light"  # muzzle and cheeks
+        if c[2] < -0.03 and c[1] < 0.0 and n[2] < 0.3:
+            return "fur_light"  # cheeks
         return None
 
-    hd = Head([(0.1, 0.02, 0.065, 0.075), (0.05, 0.03, 0.095, 0.1), (0.0, 0.02, 0.1, 0.095),
-               (-0.04, 0.0, 0.085, 0.078), (-0.07, -0.02, 0.055, 0.052), (-0.095, -0.032, 0.034, 0.034)],
-              eye=(0.0, 0.025, -0.03, 60), paint=paint)
-    hd.eye(scale2(L.ngon(0, 0, 0.014, 8, 22.5), 1.0))
-    hd.nose([(-0.01, 0.006), (0.01, 0.006), (0.0, -0.007)], dy=0.008)
-    # Teeth.
-    hd.g.face([(-0.009, -0.05, -0.083), (0.009, -0.05, -0.083), (0.009, -0.07, -0.08),
-               (-0.009, -0.07, -0.08)], "fur_light", want=NZ)
-    # Long ears leaning slightly back and out, accent inner strips.
-    leaf_ear(hd.h, (0.035, 0.07, 0.035), (0.25, 1.0, 0.18), NZ,
-             [(0.0, 0.022, 0.012), (0.09, 0.03, 0.013), (0.19, 0.03, 0.012), (0.26, 0.018, 0.008)],
-             0.3)
-    hd.flow([(-0.08, 0), (0.09, 0)])
-    hd.flow([(-0.05, 105), (0.0, 110), (0.07, 100)])
-    return hd.finish()
+    hd = Head([(0.11, 0.025, 0.07, 0.08, 2.2), (0.07, 0.035, 0.115, 0.12, 2.3),
+               (0.01, 0.03, 0.128, 0.12, 2.4, 0.95, 1.1), (-0.03, 0.02, 0.115, 0.105, 2.5, 0.9, 1.15),
+               (-0.065, 0.005, 0.075, 0.07, 2.5), (-0.085, -0.01, 0.04, 0.04, 2.4)],
+              eye=(0.052, 0.042, -0.02, 22), radius=0.037, paint=paint)
+    hd.muzzle([(-0.05, -0.03, 0.042, 0.032, 2.6), (-0.085, -0.032, 0.035, 0.026, 2.6),
+               (-0.1, -0.034, 0.022, 0.016, 2.8)], paint=lambda c, n, k: "fur_light",
+              nose_mat="fur_light")
+    hd.brow(thick=0.22, inner=-0.1, outer=0.0, lift=1.35)
+    hd.nose(0.01, 0.008, depth=0.008, dy=0.006)
+    hd.mouth(-0.044, half=0.03, lift=0.012, z=-0.09)
+    # Buck teeth.
+    for x in (-0.0055, 0.0055):
+        hd.g.face([(x - 0.005, -0.052, -0.094), (x + 0.005, -0.052, -0.094),
+                   (x + 0.005, -0.072, -0.09), (x - 0.005, -0.072, -0.09)], "sclera", want=NZ)
+    # Long ears leaning a little back and out, accent inner strips.
+    leaf_ear(hd.h, (0.04, 0.09, 0.04), (0.22, 1.0, 0.16), NZ,
+             [(0.0, 0.026, 0.013), (0.1, 0.038, 0.014), (0.21, 0.038, 0.012), (0.29, 0.02, 0.008)],
+             0.33)
+    hd.flow([(-0.05, 118), (0.0, 122), (0.07, 118)])
+    # A visor band low across the forehead.
+    hd.headband(-0.005, r=0.009, span=(0, 70), flow_w=0.006)
+    return hd
 
 
 def head_deer():
     def paint(c, n, k):
-        if c[2] < -0.13:
-            return "fur_light"  # muzzle
         if n[1] < -0.5 and c[2] < 0.05:
             return "fur_light"  # throat
         return None
 
-    hd = Head([(0.09, 0.03, 0.06, 0.068), (0.05, 0.035, 0.082, 0.085), (0.0, 0.025, 0.088, 0.08),
-               (-0.04, 0.0, 0.074, 0.07), (-0.09, -0.03, 0.05, 0.055), (-0.15, -0.055, 0.04, 0.045),
-               (-0.18, -0.066, 0.03, 0.033)],
-              eye=(0.0, 0.02, -0.025, 55), paint=paint)
-    hd.eye(ALMOND)
-    hd.nose([(-0.016, 0.01), (0.016, 0.01), (0.018, -0.004), (0.0, -0.012), (-0.018, -0.004)],
-            dy=0.004)
-    # Ears sticking out sideways.
-    leaf_ear(hd.h, (0.055, 0.075, 0.045), (1.0, 0.5, 0.15), NZ,
-             [(0.0, 0.016, 0.01), (0.05, 0.026, 0.01), (0.09, 0.02, 0.008)], 0.12)
+    hd = Head([(0.12, 0.035, 0.06, 0.065, 2.2), (0.09, 0.045, 0.1, 0.105, 2.3),
+               (0.03, 0.04, 0.115, 0.112, 2.4), (-0.01, 0.035, 0.1, 0.095, 2.5, 0.95, 1.05),
+               (-0.04, 0.035, 0.078, 0.075, 2.5), (-0.058, 0.04, 0.045, 0.042, 2.4)],
+              eye=(0.05, 0.04, -0.01, 28), radius=0.034, paint=paint)
+    # A gentle tapering muzzle from a narrow bridge.
+    hd.muzzle([(-0.03, -0.012, 0.075, 0.065, 2.4, 0.45, 1.12), (-0.09, -0.03, 0.055, 0.055, 2.5, 0.75, 1.08),
+               (-0.135, -0.045, 0.045, 0.045, 2.6, 0.9, 1.0), (-0.165, -0.055, 0.036, 0.035, 2.8),
+               (-0.18, -0.06, 0.028, 0.028, 3.0)],
+              paint=lambda c, n, k: "fur_light" if n[1] < -0.1 or c[2] < -0.13 else None,
+              nose_mat="fur_light")
+    hd.brow(thick=0.22, inner=-0.05, outer=0.0, lift=1.35)
+    hd.nose(0.016, 0.011, depth=0.011, dy=0.004)
+    hd.mouth(-0.07, half=0.034, lift=0.012)
+    # Big ears sticking out sideways.
+    leaf_ear(hd.h, (0.075, 0.085, 0.05), (1.0, 0.45, 0.15), NZ,
+             [(0.0, 0.02, 0.011), (0.06, 0.036, 0.011), (0.12, 0.026, 0.008)], 0.16)
     # Antlers: main beam up/out/back, three tines forwards-up; glowing tips.
-    beam = [(0.035, 0.09, 0.03), (0.07, 0.17, 0.045), (0.11, 0.26, 0.035), (0.13, 0.33, 0.0),
-            (0.135, 0.37, -0.03)]
-    tube(hd.h, beam, [0.014, 0.012, 0.0095, 0.007, 0.0], sides=4,
+    beam = [(0.04, 0.11, 0.04), (0.075, 0.19, 0.055), (0.115, 0.28, 0.045), (0.135, 0.35, 0.01),
+            (0.14, 0.39, -0.02)]
+    tube(hd.h, beam, [0.016, 0.014, 0.011, 0.008, 0.0], sides=5,
          mat=["body", "body", "body", "accent"])
-    for p, q, r in (((0.06, 0.15, 0.042), (0.075, 0.2, -0.02), 0.006),
-                    ((0.095, 0.225, 0.04), (0.12, 0.28, -0.015), 0.005),
-                    ((0.117, 0.285, 0.03), (0.17, 0.33, 0.02), 0.0045)):
-        r *= 1.4
+    for p, q, r in (((0.065, 0.17, 0.052), (0.08, 0.22, -0.015), 0.008),
+                    ((0.1, 0.245, 0.05), (0.125, 0.3, -0.01), 0.007),
+                    ((0.122, 0.305, 0.04), (0.175, 0.35, 0.025), 0.0065)):
         mid = add(add(p, mul(sub(q, p), 0.72)), (0, 0.006, 0.006))
         tube(hd.h, [p, mid, q], [r, r * 0.6, 0.0], sides=4, mat=["body", "accent"])
-    hd.flow([(-0.16, 0), (0.08, 0)])
-    hd.flow([(-0.12, 105), (-0.05, 105), (0.04, 100)])
-    return hd.finish()
+    hd.flow([(0.11, 0), (-0.05, 0)])
+    hd.flow([(-0.06, 118), (-0.02, 120), (0.04, 115)])
+    hd.headband(0.055, r=0.009, span=(0, 95))
+    return hd
 
 
 def head_owl():
-    hd = Head([(0.1, 0.0, 0.08, 0.09, 2.4, 1.0, 0.8), (0.06, 0.01, 0.112, 0.12, 2.6, 1.0, 0.85),
-               (0.02, 0.012, 0.125, 0.128, 2.8, 1.0, 0.85), (-0.015, 0.008, 0.12, 0.12, 3.0, 1.0, 0.85),
-               (-0.03, 0.005, 0.11, 0.11, 3.0, 1.0, 0.85)],
-              eye=(0.048, 0.02, 0.0, 0), nose_mat="fur_light")
+    hd = Head([(0.1, 0.0, 0.09, 0.1, 2.3, 1.0, 0.9), (0.06, 0.01, 0.125, 0.135, 2.5, 1.0, 0.9),
+               (0.0, 0.015, 0.138, 0.14, 2.7, 1.0, 0.9), (-0.04, 0.012, 0.125, 0.13, 2.8, 1.0, 0.9),
+               (-0.06, 0.01, 0.08, 0.09, 2.6)],
+              eye=(0.05, 0.03, -0.01, 4), radius=0.045, sink=0.5, diverge=0.05)
+    # The facial disc: a pale ruff of feathers ringing each eye, meeting at the V brow.
+    torus(hd.h, sub(hd.eye_c, mul(hd.eye_fwd, 0.2 * hd.eye_r)), hd.eye_fwd, hd.eye_r * 1.65,
+          hd.eye_r * 0.42, mat="fur_light", segs=14, sides=6)
+    hd.brow(thick=0.24, inner=0.4, outer=-0.1, lift=1.4)
+    # A small hooked beak below the eyes.
     c, hw, hh = hd.front
-    hd.eye(L.ngon(0, 0, 0.034, 8, 22.5), pupil=L.ngon(0, 0, 0.012, 6), halo=0.01,
-           seg=0.05)
-    # V brows above the eyes (the classic owl frown), and a hooked beak.
-    plate(hd.h, add(c, (0, 0.0, 0)), NZ, [(0.004, 0.05), (0.008, 0.042), (0.09, 0.072),
-                                         (0.085, 0.082)], h=0.003, depth=0.004)
-    beak = [(-0.014, 0.0, -0.026), (0.014, 0.0, -0.026), (0.0, -0.02, -0.026)]
-    pyramid(hd.g, [add(p, (0, 0.0, 0)) for p in beak], (0.0, -0.032, -0.062), mat="accent",
-            base_mat="accent")
-    # Ear tufts.
-    hd.ear((0.085, 0.1, 0.0), 0.05, 0.03, (0.125, 0.205, 0.015), inner=0.0001)
-    hd.flow([(-0.028, 52), (0.0, 40), (0.05, 30), (0.095, 25)])
-    hd.flow([(-0.028, 118), (0.03, 112), (0.09, 105)])
-    return hd.finish()
+    beak = [(-0.013, -0.028, c[2]), (0.013, -0.028, c[2]), (0.0, -0.05, c[2])]
+    pyramid(hd.g, beak, (0.0, -0.075, c[2] - 0.035), mat="accent", base_mat="accent")
+    # Feather tufts angled out from the top corners.
+    hd.ear((0.1, 0.11, 0.0), 0.065, 0.04, (0.17, 0.25, 0.0), inner=0.5, inner_shift=-0.1)
+    hd.flow([(-0.04, 118), (0.02, 112), (0.08, 106)])
+    hd.headband(0.03, r=0.01, span=(22, 100))
+    hd.earcup(-0.02, 0.045, r=0.028, depth=0.02)
+    return hd
 
 
 def head_boar():
     def paint(c, n, k):
-        if c[2] < -0.02 and n[1] < -0.45:
+        if n[1] < -0.45 and c[2] < 0.03:
             return "fur_light"  # underjaw
         return None
 
-    hd = Head([(0.12, 0.045, 0.075, 0.085), (0.07, 0.045, 0.11, 0.12), (0.01, 0.025, 0.118, 0.112),
-               (-0.035, 0.005, 0.1, 0.095), (-0.08, -0.02, 0.072, 0.075), (-0.16, -0.032, 0.062, 0.062),
-               (-0.2, -0.032, 0.056, 0.054, 3.0)],
-              eye=(0.055, 0.035, 0.0, 25), paint=paint, nose_mat="fur_light")
-    hd.eye([(-0.012, -0.004), (0.012, -0.006), (0.014, 0.004), (-0.01, 0.004)])
-    # Nose disc nostrils.
+    hd = Head([(0.13, 0.045, 0.085, 0.095, 2.2), (0.08, 0.05, 0.13, 0.135, 2.3),
+               (0.02, 0.035, 0.14, 0.13, 2.4), (-0.03, 0.015, 0.12, 0.115, 2.5),
+               (-0.07, -0.005, 0.085, 0.085, 2.5), (-0.09, -0.015, 0.055, 0.055, 2.4)],
+              eye=(0.06, 0.045, -0.015, 24), radius=0.031, paint=paint)
+    # A long thick snout ending in a disc.
+    hd.muzzle([(-0.05, -0.03, 0.078, 0.085, 2.8), (-0.13, -0.035, 0.07, 0.075, 2.8),
+               (-0.19, -0.035, 0.064, 0.066, 3.0), (-0.205, -0.035, 0.058, 0.058, 3.2)],
+              paint=lambda c, n, k: "fur_light" if n[1] < -0.4 else None, nose_mat="fur_light")
+    hd.brow(thick=0.34, inner=0.3, outer=-0.1)
+    # Nose disc nostrils, and a ring through the snout.
     c, hw, hh = hd.front
     for s in (-1, 1):
-        plate(hd.g, add(c, (s * 0.02, 0.0, 0)), NZ, L.ngon(0, 0, 0.011, 6), depth=0.004)
+        plate(hd.g, add(c, (s * 0.022, 0.004, 0)), NZ, L.ngon(0, 0, 0.012, 8), "body", h=0.002,
+              depth=0.004)
+    torus(hd.g, add(c, (0.0, -0.048, -0.004)), Z, 0.018, 0.003, segs=10, sides=4)
     # Tusks curling up from the mouth corners.
-    tube(hd.h, [(0.05, -0.055, -0.12), (0.07, -0.045, -0.15), (0.08, -0.015, -0.17),
-                (0.072, 0.012, -0.175)], [0.009, 0.007, 0.004, 0.0], sides=4, mat="accent")
-    # Small ears flopping forward-out, and a bristle ridge along the top.
-    hd.ear((0.07, 0.12, 0.06), 0.05, 0.03, (0.12, 0.17, 0.02), inner=0.6, tilt=0.008)
-    for z, h in ((-0.02, 0.025), (0.02, 0.04), (0.06, 0.05), (0.1, 0.04), (0.135, 0.025)):
-        y = 0.135 - (z - 0.04) ** 2 * 2.5
-        pyramid(hd.g, [(-0.012, y - 0.02, z - 0.02), (0.012, y - 0.02, z - 0.02),
-                       (0.012, y - 0.02, z + 0.02), (-0.012, y - 0.02, z + 0.02)],
-                (0.0, y + h - 0.02, z + 0.02))
-    hd.flow([(-0.12, 16), (-0.05, 22), (0.03, 18), (0.11, 16)])
-    hd.flow([(-0.1, 105), (-0.03, 110), (0.06, 105)])
-    return hd.finish()
+    tube(hd.h, [(0.058, -0.065, -0.13), (0.085, -0.055, -0.165), (0.098, -0.015, -0.19),
+                (0.088, 0.02, -0.195)], [0.012, 0.01, 0.006, 0.0], sides=5, mat="accent")
+    hd.mouth(-0.075, half=0.05, lift=0.01, z=-0.19, mat="fur_light")
+    # Big floppy ears out and forward, and a bristle crest along the top.
+    leaf_ear(hd.h, (0.085, 0.115, 0.05), (1.0, 0.7, -0.3), NZ,
+             [(0.0, 0.03, 0.012), (0.06, 0.046, 0.012), (0.11, 0.036, 0.009)], 0.15)
+    for z, h in ((-0.02, 0.03), (0.02, 0.045), (0.06, 0.055), (0.095, 0.045), (0.12, 0.03)):
+        p, n = hd.surface(z, 0.0)
+        pyramid(hd.g, [(-0.014, p[1] - 0.02, z - 0.02), (0.014, p[1] - 0.02, z - 0.02),
+                       (0.014, p[1] - 0.02, z + 0.02), (-0.014, p[1] - 0.02, z + 0.02)],
+                (0.0, p[1] + h - 0.02, z + 0.025))
+    hd.flow([(-0.1, 118), (-0.05, 122), (0.03, 118), (0.1, 112)])
+    hd.headband(0.05, r=0.01, span=(18, 100))
+    hd.earcup(0.0, 0.06, r=0.03)
+    return hd
+
+
+def head_dragon():
+    def paint(c, n, k):
+        if n[1] < -0.45 and c[2] < 0.05:
+            return "fur_light"  # pale throat
+        return None
+
+    hd = Head([(0.15, 0.035, 0.065, 0.07, 2.2), (0.1, 0.045, 0.11, 0.11, 2.3),
+               (0.04, 0.045, 0.125, 0.115, 2.4), (-0.01, 0.04, 0.115, 0.1, 2.6, 0.95, 1.1),
+               (-0.04, 0.04, 0.09, 0.08, 2.6, 0.9, 1.05), (-0.058, 0.045, 0.05, 0.045, 2.5)],
+              eye=(0.052, 0.045, -0.02, 22), radius=0.034, paint=paint)
+    # A long boxy snout over a wide jaw, pale underneath.
+    hd.muzzle([(-0.03, -0.01, 0.09, 0.075, 2.8, 0.55, 1.15), (-0.09, -0.012, 0.075, 0.066, 3.0, 0.8, 1.1),
+               (-0.14, -0.018, 0.065, 0.055, 3.0, 0.9, 1.05), (-0.18, -0.025, 0.054, 0.044, 3.2),
+               (-0.21, -0.03, 0.044, 0.034, 3.4)],
+              paint=lambda c, n, k: "fur_light" if n[1] < -0.3 else None)
+    hd.brow(thick=0.42, inner=0.35, outer=-0.12, lift=1.3)
+    # Nostrils at the snout tip, and fangs along the lip.
+    c, hw, hh = hd.front
+    for s in (-1, 1):
+        plate(hd.g, add(c, (s * 0.018, 0.012, 0)), NZ, L.ngon(0, 0, 0.007, 6), "body", h=0.002,
+              depth=0.004)
+    hd.mouth(-0.052, half=0.05, lift=0.012, z=-0.2)
+    for x, z, h in ((0.014, -0.19, 0.013), (0.036, -0.165, 0.011), (0.052, -0.13, 0.009)):
+        hd.tooth(x, -0.052, z, w=0.008, h=h)
+    # Short horns swept back from the brow, each with two glowing bands.
+    base, tip, r = (0.06, 0.1, 0.045), (0.1, 0.215, 0.15), 0.026
+    bend = lambda t: (0.0, 0.035 * math.sin(math.pi * t), -0.02 * math.sin(math.pi * t))
+    path = [add(add(base, mul(sub(tip, base), t)), bend(t)) for t in (0.0, 0.35, 0.7, 1.0)]
+    tube(hd.h, path, [r, r * 0.8, r * 0.5, 0.0], sides=7)
+    for t in (0.3, 0.58):
+        p = add(add(base, mul(sub(tip, base), t)), bend(t))
+        q = add(add(base, mul(sub(tip, base), t + 0.05)), bend(t + 0.05))
+        torus(hd.h, p, sub(q, p), r * (1.0 - 0.55 * t) * 1.03, 0.004, segs=10, sides=4)
+    # Cheek frills: three spines fanning back from behind the jaw, glowing webs between them.
+    root = (0.095, -0.01, 0.0)
+    tips = [(0.165, 0.075, 0.09), (0.19, 0.0, 0.1), (0.165, -0.07, 0.075)]
+    for t in tips:
+        tube(hd.h, [root, t], [0.007, 0.0], sides=5)
+    for a, b in zip(tips, tips[1:]):
+        web = [add(root, (0.0, 0.0, 0.015)), add(a, mul(sub(root, a), 0.08)),
+               add(b, mul(sub(root, b), 0.08))]
+        hd.h.face(web, "accent", want=X)
+        hd.h.face(list(reversed(web)), "accent", want=NX)
+    # A crest of small spines down the midline.
+    for z, h in ((0.02, 0.028), (0.055, 0.036), (0.09, 0.034), (0.125, 0.026)):
+        p, n = hd.surface(z, 0.0)
+        pyramid(hd.g, [(-0.012, p[1] - 0.015, z - 0.014), (0.012, p[1] - 0.015, z - 0.014),
+                       (0.012, p[1] - 0.015, z + 0.014), (-0.012, p[1] - 0.015, z + 0.014)],
+                (0.0, p[1] + h, z + 0.02), mat="body")
+    hd.flow([(-0.06, 118), (0.0, 122), (0.07, 115)])
+    hd.flow([(0.14, 0), (-0.04, 0)])
+    return hd
 
 
 # ---------------------------------------------------------------------------------------------
@@ -816,6 +1165,126 @@ def mirrored(geo):
 
 
 # ---------------------------------------------------------------------------------------------
+# Body segments: rigid pieces the game poses by IK. Each hangs from its origin (the joint it
+# turns about) down -Y, front -Z, X mirror symmetric; the game stretches it along Y a little.
+
+def sec_at(secs, y):
+    """(half width, half depth, chamfer) of the octagon loft `secs` at height y."""
+    for (ya, ax, az, ac), (yb, bx, bz, bc) in zip(secs, secs[1:]):
+        if yb <= y <= ya:
+            t = (ya - y) / (ya - yb)
+            return ax + (bx - ax) * t, az + (bz - az) * t, ac + (bc - ac) * t
+    raise ValueError("y = %.3f outside the loft" % y)
+
+
+def segment(secs, bands=(), flows=(), flow_w=0.006, front_flow=None):
+    """Octagonal loft through secs = [(y, half width, half depth, chamfer)] top to bottom, with
+    accent bands (y0, y1) and `flow` lines down its sides at the given (y0, y1) (one each side,
+    on the X faces) and optionally one down the front at x = 0."""
+    g = L.Geo()
+    loft(g, [[(x, y, z) for x, z in L.octagon_xz(hx, hz, ch)] for y, hx, hz, ch in secs])
+    for y0, y1 in bands:
+        rings = []
+        for y in (y0, y1):
+            hx, hz, ch = sec_at(secs, y)
+            rings.append([(x, y, z) for x, z in L.octagon_xz(hx + 0.003, hz + 0.003, ch)])
+        loft(g, rings, mat="accent", cap0=None, cap1=None)
+    solid = L.Geo()
+    solid.faces = [f for f in g.faces if f[1] == "body"]
+    for y0, y1 in flows:
+        for s in (-1, 1):
+            ray_strip(g, [solid], [(s * 0.01, y0, 0.0), (s * 0.01, y1, 0.0)],
+                      lambda p, s=s: ((s * 0.4, p[1], 0.0), (-s, 0.0, 0.0)), flow_w, step=0.02)
+    if front_flow:
+        y0, y1 = front_flow
+        ray_strip(g, [solid], [(0.0, y0, 0.0), (0.0, y1, 0.0)],
+                  lambda p: ((0.0, p[1], -0.4), Z), flow_w, step=0.02, mid=True)
+    return g
+
+
+def neck():
+    """From the neck point (the head's pivot) down 0.2 m into the vest's collar."""
+    secs = [(0.03, 0.035, 0.04, 0.012), (-0.03, 0.048, 0.052, 0.016),
+            (-0.17, 0.056, 0.058, 0.018), (-0.235, 0.072, 0.065, 0.022)]
+    return segment(secs, bands=[(-0.16, -0.172)], flows=[(-0.035, -0.15)], flow_w=0.005)
+
+
+def pelvis():
+    """Hips, origin at the top centre (tucked 4 cm up into the vest's hem), hip joints at
+    (+-0.095, -0.12, 0). Round enough at the top to turn inside the hem."""
+    secs = [(0.0, 0.088, 0.074, 0.03), (-0.05, 0.118, 0.084, 0.034),
+            (-0.11, 0.132, 0.09, 0.038), (-0.17, 0.11, 0.08, 0.034), (-0.205, 0.06, 0.052, 0.02)]
+    g = segment(secs, bands=[(-0.055, -0.068)])
+    # Buckle, and light lines down the front from the belt to the crotch.
+    plate(g, (0.0, -0.0615, -0.087), NZ, L.chamfer_rect(-0.022, -0.012, 0.022, 0.012, 0.005),
+          h=0.004, depth=0.006)
+    solid = L.Geo()
+    solid.faces = [f for f in g.faces if f[1] == "body"]
+    for s in (-1, 1):
+        ray_strip(g, [solid], [(s * 0.07, -0.075, 0.0), (s * 0.035, -0.18, 0.0)],
+                  lambda p: ((p[0], p[1], -0.4), Z), 0.005, step=0.01)
+    return g
+
+
+def upper_arm():
+    """Shoulder ball at the origin, the sleeve 0.27 m down to the elbow."""
+    secs = [(0.045, 0.028, 0.028, 0.01), (0.02, 0.052, 0.052, 0.017), (-0.025, 0.058, 0.058, 0.02),
+            (-0.075, 0.048, 0.048, 0.016), (-0.25, 0.04, 0.04, 0.013), (-0.285, 0.032, 0.032, 0.011)]
+    return segment(secs, bands=[(-0.06, -0.072)], flows=[(-0.09, -0.24)], flow_w=0.005)
+
+
+def forearm():
+    """Elbow cap at the origin, a bracer 0.25 m down to the wrist, flattening to slide into the
+    glove's cuff (narrow in X, the glove's palm axis; deep in Z, the glove's -Y)."""
+    secs = [(0.03, 0.028, 0.028, 0.01), (0.0, 0.044, 0.044, 0.015), (-0.05, 0.044, 0.048, 0.016),
+            (-0.17, 0.028, 0.04, 0.011), (-0.265, 0.016, 0.034, 0.007)]
+    return segment(secs, bands=[(-0.04, -0.052)], flows=[(-0.06, -0.17)], flow_w=0.005)
+
+
+def thigh():
+    """Hip ball at the origin, the thigh 0.38 m down to the knee, an accent knee guard."""
+    secs = [(0.05, 0.035, 0.035, 0.012), (0.02, 0.064, 0.064, 0.022), (-0.06, 0.074, 0.074, 0.025),
+            (-0.3, 0.055, 0.058, 0.019), (-0.38, 0.05, 0.052, 0.017), (-0.41, 0.034, 0.034, 0.012)]
+    g = segment(secs, bands=[(-0.07, -0.082)], flows=[(-0.1, -0.3)])
+    plate(g, (0.0, -0.37, -0.052), NZ, L.chamfer_rect(-0.03, -0.035, 0.03, 0.03, 0.012), h=0.006,
+          depth=0.012)
+    return g
+
+
+def shin():
+    """Knee at the origin, the shin 0.37 m down to the ankle, a light line down the guard."""
+    secs = [(0.035, 0.038, 0.038, 0.013), (0.0, 0.054, 0.058, 0.018), (-0.1, 0.057, 0.062, 0.02),
+            (-0.3, 0.042, 0.046, 0.015), (-0.37, 0.04, 0.042, 0.014), (-0.395, 0.03, 0.03, 0.01)]
+    return segment(secs, bands=[(-0.31, -0.322)], front_flow=(-0.05, -0.29))
+
+
+def boot():
+    """Ankle at the origin, sole 0.08 m below, toe 0.17 m forward (-Z), heel 0.06 m back."""
+    g = L.Geo()
+
+    def ring(z, hx, y0, y1, ch):
+        return [(x, y, z) for x, y in L.chamfer_rect(-hx, y0, hx, y1, ch)]
+    loft(g, [ring(0.065, 0.04, -0.072, -0.0, 0.015), ring(0.03, 0.05, -0.072, 0.03, 0.018),
+             ring(-0.06, 0.052, -0.072, 0.0, 0.018), ring(-0.14, 0.045, -0.072, -0.035, 0.014),
+             ring(-0.172, 0.032, -0.07, -0.05, 0.008)])
+    # Ankle collar the shin sinks into.
+    loft(g, [[(x, y, z + 0.01) for x, z in L.octagon_xz(hx, hz, ch)]
+             for y, hx, hz, ch in ((0.045, 0.045, 0.046, 0.015), (-0.02, 0.05, 0.05, 0.017))])
+    # Accent sole, a little proud all round.
+    loft(g, [ring(0.07, 0.044, -0.08, -0.068, 0.006), ring(-0.06, 0.056, -0.08, -0.068, 0.006),
+             ring(-0.178, 0.036, -0.08, -0.068, 0.004)], mat="accent")
+    solid = L.Geo()
+    solid.faces = [f for f in g.faces if f[1] == "body"]
+    ray_strip(g, [solid], [(0.0, 0.0, -0.03), (0.0, 0.0, -0.15)],
+              lambda p: ((0.0, 0.4, p[2]), NY), 0.006, step=0.01, mid=True)
+    return g
+
+
+SEGMENTS = (("neck", neck), ("pelvis", pelvis), ("upper_arm", upper_arm), ("forearm", forearm),
+            ("thigh", thigh), ("shin", shin), ("boot", boot))
+
+
+# ---------------------------------------------------------------------------------------------
 
 def main():
     L.reset_scene()
@@ -824,18 +1293,27 @@ def main():
     for h in ("hit_1", "hit_2", "hit_3"):
         L.material(h, base=(1, 1, 1), emit=(1, 1, 1), strength=3.0)
     L.material("eyes", base=(1, 1, 1), rough=0.4, emit=(1, 1, 1), strength=6.0)
+    L.material("sclera", base=(0.8, 0.8, 0.82), rough=0.45)
+    L.material("glow_white", base=(1, 1, 1), rough=0.4, emit=(1, 1, 1), strength=4.0)
     L.material("eye_glow", base=(1, 1, 1), rough=1.0, emit=(1, 1, 1), strength=1.5, alpha=0.5)
     L.material("flow", base=(1, 1, 1), rough=0.4, emit=(1, 1, 1), strength=3.0)
-    pieces = [("head_" + n, globals()["head_" + n]()) for n in HEADS]
+    pieces = []
+    for n in HEADS:
+        hd = globals()["head_" + n]()
+        pieces.append(("head_" + n, hd.finish()))
+        hd.eye_nodes("head_" + n, LIDS[n])
+    pieces += [("eyeball", eyeball()), ("eyeball_cat", eyeball(slit=True)), ("eyelid", eyelid())]
     pieces += [("torso", torso())]
     left = hand_left()
     pieces += [("hand_left", left), ("hand_right", mirrored(left))]
+    pieces += [(name, build()) for name, build in SEGMENTS]
     for name, g in pieces:
-        if name.startswith("head_") or name == "torso":
+        if not name.startswith(("hand_", "eyeball")) and name != "eyelid":
             bad = g.mirror_errors()
             if bad:
                 raise RuntimeError("%s is not X mirror symmetric: %s" % (name, bad[:5]))
-        L.make_object(name, g)
+        smooth = SMOOTH if name.startswith(("head_", "eyeball")) or name == "eyelid" else None
+        L.make_object(name, g, smooth=smooth)
         mn = [min(p[i] for p in g.positions()) for i in range(3)]
         mx = [max(p[i] for p in g.positions()) for i in range(3)]
         print("avatar %-12s %4d tris, extent %s .. %s" % (

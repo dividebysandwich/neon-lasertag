@@ -38,6 +38,17 @@ pub struct Rules {
     pub bolt_life: f32,
     /// Times a bolt bounces off mirrors (the next one stops it).
     pub mirror_bounces: u8,
+    /// Times a ricochet rifle's bolt bounces off any wall, and its least time between shots.
+    pub ricochet_bounces: u8,
+    pub ricochet_cooldown: f32,
+    /// The prism lance: how far its shot reaches (m), its least time between shots, the shots
+    /// one costs, and the hits a head hit deals.
+    pub lance_range: f32,
+    pub lance_cooldown: f32,
+    pub lance_cost: u16,
+    pub lance_head_damage: u8,
+    /// Each of the dual pistols' least time between shots.
+    pub dual_cooldown: f32,
     pub move_speed: f32,
     /// Jumping: the upward speed (m/s), how long after walking off an edge one still may (s),
     /// and how long before landing a press still counts (s).
@@ -85,6 +96,25 @@ pub struct Rules {
     /// Barriers: seconds one stands, how far in front of the player it goes up (m), and its
     /// width and height (m).
     pub barrier_time: f32,
+    /// Seconds a mirror put up stands (its size is a barrier's).
+    pub mirror_time: f32,
+    /// Pulse sensors: seconds one pulses once stuck, between pulses, how far one sees (m), how
+    /// long a pulse shows the enemies it saw (s), and how fast one is thrown (m/s).
+    pub sensor_time: f32,
+    pub sensor_every: f32,
+    pub sensor_range: f32,
+    pub sensor_reveal: f32,
+    pub sensor_speed: f32,
+    /// Seconds a decoy runs.
+    pub decoy_time: f32,
+    /// The med beam: seconds of beam a pickup holds, its reach (m), the widest angle off the
+    /// aim a team mate may be (radians), the seconds of beam a hit takes to heal, and the shots
+    /// a second it refills.
+    pub medbeam_time: f32,
+    pub medbeam_range: f32,
+    pub medbeam_cone: f32,
+    pub medbeam_tick: f32,
+    pub medbeam_ammo: f32,
     pub barrier_dist: f32,
     pub barrier_w: f32,
     pub barrier_h: f32,
@@ -114,6 +144,30 @@ pub struct Rules {
     pub event_every: (f32, f32),
     pub event_quiet: f32,
     pub blackout_time: f32,
+    /// Seconds a mirror storm lasts.
+    pub storm_time: f32,
+    /// Seconds low gravity lasts, and how much of the gravity is left.
+    pub lowgrav_time: f32,
+    pub lowgrav_factor: f32,
+    /// Seconds a bounty runs, and the points it's worth (for the tag-out, all in).
+    pub bounty_time: f32,
+    pub bounty_points: u32,
+    /// Prism mode: points for carrying the enemy's prism home, seconds a dropped one lies
+    /// before it goes home, how close a player has to come to take one (m), and to catch a
+    /// thrown one.
+    pub prism_points: u32,
+    pub prism_return: f32,
+    pub prism_reach: f32,
+    pub prism_catch: f32,
+    /// Infection: the share of players who start as phantoms (at least one), how far
+    /// phantoms' bolts fly (m), and the points each survivor scores every `survive_every`
+    /// seconds.
+    pub infect_share: f32,
+    pub phantom_range: f32,
+    pub survive_points: u32,
+    pub survive_every: f32,
+    /// Infection: the phantoms' points for infecting every survivor.
+    pub infect_all_points: u32,
     pub double_last: f32,
     /// The arena's size (with the seed and the mode, all a client needs to build the same
     /// arena).
@@ -157,6 +211,13 @@ impl Default for Rules {
             blaster_bolt_speed: 96.0,
             bolt_life: 2.0,
             mirror_bounces: 1,
+            ricochet_bounces: 3,
+            ricochet_cooldown: 0.5,
+            lance_range: 90.0,
+            lance_cooldown: 1.2,
+            lance_cost: 2,
+            lance_head_damage: 2,
+            dual_cooldown: 0.45,
             move_speed: 4.0,
             crouch_factor: 0.5,
             countdown: 3.0,
@@ -184,6 +245,18 @@ impl Default for Rules {
             beam_speed: 400.0,
             beam_range: 60.0,
             beam_damage: 2,
+            mirror_time: 15.0,
+            sensor_time: 20.0,
+            sensor_every: 2.0,
+            sensor_range: 10.0,
+            sensor_reveal: 2.5,
+            sensor_speed: 14.0,
+            decoy_time: 6.0,
+            medbeam_time: 12.0,
+            medbeam_range: 8.0,
+            medbeam_cone: 0.35,
+            medbeam_tick: 2.5,
+            medbeam_ammo: 6.0,
             barrier_time: 8.0,
             barrier_dist: 1.5,
             barrier_w: 2.4,
@@ -204,6 +277,20 @@ impl Default for Rules {
             event_first: (120.0, 180.0),
             event_every: (120.0, 180.0),
             event_quiet: 75.0,
+            storm_time: 20.0,
+            lowgrav_time: 20.0,
+            lowgrav_factor: 0.35,
+            bounty_time: 30.0,
+            bounty_points: 300,
+            prism_points: 1000,
+            prism_return: 20.0,
+            prism_reach: 1.6,
+            prism_catch: 2.0,
+            infect_share: 0.25,
+            phantom_range: 14.0,
+            survive_points: 25,
+            survive_every: 10.0,
+            infect_all_points: 1000,
             blackout_time: 20.0,
             double_last: 60.0,
             arena: ArenaSize::Small,

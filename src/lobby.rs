@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use lt_sim::Team;
 use lt_sim::hitbox::{CHEST_DROP, HEAD_CROWN, HEAD_SCALE};
 use lt_sim::level::{ArenaSize, Level};
-use lt_sim::sim::{EYE, eye_on_neck, yaw_of};
+use lt_sim::sim::{EYE, eye_on_neck, neck_of, yaw_of};
 
 use crate::actors::spawn_model;
 use crate::arena::{ArenaPart, Kit};
@@ -45,12 +45,16 @@ const COLORS: [Vec3; 8] = [
 const SQUAD: usize = 10;
 const SQUAD_RADIUS: f32 = 3.2;
 
-/// One of them, idly looking about: their head, and when they do it.
+/// One of them, idly looking about: their head, the neck following it, and when they do it.
 #[derive(Component)]
 struct Idler {
     head: Entity,
+    neck: Entity,
     phase: f32,
 }
+
+/// Where the chest's top is in a squad player's frame.
+const CHEST: Vec3 = Vec3::new(0.0, EYE - CHEST_DROP, 0.0);
 
 #[derive(Component)]
 struct Rocket {
@@ -345,7 +349,7 @@ fn spawn_squad(commands: &mut Commands, models: &Models, palette: &Palette) {
                 .spawn((t, Visibility::default(), ChildOf(root)))
                 .id()
         };
-        let body = part(commands, Transform::from_xyz(0.0, EYE - CHEST_DROP, 0.0));
+        let body = part(commands, Transform::from_translation(CHEST));
         spawn_model(commands, body, &models.torso, palette, team);
         let head = part(commands, Transform::from_xyz(0.0, EYE, 0.0));
         if !models.heads.is_empty() {
@@ -359,26 +363,52 @@ fn spawn_squad(commands: &mut Commands, models: &Models, palette: &Palette) {
                 ))
                 .id();
             let animal = &models.heads[(i * 7 + 3) % models.heads.len()];
-            spawn_model(commands, grown, animal, palette, team);
+            spawn_model(commands, grown, &animal.model, palette, team);
+            crate::eyes::spawn_eyes(commands, grown, animal, models, palette, team, i as u64);
         }
         // The left hand hanging loose, fingers down.
-        let left = part(
-            commands,
+        let gloves = [
             Transform::from_xyz(-0.25, 0.92, 0.03)
                 .with_rotation(Quat::from_rotation_z(-0.15) * Quat::from_rotation_x(-1.35)),
-        );
-        spawn_model(commands, left, &models.hands[0], palette, team);
-        // The blaster held low before the hip, its muzzle to the floor a little ahead, turned
-        // in a little across the body.
-        let right = part(
-            commands,
+            // The blaster held low before the hip, its muzzle to the floor a little ahead,
+            // turned in a little across the body.
             Transform::from_xyz(0.2, 0.98, -0.16)
                 .with_rotation(Quat::from_rotation_y(0.3) * Quat::from_rotation_x(-1.1)),
-        );
+        ];
+        let left = part(commands, gloves[0]);
+        spawn_model(commands, left, &models.hands[0], palette, team);
+        let right = part(commands, gloves[1]);
         spawn_model(commands, right, &models.hands[1], palette, team);
         spawn_model(commands, right, &models.blaster, palette, team);
+        // The body between, posed as in a game (src/rig.rs): arms reaching the gloves, and legs
+        // standing (the gait settled a moment on the spot).
+        let b = &models.body;
+        let segment = |commands: &mut Commands, model, t: Transform| {
+            let e = part(commands, t);
+            spawn_model(commands, e, model, palette, team);
+            e
+        };
+        let neck = segment(commands, &b.neck, Transform::IDENTITY);
+        let chest = Transform::from_translation(CHEST);
+        for (glove, side) in gloves.iter().zip([-1.0, 1.0]) {
+            let [upper, fore] = crate::rig::arm(&chest, side, glove);
+            segment(commands, &b.upper_arm, upper);
+            segment(commands, &b.forearm, fore);
+        }
+        let mut gait = crate::rig::Gait::default();
+        let mut legs = crate::rig::Legs::default();
+        for _ in 0..60 {
+            legs = gait.update(1.0 / 60.0, Vec3::ZERO, CHEST, 0.0);
+        }
+        segment(commands, &b.pelvis, legs.pelvis);
+        for i in 0..2 {
+            segment(commands, &b.thigh, legs.thigh[i]);
+            segment(commands, &b.shin, legs.shin[i]);
+            segment(commands, &b.boot, legs.boot[i]);
+        }
         commands.entity(root).insert(Idler {
             head,
+            neck,
             phase: i as f32 * 2.3,
         });
     }
@@ -393,6 +423,10 @@ fn idle(time: Res<Time>, idlers: Query<&Idler>, mut transforms: Query<&mut Trans
             let pitch = -0.1 + 0.08 * (t * 0.23 + i.phase * 1.9).sin();
             h.rotation = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
             h.translation = eye_on_neck(Vec3::Y * EYE, h.rotation);
+            let neck = crate::rig::neck(neck_of(h.translation, h.rotation), CHEST, h.rotation);
+            if let Ok(mut n) = transforms.get_mut(i.neck) {
+                *n = neck;
+            }
         }
     }
 }

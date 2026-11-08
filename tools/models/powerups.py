@@ -13,6 +13,19 @@ Meshes (game frame, Y up, metres):
   centre.
 - `barrier`: a wall of hard light between two posts: a tall panel with a glowing face and a
   band across it, ~0.4 m wide, ~0.34 m tall, origin at the centre.
+- `ricochet`: a bolt's zigzag path bouncing between two walls, ~0.38 m wide, ~0.4 m tall,
+  origin at the centre.
+- `lance`: a triangular prism split by a long beam of light (the prism lance), ~0.5 m wide,
+  ~0.3 m tall, origin at the centre.
+- `mirror`: a hexagonal hand mirror on a short post, its glass the accent, ~0.34 m wide,
+  ~0.42 m tall, origin at the centre.
+- `sensor`: the pulse sensor, an octagonal puck with its glowing eye and two arcs of its
+  pulse, ~0.4 m wide, ~0.3 m tall, origin at the centre.
+- `decoy`: two figures, one behind the other (the copy in the accent), ~0.36 m wide,
+  ~0.42 m tall, origin at the centre.
+- `medbeam`: a cross (the med beam) with a wavy beam under it, ~0.32 m wide, ~0.42 m tall,
+  origin at the centre.
+- `dual`: two pistols crossed, ~0.42 m wide, ~0.3 m tall, origin at the centre.
 - `shotgun`: the pump shotgun a player holds, in the blaster's frame (barrel along -Z, up +Y,
   origin at the middle of the grip hold), with `hit_1`/`hit_2`/`hit_3` lights on top of the
   receiver (hit_1 nearest the player) and a `muzzle` disc; the empty `shotgun_muzzle` marks the
@@ -212,6 +225,116 @@ def build_barrier():
     return g
 
 
+def stroke(g, a, b, w, depth, mat="accent"):
+    """A straight bar of width w from a to b (x, y), as a convex slab."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    r = math.hypot(dx, dy)
+    nx, ny = -dy / r * w / 2, dx / r * w / 2
+    poly = [(a[0] + nx, a[1] + ny), (a[0] - nx, a[1] - ny), (b[0] - nx, b[1] - ny),
+            (b[0] + nx, b[1] + ny)]
+    if L.signed_area(poly) < 0:
+        poly.reverse()
+    slab(g, poly, -depth, depth, mat)
+
+
+def build_ricochet():
+    g = L.Geo()
+    # Two walls (body), and the path between them: in from the top left, three bounces.
+    for s in (-1, 1):
+        box(g, (s * 0.19 - 0.02, -0.2, -0.04), (s * 0.19 + 0.02, 0.2, 0.04), mat="body")
+    pts = [(-0.1, 0.2), (0.16, 0.09), (-0.16, -0.03), (0.16, -0.15), (0.0, -0.21)]
+    for a, b in zip(pts, pts[1:]):
+        stroke(g, a, b, 0.045, 0.025)
+    # A spark at each bounce.
+    for x, y in pts[1:4]:
+        ring = [(x + 0.035 * math.cos(t), y + 0.035 * math.sin(t))
+                for t in (2 * math.pi * k / 8 for k in range(8))]
+        slab(g, ring, -0.035, 0.035, "accent")
+    return g
+
+
+def build_lance():
+    g = L.Geo()
+    # The prism: a triangle standing on its base, body with accent faces.
+    tri = [(-0.13, -0.11), (0.13, -0.11), (0.0, 0.15)]
+    slab(g, tri, -0.05, 0.05, "body", front_mat="accent", back_mat="accent")
+    # The beam: in on the left, out on the right, through the prism.
+    box(g, (-0.26, -0.012, -0.012), (-0.06, 0.012, 0.012), mat="accent")
+    stroke(g, (0.05, 0.0), (0.26, -0.06), 0.03, 0.012)
+    return g
+
+
+def build_mirror():
+    g = L.Geo()
+    hexa = [(0.17 * math.cos(math.pi / 6 + k * math.pi / 3),
+             0.05 + 0.17 * math.sin(math.pi / 6 + k * math.pi / 3)) for k in range(6)]
+    slab(g, hexa, -0.012, 0.012, "body")
+    slab(g, inset(hexa, 0.025), -0.02, 0.02, "body", front_mat="accent", back_mat="accent")
+    box(g, (-0.025, -0.21, -0.025), (0.025, -0.1, 0.025), mat="body")
+    box(g, (-0.07, -0.22, -0.04), (0.07, -0.19, 0.04), mat="accent")
+    return g
+
+
+def build_sensor():
+    g = L.Geo()
+    octa = [(0.1 * math.cos(math.pi / 8 + k * math.pi / 4),
+             -0.04 + 0.1 * math.sin(math.pi / 8 + k * math.pi / 4)) for k in range(8)]
+    slab(g, octa, -0.04, 0.04, "body")
+    slab(g, inset(octa, 0.05), -0.05, 0.05, "body", front_mat="accent", back_mat="accent")
+    # The pulse: two arcs over it, of short strokes.
+    for r in (0.16, 0.23):
+        n = 6
+        pts = [(r * math.cos(a), -0.04 + r * math.sin(a))
+               for a in (math.radians(35 + 110 * k / n) for k in range(n + 1))]
+        for a, b in zip(pts, pts[1:]):
+            stroke(g, a, b, 0.022, 0.015)
+    return g
+
+
+def build_decoy():
+    g = L.Geo()
+    for dx, z, mat in ((-0.07, 0.03, "body"), (0.07, -0.03, "accent")):
+        head = [(dx + 0.055 * math.cos(math.pi / 8 + k * math.pi / 4),
+                 0.15 + 0.055 * math.sin(math.pi / 8 + k * math.pi / 4)) for k in range(8)]
+        slab(g, head, z - 0.02, z + 0.02, mat)
+        body = [(dx - 0.1, -0.21), (dx + 0.1, -0.21), (dx + 0.07, 0.07), (dx - 0.07, 0.07)]
+        slab(g, body, z - 0.02, z + 0.02, mat)
+    return g
+
+
+def build_medbeam():
+    g = L.Geo()
+    # The cross: two bars, the accent face front and back.
+    for poly in ([(-0.045, -0.03), (0.045, -0.03), (0.045, 0.21), (-0.045, 0.21)],
+                 [(-0.13, 0.045), (0.13, 0.045), (0.13, 0.135), (-0.13, 0.135)]):
+        slab(g, poly, -0.03, 0.03, "body", front_mat="accent", back_mat="accent")
+    # The beam: a zigzag wave under it.
+    pts = [(-0.16 + 0.32 * k / 6, -0.13 + (0.04 if k % 2 else -0.04)) for k in range(7)]
+    for a, b in zip(pts, pts[1:]):
+        stroke(g, a, b, 0.03, 0.015)
+    return g
+
+
+def build_dual():
+    g = L.Geo()
+    for s, z in ((-1, -0.025), (1, 0.025)):
+        a = math.radians(35) * s
+        ca, sa = math.cos(a), math.sin(a)
+
+        def rot(pts):
+            return [(x * ca - y * sa, y * ca + x * sa) for x, y in pts]
+
+        # Barrel and slide along +x (mirrored), the grip down from its back.
+        barrel = rot([(-0.06 * s, 0.0), (0.2 * s, 0.0), (0.2 * s, 0.05), (-0.06 * s, 0.05)])
+        grip = rot([(-0.06 * s, 0.0), (-0.0 * s, 0.0), (-0.03 * s, -0.11), (-0.09 * s, -0.11)])
+        tip = rot([(0.17 * s, 0.008), (0.205 * s, 0.008), (0.205 * s, 0.042), (0.17 * s, 0.042)])
+        for poly, mat in ((barrel, "body"), (grip, "body"), (tip, "accent")):
+            if L.signed_area(poly) < 0:
+                poly.reverse()
+            slab(g, poly, z - 0.018, z + 0.018, mat, front_mat="accent" if mat == "body" else None)
+    return g
+
+
 def build_shotgun():
     g = L.Geo()
 
@@ -283,7 +406,11 @@ def main():
     L.material("muzzle", base=(1, 1, 1), emit=(1, 1, 1), strength=5.0)
     for name, build in (("rapid", build_rapid), ("shield", build_shield), ("cloak", build_cloak),
                         ("shotgun", build_shotgun), ("speed", build_speed),
-                        ("charge", build_charge), ("barrier", build_barrier)):
+                        ("charge", build_charge), ("barrier", build_barrier),
+                        ("ricochet", build_ricochet), ("lance", build_lance),
+                        ("mirror", build_mirror), ("sensor", build_sensor),
+                        ("decoy", build_decoy), ("medbeam", build_medbeam),
+                        ("dual", build_dual)):
         g = build()
         L.make_object(name, g)
         print("powerup %s %d tris" % (name, g.tris()))

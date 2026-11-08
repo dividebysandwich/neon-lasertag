@@ -397,6 +397,8 @@ pub struct LocalCmd {
     pub cmd: PlayerCmd,
     /// The trigger was pulled since the last tick (so a quick click isn't lost between ticks).
     pub fire_latch: bool,
+    /// The same for the second of dual pistols.
+    pub fire2_latch: bool,
     /// Seconds more to hold the trigger down (testing: `LT_DEV` `fire=S`), and a barrier to
     /// put up (`barrier`).
     pub dev_fire: f32,
@@ -474,16 +476,23 @@ fn step_game(
         cmd.fire = true;
         local.fire_latch = false;
     }
+    if local.fire2_latch {
+        cmd.fire2 = true;
+        local.fire2_latch = false;
+    }
     if local.dev_fire > 0.0 {
         cmd.fire = true;
         local.dev_fire -= lt_sim::TICK;
     }
     if std::mem::take(&mut local.dev_barrier) {
-        cmd.barrier = true;
+        cmd.gadget = true;
     }
     // (Nobody fires in the countdown: no bolt shown that the sim won't fire.)
-    if matches!(game.snap.phase, lt_sim::MatchPhase::Countdown(_)) {
+    // (Nor with a prism in hand: the sim won't fire either.)
+    let carrying = game.me.is_some() && game.snap.prisms.iter().any(|p| p.carrier == game.me);
+    if carrying || matches!(game.snap.phase, lt_sim::MatchPhase::Countdown(_)) {
         cmd.fire = false;
+        cmd.fire2 = false;
     }
     // A throw is sent once.
     local.cmd.throw = None;
@@ -533,6 +542,7 @@ fn step_game(
                 // (As the server last told: `game.snap` has the prediction's ammo.)
                 let p = game.interp.newest(me);
                 let feet = cmd.feet.or(p.map(|p| p.feet)).unwrap_or_default();
+                game.shots.infected = game.snap.infected;
                 game.shots
                     .trigger(&mut cmd, p, feet, &game.world, &game.rules, me, &mut own);
             }
@@ -781,7 +791,13 @@ fn predict(
         None => mover.vel * dt * lt_sim::sim::air_control(mover.air),
     } + mover.air * dt
         + walk;
-    let (feet, mut vy) = game.world.move_body(mover.feet, delta, vy, dt);
+    // (Low gravity, as the sim has it: not on a jump pad's flight.)
+    let g = if mover.air == Vec2::ZERO {
+        lt_sim::sim::gravity_for(game.snap.event, &game.rules)
+    } else {
+        lt_sim::collide::GRAVITY
+    };
+    let (feet, mut vy) = game.world.move_body_g(mover.feet, delta, vy, dt, g);
     let flying = mover.air != Vec2::ZERO;
     let mut air = mover.air;
     if let Some((up, throw)) = lt_sim::sim::pad_step(&game.level, feet, vy, &mut air) {

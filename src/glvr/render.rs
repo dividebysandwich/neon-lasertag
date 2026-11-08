@@ -16,8 +16,14 @@ use std::ffi::c_void;
 
 const LIT_SHADER: &str = include_str!("../../assets/shaders/gl/lit.glsl");
 const NEON_SHADER: &str = include_str!("../../assets/shaders/gl/neon.glsl");
-/// Near plane (m), as bevy_mod_xr's XR cameras.
-const NEAR: f32 = 0.05;
+const LENS_SHADER: &str = include_str!("../../assets/shaders/gl/lens.glsl");
+/// Near plane (m), as `--vr`'s eye cameras (src/xr.rs).
+pub const NEAR: f32 = 0.05;
+/// The scope's view (src/scope.rs): its size (pixels, square) and mip levels.
+const SCOPE_SIZE: i32 = 512;
+const SCOPE_LEVELS: i32 = 10;
+/// The lens disc's segments.
+const DISC_SEGMENTS: u16 = 40;
 /// GL_LOWER_LEFT / GL_ZERO_TO_ONE (glClipControl, for reversed depth).
 const LOWER_LEFT: u32 = 0x8CA1;
 const ZERO_TO_ONE: u32 = 0x935F;
@@ -57,6 +63,33 @@ struct Program {
     point_pos: Option<glow::UniformLocation>,
     point_colour: Option<glow::UniformLocation>,
     point_count: Option<glow::UniformLocation>,
+    on: Option<glow::UniformLocation>,
+}
+
+/// The programs drawing the arena: lit surfaces, neon accents and their halos.
+struct Programs {
+    lit: Program,
+    accent: Program,
+    glow: Program,
+}
+
+impl Programs {
+    /// For `views` views at once (2: both eyes; 1: the scope).
+    fn new(gl: &glow::Context, views: u32) -> Result<Self, String> {
+        Ok(Programs {
+            lit: compile(gl, LIT_SHADER, "", views)?,
+            accent: compile(gl, NEON_SHADER, "", views)?,
+            glow: compile(gl, NEON_SHADER, "#define GLOW", views)?,
+        })
+    }
+}
+
+/// The scope's view: its image (mipmapped) and depth, a layer each, and the framebuffer.
+struct ScopeTarget {
+    colour: glow::Texture,
+    depth: glow::Texture,
+    fb: glow::Framebuffer,
+    srgb: bool,
 }
 
 /// A mesh's data for the render thread.
@@ -119,9 +152,11 @@ pub struct Stats {
 
 pub struct Renderer {
     pub gl: glow::Context,
-    lit: Program,
-    accent: Program,
-    glow: Program,
+    eyes: Programs,
+    scope: Programs,
+    lens: Program,
+    disc: GpuMesh,
+    scope_target: Option<ScopeTarget>,
     meshes: HashMap<AssetId<Mesh>, GpuMesh>,
     depth: Option<(glow::Texture, (u32, u32))>,
     framebuffers: HashMap<u32, glow::Framebuffer>,
@@ -131,7 +166,7 @@ pub struct Renderer {
     pub stats: Stats,
 }
 
-fn compile(gl: &glow::Context, shader: &str, defines: &str) -> Result<Program, String> {
+fn compile(gl: &glow::Context, shader: &str, defines: &str, views: u32) -> Result<Program, String> {
     // SAFETY: the context is current; the shaders are this module's.
     unsafe {
         let program = gl.create_program()?;
@@ -142,7 +177,7 @@ fn compile(gl: &glow::Context, shader: &str, defines: &str) -> Result<Program, S
         ] {
             let s = gl.create_shader(kind)?;
             let source = format!(
-                "#version 450 core\n#extension GL_OVR_multiview2 : require\n#define VIEW gl_ViewID_OVR\n#define {stage}\n{defines}\n{shader}"
+                "#version 450 core\n#extension GL_OVR_multiview2 : require\n#define VIEW gl_ViewID_OVR\n#define NUM_VIEWS {views}\n#define {stage}\n{defines}\n{shader}"
             );
             gl.shader_source(s, &source);
             gl.compile_shader(s);
@@ -186,6 +221,7 @@ fn compile(gl: &glow::Context, shader: &str, defines: &str) -> Result<Program, S
             point_pos: at("u_point_pos"),
             point_colour: at("u_point_colour"),
             point_count: at("u_point_count"),
+            on: at("u_on"),
         })
     }
 }
@@ -199,7 +235,7 @@ fn projection(fov: xr::Fovf, widen: f32) -> Mat4 {
 }
 
 /// The projection with the edges' tangents l, r, d, u: reversed depth, infinitely far.
-fn projection_tan(l: f32, r: f32, d: f32, u: f32, near: f32) -> Mat4 {
+pub fn projection_tan(l: f32, r: f32, d: f32, u: f32, near: f32) -> Mat4 {
     let (w, h) = (r - l, u - d);
     Mat4::from_cols(
         Vec4::new(2.0 / w, 0.0, 0.0, 0.0),
@@ -284,15 +320,18 @@ impl Renderer {
         };
         // SAFETY: as above.
         unsafe { clip_control(LOWER_LEFT, ZERO_TO_ONE) };
-        let lit = compile(&gl, LIT_SHADER, "")?;
-        let accent = compile(&gl, NEON_SHADER, "")?;
-        let glow = compile(&gl, NEON_SHADER, "#define GLOW")?;
+        let eyes = Programs::new(&gl, 2)?;
+        let scope = Programs::new(&gl, 1)?;
+        let lens = compile(&gl, LENS_SHADER, "", 2)?;
+        let disc = Self::upload(&gl, &disc()).ok_or("can't upload the scope's lens")?;
         let samples = if multisample.is_some() { samples } else { 0 };
         Ok(Renderer {
             gl,
-            lit,
-            accent,
-            glow,
+            eyes,
+            scope,
+            lens,
+            disc,
+            scope_target: None,
             meshes: HashMap::new(),
             depth: None,
             framebuffers: HashMap::new(),
@@ -471,6 +510,7 @@ impl Renderer {
 
     /// Draws `list` seen by the eyes `views` into image `texture`, `size` big, in one pass:
     /// the lit meshes and the accents (opaque), then the halos (added, depth tested only).
+    /// The scope's view, if it is held up to an eye, is drawn before into its own image.
     pub fn draw(
         &mut self,
         list: &DrawList,
@@ -479,14 +519,36 @@ impl Renderer {
         size: (u32, u32),
         srgb: bool,
     ) -> Result<(), String> {
-        let fb = self.framebuffer(texture, size)?;
-        let eyes = eye_views(list.rig, views, 1.0);
         let mut stats = Stats {
             culled: list.culled,
             ..default()
         };
+        let scoped = match list.scope.and_then(|s| s.view) {
+            Some((view_proj, eye)) => {
+                stats.draws += self.draw_scope(list, EyeView { view_proj, eye }, srgb)?;
+                true
+            }
+            None => false,
+        };
+        let fb = self.framebuffer(texture, size)?;
+        let eyes = eye_views(list.rig, views, 1.0);
+        self.begin(fb, (size.0 as i32, size.1 as i32), srgb, list.clear);
+        stats.draws += self.scene(&self.eyes, list, &eyes, Some(scoped));
+        // SAFETY: the context is current.
+        unsafe {
+            let gl = &self.gl;
+            gl.invalidate_framebuffer(glow::FRAMEBUFFER, &[glow::DEPTH_ATTACHMENT]);
+            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            gl.flush();
+        }
+        self.stats = stats;
+        Ok(())
+    }
+
+    /// Binds `fb` (`size`) and clears it to `clear`, ready to draw the opaque meshes.
+    fn begin(&self, fb: glow::Framebuffer, size: (i32, i32), srgb: bool, clear: Vec4) {
         let gl = &self.gl;
-        // SAFETY: the context is current; the programs and meshes are this renderer's.
+        // SAFETY: the context is current; the framebuffer is this renderer's.
         unsafe {
             if srgb {
                 gl.enable(glow::FRAMEBUFFER_SRGB);
@@ -494,7 +556,7 @@ impl Renderer {
                 gl.disable(glow::FRAMEBUFFER_SRGB);
             }
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fb));
-            gl.viewport(0, 0, size.0 as i32, size.1 as i32);
+            gl.viewport(0, 0, size.0, size.1);
             gl.enable(glow::DEPTH_TEST);
             gl.depth_func(glow::GREATER);
             gl.depth_mask(true);
@@ -502,11 +564,130 @@ impl Renderer {
             gl.enable(glow::CULL_FACE);
             gl.cull_face(glow::BACK);
             gl.front_face(glow::CCW);
-            let c = aces(list.clear.truncate());
+            let c = aces(clear.truncate());
             gl.clear_color(c.x, c.y, c.z, 1.0);
             gl.clear_depth_f32(0.0);
             gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+        }
+    }
 
+    /// The scope's view of `list` from `eye` into its image (mipmapped for the lens): the
+    /// draws.
+    fn draw_scope(&mut self, list: &DrawList, eye: EyeView, srgb: bool) -> Result<u32, String> {
+        let target = self.scope_target(srgb)?;
+        self.begin(target.0, (SCOPE_SIZE, SCOPE_SIZE), srgb, list.clear);
+        let draws = self.scene(&self.scope, list, &[eye], None);
+        // SAFETY: the context is current; the texture is this renderer's.
+        unsafe {
+            let gl = &self.gl;
+            gl.invalidate_framebuffer(glow::FRAMEBUFFER, &[glow::DEPTH_ATTACHMENT]);
+            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(target.1));
+            gl.generate_mipmap(glow::TEXTURE_2D_ARRAY);
+            gl.bind_texture(glow::TEXTURE_2D_ARRAY, None);
+        }
+        Ok(draws)
+    }
+
+    /// The scope's framebuffer and image, made (again) when first needed or the image's
+    /// encoding changes.
+    fn scope_target(&mut self, srgb: bool) -> Result<(glow::Framebuffer, glow::Texture), String> {
+        if let Some(t) = &self.scope_target
+            && t.srgb == srgb
+        {
+            return Ok((t.fb, t.colour));
+        }
+        let gl = &self.gl;
+        // SAFETY: the context is current; the objects are this renderer's.
+        unsafe {
+            if let Some(old) = self.scope_target.take() {
+                gl.delete_framebuffer(old.fb);
+                gl.delete_texture(old.colour);
+                gl.delete_texture(old.depth);
+            }
+            let colour = gl.create_texture()?;
+            gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(colour));
+            let format = if srgb {
+                glow::SRGB8_ALPHA8
+            } else {
+                glow::RGBA8
+            };
+            gl.tex_storage_3d(
+                glow::TEXTURE_2D_ARRAY,
+                SCOPE_LEVELS,
+                format,
+                SCOPE_SIZE,
+                SCOPE_SIZE,
+                1,
+            );
+            for (k, v) in [
+                (glow::TEXTURE_MIN_FILTER, glow::LINEAR_MIPMAP_LINEAR),
+                (glow::TEXTURE_MAG_FILTER, glow::LINEAR),
+                (glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE),
+                (glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE),
+            ] {
+                gl.tex_parameter_i32(glow::TEXTURE_2D_ARRAY, k, v as i32);
+            }
+            let depth = gl.create_texture()?;
+            gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(depth));
+            gl.tex_storage_3d(
+                glow::TEXTURE_2D_ARRAY,
+                1,
+                glow::DEPTH_COMPONENT32F,
+                SCOPE_SIZE,
+                SCOPE_SIZE,
+                1,
+            );
+            gl.bind_texture(glow::TEXTURE_2D_ARRAY, None);
+            let fb = gl.create_framebuffer()?;
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fb));
+            // Not multisampled: rendering into a mipmapped image that way came out garbled
+            // (Zink), and the mipmaps smooth the view, shrunk onto the lens, anyway.
+            for (attachment, tex) in [
+                (glow::COLOR_ATTACHMENT0, colour),
+                (glow::DEPTH_ATTACHMENT, depth),
+            ] {
+                (self.multiview)(glow::FRAMEBUFFER, attachment, tex.0.get(), 0, 0, 1);
+            }
+            let complete =
+                gl.check_framebuffer_status(glow::FRAMEBUFFER) == glow::FRAMEBUFFER_COMPLETE;
+            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            if !complete {
+                gl.delete_framebuffer(fb);
+                gl.delete_texture(colour);
+                gl.delete_texture(depth);
+                return Err("OpenGL can't draw the scope's view".into());
+            }
+            self.scope_target = Some(ScopeTarget {
+                colour,
+                depth,
+                fb,
+                srgb,
+            });
+            Ok((fb, colour))
+        }
+    }
+
+    /// Draws `list` seen by `eyes` with `progs` into the framebuffer bound (cleared): the
+    /// draws. `lens`: the eyes' pass, drawing the scope's lens (Some(true): its view is
+    /// drawn) and the overlays; None: the scope's own view.
+    fn scene(
+        &self,
+        progs: &Programs,
+        list: &DrawList,
+        eyes: &[EyeView],
+        lens: Option<bool>,
+    ) -> u32 {
+        let gl = &self.gl;
+        let mut draws = 0;
+        // (What this view sees.)
+        let view = if lens.is_some() {
+            super::extract::IN_EYES
+        } else {
+            super::extract::IN_SCOPE
+        };
+        // SAFETY: the context is current; the programs and meshes are this renderer's.
+        unsafe {
             let view_proj: Vec<f32> = eyes
                 .iter()
                 .flat_map(|e| e.view_proj.to_cols_array())
@@ -516,7 +697,7 @@ impl Renderer {
             let pulse_pos: Vec<f32> = n.pulse_pos.iter().flat_map(|v| v.to_array()).collect();
             let pulse_colour: Vec<f32> = n.pulse_colour.iter().flat_map(|v| v.to_array()).collect();
             let shots: Vec<f32> = n.shots.iter().flat_map(|v| v.to_array()).collect();
-            for p in [&self.lit, &self.accent, &self.glow] {
+            for p in [&progs.lit, &progs.accent, &progs.glow] {
                 gl.use_program(Some(p.program));
                 gl.uniform_matrix_4_f32_slice(p.view_proj.as_ref(), false, &view_proj);
                 gl.uniform_3_f32_slice(p.eye.as_ref(), &eye_pos);
@@ -531,35 +712,40 @@ impl Renderer {
                 gl.uniform_4_f32_slice(p.shots.as_ref(), &shots);
             }
 
-            gl.use_program(Some(self.lit.program));
+            gl.use_program(Some(progs.lit.program));
             let point_pos: Vec<f32> = list.points.iter().flat_map(|p| p.0.to_array()).collect();
             let point_colour: Vec<f32> = list.points.iter().flat_map(|p| p.1.to_array()).collect();
-            gl.uniform_1_i32(self.lit.point_count.as_ref(), list.points.len() as i32);
+            gl.uniform_1_i32(progs.lit.point_count.as_ref(), list.points.len() as i32);
             if !list.points.is_empty() {
-                gl.uniform_4_f32_slice(self.lit.point_pos.as_ref(), &point_pos);
-                gl.uniform_3_f32_slice(self.lit.point_colour.as_ref(), &point_colour);
+                gl.uniform_4_f32_slice(progs.lit.point_pos.as_ref(), &point_pos);
+                gl.uniform_3_f32_slice(progs.lit.point_colour.as_ref(), &point_colour);
             }
-            for item in &list.lit {
-                stats.draws += self.draw_lit(item) as u32;
+            for item in list.lit.iter().filter(|i| i.views & view != 0) {
+                draws += self.draw_lit(&progs.lit, item) as u32;
             }
-            gl.use_program(Some(self.accent.program));
-            for item in &list.accents {
-                stats.draws += self.draw_neon(&self.accent, item) as u32;
+            gl.use_program(Some(progs.accent.program));
+            for item in list.accents.iter().filter(|i| i.views & view != 0) {
+                draws += self.draw_neon(&progs.accent, item) as u32;
+            }
+            if let (Some(on), Some(scope)) = (lens, list.scope) {
+                draws += self.draw_lens(&view_proj, &scope, on) as u32;
             }
             // The halos: added over everything, hidden behind what is opaque.
             gl.enable(glow::BLEND);
             gl.blend_func(glow::ONE, glow::ONE);
             gl.depth_mask(false);
             gl.disable(glow::CULL_FACE);
-            gl.use_program(Some(self.glow.program));
-            for item in &list.glows {
-                stats.draws += self.draw_neon(&self.glow, item) as u32;
+            gl.use_program(Some(progs.glow.program));
+            for item in list.glows.iter().filter(|i| i.views & view != 0) {
+                draws += self.draw_neon(&progs.glow, item) as u32;
             }
             // The overlays (the menus) over everything: depth cleared, and no event pulses on
             // them (as neon.wgsl's OVERLAY).
-            if !list.overlay_accents.is_empty() || !list.overlay_glows.is_empty() {
+            if lens.is_some()
+                && (!list.overlay_accents.is_empty() || !list.overlay_glows.is_empty())
+            {
                 let none: Vec<f32> = [0.0, 0.0, 0.0, -1.0].repeat(n.pulse_pos.len());
-                for p in [&self.accent, &self.glow] {
+                for p in [&progs.accent, &progs.glow] {
                     gl.use_program(Some(p.program));
                     gl.uniform_4_f32_slice(p.pulse_pos.as_ref(), &none);
                 }
@@ -567,28 +753,47 @@ impl Renderer {
                 gl.clear(glow::DEPTH_BUFFER_BIT);
                 gl.disable(glow::BLEND);
                 gl.enable(glow::CULL_FACE);
-                gl.use_program(Some(self.accent.program));
+                gl.use_program(Some(progs.accent.program));
                 for item in &list.overlay_accents {
-                    stats.draws += self.draw_neon(&self.accent, item) as u32;
+                    draws += self.draw_neon(&progs.accent, item) as u32;
                 }
                 gl.enable(glow::BLEND);
                 gl.depth_mask(false);
                 gl.disable(glow::CULL_FACE);
-                gl.use_program(Some(self.glow.program));
+                gl.use_program(Some(progs.glow.program));
                 for item in &list.overlay_glows {
-                    stats.draws += self.draw_neon(&self.glow, item) as u32;
+                    draws += self.draw_neon(&progs.glow, item) as u32;
                 }
             }
             gl.disable(glow::BLEND);
             gl.depth_mask(true);
             gl.enable(glow::CULL_FACE);
             gl.bind_vertex_array(None);
-            gl.invalidate_framebuffer(glow::FRAMEBUFFER, &[glow::DEPTH_ATTACHMENT]);
-            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
-            gl.flush();
         }
-        self.stats = stats;
-        Ok(())
+        draws
+    }
+
+    /// Draws the scope's lens (opaque) seen by the eyes `view_proj`: its view if `on` (drawn
+    /// into the scope's image this frame), else dark glass.
+    fn draw_lens(&self, view_proj: &[f32], scope: &super::extract::ScopeDraw, on: bool) -> bool {
+        let gl = &self.gl;
+        let p = &self.lens;
+        let image = self.scope_target.as_ref().map(|t| t.colour).filter(|_| on);
+        // SAFETY: the context is current; the program, texture and disc are this renderer's.
+        unsafe {
+            gl.use_program(Some(p.program));
+            gl.uniform_matrix_4_f32_slice(p.view_proj.as_ref(), false, view_proj);
+            gl.uniform_matrix_4_f32_slice(p.model.as_ref(), false, &scope.lens.to_cols_array());
+            gl.uniform_4_f32_slice(p.colour.as_ref(), &scope.colour.extend(1.0).to_array());
+            gl.uniform_1_f32(p.on.as_ref(), if image.is_some() { 1.0 } else { 0.0 });
+            gl.active_texture(glow::TEXTURE0);
+            gl.bind_texture(glow::TEXTURE_2D_ARRAY, image);
+            gl.bind_vertex_array(Some(self.disc.vao));
+        }
+        self.submit(&self.disc);
+        // SAFETY: as above.
+        unsafe { gl.bind_texture(glow::TEXTURE_2D_ARRAY, None) };
+        true
     }
 
     /// A fence after everything asked of the GPU so far: the image just drawn is released to
@@ -619,11 +824,29 @@ impl Renderer {
     }
 
     /// Saves both eyes of image `texture` as `xr-eye0.png` and `xr-eye1.png` (as `LT_XR_SHOT`
-    /// does for Bevy's headset images): what the headset is given.
+    /// does for Bevy's headset images): what the headset is given; and the scope's view, if
+    /// it was drawn, as `xr-scope0.png`.
     pub fn save(&self, texture: glow::Texture, size: (u32, u32)) -> Result<(), String> {
+        self.save_layers(texture, size, 2, "xr-eye")?;
+        // (And the scope's view, if it was drawn: xr-scope0.png.)
+        if let Some(t) = &self.scope_target {
+            let s = SCOPE_SIZE as u32;
+            self.save_layers(t.colour, (s, s), 1, "xr-scope")?;
+        }
+        Ok(())
+    }
+
+    /// Saves `layers` layers of `texture` as `<name><layer>.png`.
+    fn save_layers(
+        &self,
+        texture: glow::Texture,
+        size: (u32, u32),
+        layers: i32,
+        name: &str,
+    ) -> Result<(), String> {
         let gl = &self.gl;
         let (w, h) = (size.0 as usize, size.1 as usize);
-        for layer in 0..2 {
+        for layer in 0..layers {
             let mut pixels = vec![0u8; w * h * 4];
             // SAFETY: the context is current; `pixels` holds the whole layer.
             unsafe {
@@ -655,7 +878,7 @@ impl Renderer {
                 .flatten()
                 .copied()
                 .collect();
-            let path = format!("xr-eye{layer}.png");
+            let path = format!("{name}{layer}.png");
             image::save_buffer(&path, &rows, size.0, size.1, image::ColorType::Rgba8)
                 .map_err(|e| format!("{path}: {e}"))?;
             info!("glvr: saved {path}");
@@ -680,12 +903,11 @@ impl Renderer {
         }
     }
 
-    /// Draws a lit mesh (the lit program in use): whether it was there to draw.
-    fn draw_lit(&self, item: &LitItem) -> bool {
+    /// Draws a lit mesh with `p` (in use): whether it was there to draw.
+    fn draw_lit(&self, p: &Program, item: &LitItem) -> bool {
         let Some(m) = self.bind_mesh(item.mesh) else {
             return false;
         };
-        let p = &self.lit;
         let gl = &self.gl;
         let normal = Mat3::from_mat4(item.model).inverse().transpose();
         // SAFETY: the context is current.
@@ -720,6 +942,28 @@ impl Renderer {
         }
         self.submit(m);
         true
+    }
+}
+
+/// The scope's lens: a unit disc facing +Z, its UVs across it (u right, v up).
+fn disc() -> MeshData {
+    let n = DISC_SEGMENTS;
+    let mut positions = vec![[0.0, 0.0, 0.0]];
+    let mut uvs = vec![[0.5, 0.5]];
+    for i in 0..n {
+        let a = i as f32 / n as f32 * std::f32::consts::TAU;
+        let (y, x) = a.sin_cos();
+        positions.push([x, y, 0.0]);
+        uvs.push([0.5 + 0.5 * x, 0.5 + 0.5 * y]);
+    }
+    let indices = (0..n).flat_map(|i| [0, 1 + i, 1 + (i + 1) % n]).collect();
+    MeshData {
+        positions,
+        normals: Some(vec![[0.0, 0.0, 1.0]; n as usize + 1]),
+        uvs: Some(uvs),
+        colours: None,
+        indices: Some(Indices::U16(indices)),
+        topology: PrimitiveTopology::TriangleList,
     }
 }
 

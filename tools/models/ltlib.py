@@ -433,8 +433,10 @@ def standard_materials():
     }
 
 
-def make_object(name, geo, collection=None):
-    """Mesh object (object and mesh data both called `name`) from a Geo, identity transform."""
+def make_object(name, geo, collection=None, smooth=None):
+    """Mesh object (object and mesh data both called `name`) from a Geo, identity transform.
+    Flat shaded (split normals) unless `smooth` gives an angle in degrees: then the faces share
+    their vertices and shade smoothly across edges bending less than that (`smooth_mesh`)."""
     verts, polys, mats, uvs = [], [], [], []
     slots = {}
     for pts, mat, fuv in geo.faces:
@@ -463,11 +465,34 @@ def make_object(name, geo, collection=None):
     me.update()
     if len(me.polygons) != len(polys):
         raise RuntimeError("%s: degenerate faces" % name)
+    if smooth is not None:
+        smooth_mesh(me, smooth)
     ob = bpy.data.objects.new(name, me)
     if ob.name != name or me.name != name:
         raise RuntimeError("name clash for %s" % name)
     (collection or bpy.context.scene.collection).objects.link(ob)
     return ob
+
+
+def smooth_mesh(me, angle):
+    """Smooth shading: merges the faces' coincident vertices and marks the edges between faces
+    that meet at more than `angle` degrees, or lie in different materials, sharp (the exporter
+    then writes split normals only there)."""
+    import bmesh
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)
+    bm.normal_update()
+    thr = math.cos(math.radians(angle))
+    for e in bm.edges:
+        fs = e.link_faces
+        e.smooth = (len(fs) == 2 and fs[0].material_index == fs[1].material_index
+                    and fs[0].normal.dot(fs[1].normal) > thr)
+    for f in bm.faces:
+        f.smooth = True
+    bm.to_mesh(me)
+    bm.free()
+    me.update()
 
 
 def save_blend(rel):
@@ -540,11 +565,26 @@ def band_x(geo, pts, thick, x0, x1, mat="body", caps=True):
                      want=(0, d[1], d[0]))
 
 
-def make_empty(name, game_pos, collection=None):
+def make_empty(name, game_pos, collection=None, fwd=None, up=Y, scale=1.0, props=None):
+    """An empty (exported as a node) at a game position. With `fwd`, it is turned so its local
+    -Z looks along fwd with +Y nearest `up` (a frame the game instances a mesh in), and scaled
+    uniformly by `scale`. `props` are stored as custom properties (for preview.py)."""
     ob = bpy.data.objects.new(name, None)
     ob.empty_display_type = "PLAIN_AXES"
     ob.empty_display_size = 0.02
     ob.location = to_blender(game_pos)
+    if fwd is not None:
+        import mathutils
+        zl = norm(mul(fwd, -1.0))
+        xl = norm(cross(up, zl))
+        yl = cross(zl, xl)
+        # The frame in game coordinates (columns), conjugated into Blender's.
+        P = mathutils.Matrix(((1, 0, 0), (0, 0, -1), (0, 1, 0)))
+        M = mathutils.Matrix([[(xl, yl, zl)[j][i] for j in range(3)] for i in range(3)])
+        ob.rotation_euler = (P @ M @ P.transposed()).to_euler()
+    ob.scale = (scale, scale, scale)
+    for k, v in (props or {}).items():
+        ob[k] = v
     (collection or bpy.context.scene.collection).objects.link(ob)
     if ob.name != name:
         raise RuntimeError("name clash for %s" % name)

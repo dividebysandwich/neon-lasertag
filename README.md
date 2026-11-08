@@ -32,10 +32,10 @@ Matches last 10 minutes. Score points for your team:
 | Action | Points |
 |---|---|
 | Tag out an enemy (3 hits) | 100 |
-| Hit the enemy team's target | 100 |
+| Hit the enemy team's target (Classic) or a secondary target (Megatarget) | 100 |
 | Assist (your hit, a team mate's tag-out within 10 s) | 50 |
 | Defend (tag-out near your own targets) | +25 |
-| Megatarget | 1000 |
+| Megatarget, or carrying the enemy's prism home | 1000 |
 
 In the last minute every point counts double.
 
@@ -43,38 +43,97 @@ In the last minute every point counts double.
   you fire or the protection runs out.
 - Your own spawn pads heal you and refill your blaster; the white reload stations in the
   middle refill it too.
-- The enemy targets hang under a roof deep in their half and can only be hit from behind or
-  from the level around them.
 
-### Megatarget mode
+### Game modes
 
-The default mode (`--mode classic` for plain target play). The megatarget sits in a sealed
-room in the middle, behind forcefields that tag out anyone who walks in. Hit both secondary
-targets at the arena's edges to pass the forcefields for 60 s, then hit the megatarget. The
-secondary targets are guarded by turrets; shoot the yellow target above a turret to switch it
-off for 15 s.
+Pick the mode in the Botmatch or host menu, or with `--mode`.
+
+| Mode | Goal |
+|---|---|
+| **Megatarget** (default) | Open the sealed room in the middle and hit the megatarget. |
+| **Classic** (`classic`) | Hit the enemy team's targets. |
+| **Capture the Prism** (`prism`) | Steal the enemy's prism and carry it home. |
+| **Infection** (`infection`) | Phantoms against survivors: survive, or infect everyone. |
+
+**Megatarget.** The megatarget sits in a sealed room in the middle, behind forcefields that tag
+out anyone who walks in. Hit both secondary targets at the arena's edges to pass the
+forcefields for 60 s, then hit the megatarget. The secondary targets are guarded by turrets;
+shoot the yellow target above a turret to switch it off for 15 s.
+
+**Classic.** Each team's targets hang under a roof deep in its half and can only be hit from
+behind or from the level around them.
+
+**Capture the Prism.** The classic arena without targets. Each team's prism hovers on the
+ground under its first target's alcove. Touch the enemy's prism to take it and carry it to your
+own prism's spot while yours is there: 1000 points. You can't fire while carrying it, but you
+can throw it (the grenade input) for a team mate to catch. Tagged out, you drop it; it goes home
+when its own team touches it or after 20 s on the floor.
+
+**Infection.** The classic arena without targets. A quarter of the players start as Red
+phantoms: always cloaked, they can't take pickups, and their bolts fly only 14 m but tag out at
+once. Every Blue survivor they tag out comes back as a phantom. Survivors score 25 every 10 s
+they're in the game; infecting everyone ends the match and gives the phantoms 1000.
 
 ### Arena features
 
 - **Mirrors** bounce a bolt once, so you can bank shots around corners.
 - **Jump pads** throw you up to the upper level.
 - **Laser gates** switch on and off; walking through one while it's on counts as a hit.
-- **Arena events** strike every few minutes: a **Blackout** turns out the lights for 20 s,
-  an **Overdrive** respawns every missing pickup at once.
+
+### Arena events
+
+The first event strikes 2-3 minutes into a match, then another every 2-3 minutes, never the same
+twice in a row and none in the last 75 s.
+
+| Event | Effect |
+|---|---|
+| Blackout | The lights go out for 20 s; bolts, players, pickups and targets still glow, and bots see less far. |
+| Overdrive | Every missing pickup comes back at once. |
+| Mirror Storm | For 20 s every wall bounces bolts back (once). |
+| Low Gravity | For 20 s everyone falls slower and jumps about three times as high. |
+| Bounty | The top scorer is marked for everyone for 30 s: tagging them out is worth 300, and lasting it out pays them 300. |
 
 ### Pickups
 
-Walk over a pickup to take it. You lose powerups when you're tagged out.
+Walk over a pickup to take it. Laser grenades have their own spots; every other spot rolls a
+weapon, a gadget or a power each time it comes back. You hold one special weapon and carry one
+gadget at a time, and a new one replaces the old. You lose everything you picked up when you're
+tagged out.
 
-| Pickup | Effect |
+**Laser grenade:** throw it; after 3 s it spins and fires bolts in all directions, hitting
+everyone (including you).
+
+#### Weapons
+
+Each replaces your blaster until you're tagged out, and taking one fills it up.
+
+| Weapon | Effect |
 |---|---|
-| Laser grenade | Throw it; after 3 s it spins and fires bolts in all directions, hitting everyone (including you). |
-| Rapid fire | The blaster fires twice as fast. |
-| Shield | Activate to become immune to bolts for 10 s. |
-| Shotgun | Replaces your blaster: 10 short-range bolts per shot. |
-| Charge gun | Replaces your blaster: hold the trigger to charge a beam that pierces players and deals two hits. |
-| Cloak | Nearly invisible for 100 s; you flicker into view when you fire or are hit. |
+| Shotgun | 10 short-range bolts per shot. |
+| Charge gun | Tap to fire a bolt; hold the trigger to charge a beam that pierces players and deals two hits. |
+| Ricochet rifle | Slower-firing bolts that bounce off every wall up to 3 times (but not off targets). |
+| Prism lance | A slow marksman rifle whose shot hits instantly; a head hit counts as two. Zoom with Z or the mouse wheel (VR: a laser sight). |
+| Dual pistols | A pistol in each hand, sharing the shots. Flat screen: clicks fire them in turn. VR: grip the second with your free hand; while you hold both, the shield is on the left stick's click, the gadget on holding B / Y, a quick double jump dashes, and there are no grenades. |
+
+#### Gadgets
+
+Carried until you use it (the gadget input) or are tagged out.
+
+| Gadget | Effect |
+|---|---|
 | Barrier | Put up a wall of light for 8 s that blocks enemy bolts but lets your team's through. |
+| Mirror | Put up a mirror for 15 s that turns back every bolt, anyone's. |
+| Pulse sensor | Throw it; it sticks where it lands and for 20 s marks every enemy within 10 m for your team, through walls and cloaks. |
+| Decoy | Send a copy of yourself running ahead for 6 s; bots take it for you, and a bolt pops it. |
+| Med beam | Hold the gadget input on a team mate within 8 m: it heals a hit every 2.5 s and refills their blaster (12 s of beam). |
+
+#### Powers
+
+| Power | Effect |
+|---|---|
+| Rapid fire | The blaster fires twice as fast. |
+| Shield | Activate it (the shield input) to become immune to bolts for 10 s. |
+| Cloak | Nearly invisible for 100 s; you flicker into view when you fire or are hit. |
 | Speed boost | Run 50% faster for 15 s. |
 
 ### Controls
@@ -84,20 +143,24 @@ summary of the rules.
 
 | | VR | Flat screen |
 |---|---|---|
-| Move | Left stick, or walk in your room | WASD (Shift: walk) |
+| Move | Left stick, or walk in your room | WASD (Left Alt: walk) |
 | Turn / look | Right stick, your head | Mouse |
 | Jump | A or X | Space |
-| Dash | Click the left stick | Left Alt or mouse button 4 |
+| Dash | Click the left stick | Left Shift or mouse button 4 |
 | Crouch | Crouch, or pull the right stick down | Left Ctrl or C |
 | Draw blaster | Grip at the holster on your hip | Always in hand |
 | Fire | Trigger | Left mouse button |
 | Grenade | Hold B / Y, throw, let go | Hold G or right mouse button, let go |
 | Shield | Trigger of the free hand | Q |
-| Barrier | Grip of the free hand | E |
+| Gadget (barrier ...) | Grip of the free hand | E |
+| Zoom (prism lance) | - | Hold Z, or roll the mouse wheel up (down to stop) |
 | Scores | In-game menu, or look at your wrist | Hold Tab |
 | Menu | Menu button, or hold B / Y | Esc |
 
 Seated VR players can use **Calibrate height** in Options to play at full height.
+
+On the flat screen the floors, walls and players are glossy and mirror the neon (screen-space
+reflections); on a weaker PC, turn **Reflections** off in Options.
 
 ## Command line options
 
@@ -111,7 +174,7 @@ Seated VR players can use **Calibrate height** in Options to play at full height
 | `--bots N` | Number of bots; starts a match straight away |
 | `--difficulty easy\|normal\|hard` | Bot difficulty |
 | `--arena small\|medium\|large\|random` | Arena size (`random` picks one per match) |
-| `--mode classic\|megatarget` | Game mode (default `megatarget`) |
+| `--mode classic\|megatarget\|prism\|infection` | Game mode (default `megatarget`) |
 | `--match-time S` | Match length in seconds (local games) |
 | `--host [PORT]` | Host a game on your network |
 | `--public` | With `--host`: list the game on the internet |
@@ -144,11 +207,12 @@ Debug environment variables:
 | Variable | Effect |
 |---|---|
 | `LT_DEV="6:menu,10:play-hard,14:hit"` | Scripted actions at given times (see `dev_script` in `src/session.rs`) |
+| `LT_CHASE=dist,height,deg` | Follow the local player from outside (angle from behind), showing its avatar |
 | `LT_MENU=top\|botmatch\|multiplayer\|internet\|lan\|host-lan\|host-internet` | Open the start menu at that screen |
 | `LT_MASTER=URL` | Use another master server |
 | `LT_VR_MENU=1\|options` | Open the VR menu / options |
 | `LT_SCORES=1` | Show the flat-screen scores |
-| `LT_VR_FAKE_HANDS=1\|wrist` | Fake VR controllers |
+| `LT_VR_FAKE_HANDS=1\|wrist\|scope` | Fake VR controllers (`scope`: the prism lance's scope held to the eye) |
 | `LT_HOLSTER=x,y,z` | Holster position from the eyes (default `0.23,-0.58,-0.07`) |
 | `LT_GUN_TILT=DEG` | Blaster tilt in the hand (default 30) |
 | `LT_LEFT_HANDED=1` | Same as `--left-handed` |

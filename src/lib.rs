@@ -4,7 +4,7 @@
 //! neon-lasertag [--vr | --gl-vr | --flat] [--seed N] [--bots N] [--name NAME]
 //!          [--host [PORT]] [--public] [--server-name NAME] [--connect HOST[:PORT]] [--autopilot]
 //!          [--difficulty easy|normal|hard] [--arena small|medium|large|random]
-//!          [--mode classic|megatarget]
+//!          [--mode classic|megatarget|prism|infection]
 //!          [--left-handed] [--match-time SECS]
 //!          [--screenshot FILE --after SECS] [--quit-after SECS]
 //! ```
@@ -24,6 +24,7 @@ pub mod assets;
 pub mod audio;
 pub mod desktop;
 pub mod endscreen;
+pub mod eyes;
 pub mod features;
 pub mod game;
 #[cfg(all(feature = "glvr", target_os = "linux"))]
@@ -37,7 +38,10 @@ pub mod music;
 pub mod neonui;
 pub mod options;
 pub mod pause;
+pub mod reflections;
+pub mod rig;
 pub mod scenery;
+pub mod scope;
 pub mod segtext;
 pub mod session;
 pub mod settings;
@@ -167,7 +171,7 @@ impl Args {
                     .and_then(lt_sim::level::GameMode::parse)
                 {
                     Some(m) => a.game_mode = m,
-                    None => eprintln!("--mode: classic or megatarget"),
+                    None => eprintln!("--mode: classic, megatarget, prism or infection"),
                 },
                 "--left-handed" => a.left_handed = true,
                 "--match-time" => a.match_time = next(&mut i).and_then(|v| v.parse().ok()),
@@ -323,6 +327,7 @@ pub fn run() {
                 lobby::LobbyPlugin,
                 pause::PausePlugin,
                 options::OptionsPlugin,
+                reflections::ReflectionsPlugin,
                 endscreen::EndScreenPlugin,
             ));
         }
@@ -332,6 +337,7 @@ pub fn run() {
         game::GamePlugin,
         menu::MenuModelPlugin,
         actors::ActorsPlugin,
+        eyes::EyesPlugin,
         audio::SoundPlugin,
         sevenseg::ScoreboardPlugin,
         music::MusicPlugin,

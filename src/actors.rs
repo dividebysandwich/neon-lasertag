@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use lt_sim::sim::{CLOAK_FAR, CLOAK_NEAR, EYE, PlayerSnap, TICK};
-use lt_sim::{PickupKind, PlayerId, Pose, SimEvent, Team};
+use lt_sim::{PickupKind, PlayerId, Pose, SimEvent, Team, Weapon};
 
 use crate::assets::{Model, Models};
 use crate::game::{DrawSet, Game, GameEvent, LocalCmd, Mover, alpha};
@@ -36,6 +36,13 @@ struct AvatarParts {
     head: Entity,
     /// Floating gloves, left and right.
     hands: [Entity; 2],
+    /// The body between them, posed by `crate::rig`: the neck, the pelvis, each arm's upper
+    /// arm and forearm and each leg's thigh, shin and boot (left, right), and the legs' gait.
+    neck: Entity,
+    pelvis: Entity,
+    arms: [[Entity; 2]; 2],
+    legs: [[Entity; 3]; 2],
+    gait: crate::rig::Gait,
     /// Chest lights (hits left).
     bars: Vec<(Entity, u8)>,
     /// The weapon in hand: the blaster or the shotgun (children of `gun`), and their hit
@@ -48,6 +55,8 @@ struct AvatarParts {
     coil: Entity,
     charge_glow: Entity,
     gun_hits: Vec<(Entity, u8)>,
+    /// Dual pistols: the second, a blaster in the other hand.
+    gun2: Entity,
     grenade: Entity,
     /// The shield's beam of light (a child of `root`), with its light on the player.
     beam: Entity,
@@ -76,6 +85,9 @@ struct Spark {
     max: f32,
     size: f32,
     gravity: bool,
+    /// Its proportions (a shard's flat and long), and how it tumbles (rad/s about each axis).
+    shape: Vec3,
+    spin: Vec3,
 }
 
 /// A hit's flash: a glowing ball swelling and fading (`size` m across at most), or, with
@@ -94,6 +106,18 @@ struct Tracer {
     life: f32,
     max: f32,
     width: f32,
+}
+
+/// A glint of a prism lance's streak: a speck drifting off the beam's line, twinkling as it
+/// fades (flashing bright `rate` times a second from `phase`).
+#[derive(Component)]
+struct Glitter {
+    vel: Vec3,
+    life: f32,
+    max: f32,
+    size: f32,
+    phase: f32,
+    rate: f32,
 }
 
 #[derive(Component)]
@@ -122,6 +146,7 @@ impl Plugin for ActorsPlugin {
                     sync_pickups,
                     effects,
                     animate_sparks,
+                    animate_glitter,
                 )
                     .in_set(DrawSet)
                     .run_if(resource_exists::<Game>),
@@ -174,6 +199,9 @@ pub fn spawn_model(
             }
             "fur_light" => {
                 e.insert(MeshMaterial3d(palette.fur.clone()));
+            }
+            "sclera" => {
+                e.insert(MeshMaterial3d(palette.sclera.clone()));
             }
             "glow" | "eye_glow" => {
                 e.insert(MeshMaterial3d::<GlowMaterial>(palette.glow_for(team)));
@@ -297,8 +325,16 @@ fn spawn_avatar(
         ))
         .id();
     spawn_dual(
-        commands, grown, animal, palette, team, &ghost_mat, &mut solid, &mut ghost,
+        commands,
+        grown,
+        &animal.model,
+        palette,
+        team,
+        &ghost_mat,
+        &mut solid,
+        &mut ghost,
     );
+    crate::eyes::spawn_eyes(commands, grown, animal, models, palette, team, p.id as u64);
     let hands = [0, 1].map(|i| {
         let h = commands
             .spawn((Transform::IDENTITY, Visibility::default(), ChildOf(root)))
@@ -315,6 +351,20 @@ fn spawn_avatar(
         );
         h
     });
+    let mut part = |model: &Model| {
+        let e = commands
+            .spawn((Transform::IDENTITY, Visibility::default(), ChildOf(root)))
+            .id();
+        spawn_dual(
+            commands, e, model, palette, team, &ghost_mat, &mut solid, &mut ghost,
+        );
+        e
+    };
+    let b = &models.body;
+    let neck = part(&b.neck);
+    let pelvis = part(&b.pelvis);
+    let arms = [0, 1].map(|_| [part(&b.upper_arm), part(&b.forearm)]);
+    let legs = [0, 1].map(|_| [part(&b.thigh), part(&b.shin), part(&b.boot)]);
     let gun = commands
         .spawn((Transform::IDENTITY, Visibility::default()))
         .id();
@@ -370,6 +420,19 @@ fn spawn_avatar(
             ChildOf(blaster),
         ))
         .id();
+    let gun2 = commands
+        .spawn((Transform::IDENTITY, Visibility::Hidden))
+        .id();
+    gun_hits.extend(spawn_dual(
+        commands,
+        gun2,
+        &models.blaster,
+        palette,
+        team,
+        &ghost_mat,
+        &mut solid,
+        &mut ghost,
+    ));
     let grenade = commands
         .spawn((Transform::IDENTITY, Visibility::Hidden))
         .id();
@@ -402,6 +465,11 @@ fn spawn_avatar(
         body,
         head,
         hands,
+        neck,
+        pelvis,
+        arms,
+        legs,
+        gait: default(),
         bars,
         gun,
         blaster,
@@ -409,6 +477,7 @@ fn spawn_avatar(
         coil,
         charge_glow,
         gun_hits,
+        gun2,
         grenade,
         beam,
         solid,
@@ -424,6 +493,34 @@ const BEAM_LIGHT: f32 = 40_000.0;
 
 /// A bolt's light (lumens).
 const BOLT_LIGHT: f32 = 60_000.0;
+
+/// The players of `snap`, and its decoys as their players look (ids from 224 up: a sim has at
+/// most 32 players, numbered from 0).
+fn with_decoys(snap: &lt_sim::Snapshot) -> Vec<PlayerSnap> {
+    let decoys = snap.decoys.iter().filter_map(|d| {
+        let o = snap.players.iter().find(|p| p.id == d.owner)?;
+        Some(PlayerSnap {
+            id: 224u8.wrapping_add((d.id % 32) as u8),
+            team: d.team,
+            feet: d.feet,
+            yaw: d.yaw,
+            head: d.head,
+            hands: d.hands,
+            gun_hand: d.gun_hand,
+            grenade_hand: None,
+            hits: 0,
+            cooldown: 0.0,
+            protect: 0.0,
+            respawn: None,
+            shield: 0.0,
+            cloak: 0.0,
+            decloak: 0.0,
+            charging: 0.0,
+            ..o.clone()
+        })
+    });
+    snap.players.iter().cloned().chain(decoys).collect()
+}
 
 fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
     let d = (b - a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
@@ -456,25 +553,24 @@ fn sync_players(
         for (_, v) in views.players.drain() {
             commands.entity(v.root).despawn();
             commands.entity(v.gun).despawn();
+            commands.entity(v.gun2).despawn();
             commands.entity(v.grenade).despawn();
         }
     }
+    // (The decoys drawn as their players, under ids no player has.)
+    let players = with_decoys(&game.snap);
+    let prev_players = with_decoys(&game.prev);
     let gone: Vec<PlayerId> = views
         .players
         .iter()
-        .filter(|(id, v)| {
-            !game
-                .snap
-                .players
-                .iter()
-                .any(|p| p.id == **id && p.team == v.team)
-        })
+        .filter(|(id, v)| !players.iter().any(|p| p.id == **id && p.team == v.team))
         .map(|(id, _)| *id)
         .collect();
     for id in gone {
         if let Some(v) = views.players.remove(&id) {
             commands.entity(v.root).despawn();
             commands.entity(v.gun).despawn();
+            commands.entity(v.gun2).despawn();
             commands.entity(v.grenade).despawn();
         }
     }
@@ -487,14 +583,15 @@ fn sync_players(
             .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
             .map(|p| p.feet + p.head.pos)
     };
-    for p in &game.snap.players {
+    for p in &players {
         let v = views.players.entry(p.id).or_insert_with(|| {
             spawn_avatar(&mut commands, p, &models, &palette, &meshes, &mut glows)
         });
-        let prev = game.prev.players.iter().find(|q| q.id == p.id);
+        let prev = prev_players.iter().find(|q| q.id == p.id);
         let feet = prev.map_or(p.feet, |q| q.feet.lerp(p.feet, a));
         let yaw = prev.map_or(p.yaw, |q| lerp_angle(q.yaw, p.yaw, a));
-        let me = Some(p.id) == game.me;
+        // (Seen from outside when debugging with LT_CHASE.)
+        let me = Some(p.id) == game.me && crate::scenery::chase().is_none();
         let alive = p.respawn.is_none();
         let set_vis = |vis: &mut Query<&mut Visibility>, e: Entity, on: bool| {
             if let Ok(mut v) = vis.get_mut(e) {
@@ -544,6 +641,12 @@ fn sync_players(
         } else {
             (p.hands, p.gun_hand, p.grenade_hand, feet)
         };
+        let gun2_hand = if me && !local.autopilot && mover.valid {
+            local.cmd.gun2_hand
+        } else {
+            p.gun2_hand
+        }
+        .filter(|_| p.weapon == Weapon::Dual);
         let place = |t: &mut Transform, pose: &Pose| {
             t.translation = base + pose.pos;
             t.rotation = pose.rot;
@@ -556,10 +659,42 @@ fn sync_players(
                 t.rotation = hands[i].rot;
             }
         }
+        // The body between the parts. One's own legs show in VR, looking down; arms reaching
+        // from a chest one can't see would not look right.
+        let mut place_part = |e: Entity, t: Transform, on: bool| {
+            set_vis(&mut vis, e, on);
+            if let Ok(mut tr) = transforms.get_mut(e) {
+                *tr = t;
+            }
+        };
+        let chest = Transform::from_translation(lt_sim::sim::chest_top(head.pos, head.rot))
+            .with_rotation(Quat::from_rotation_y(yaw));
+        let neck = crate::rig::neck(
+            lt_sim::sim::neck_of(head.pos, head.rot),
+            chest.translation,
+            head.rot,
+        );
+        place_part(v.neck, neck, !me);
+        for (i, side) in [-1.0, 1.0].into_iter().enumerate() {
+            let glove = Transform::from_translation(hands[i].pos).with_rotation(hands[i].rot);
+            let [upper, fore] = crate::rig::arm(&chest, side, &glove);
+            place_part(v.arms[i][0], upper, !me);
+            place_part(v.arms[i][1], fore, !me);
+        }
+        let chest_yaw = if mine { local.cmd.yaw } else { yaw };
+        let legs = v
+            .gait
+            .update(real.delta_secs(), base, chest.translation, chest_yaw);
+        place_part(v.pelvis, legs.pelvis, !me || vr);
+        for i in 0..2 {
+            place_part(v.legs[i][0], legs.thigh[i], !me || vr);
+            place_part(v.legs[i][1], legs.shin[i], !me || vr);
+            place_part(v.legs[i][2], legs.boot[i], !me || vr);
+        }
         set_vis(&mut vis, v.gun, alive && gun_hand.is_some());
-        set_vis(&mut vis, v.blaster, !p.shotgun);
-        set_vis(&mut vis, v.shotgun, p.shotgun);
-        set_vis(&mut vis, v.coil, p.charge);
+        set_vis(&mut vis, v.blaster, p.weapon != Weapon::Shotgun);
+        set_vis(&mut vis, v.shotgun, p.weapon == Weapon::Shotgun);
+        set_vis(&mut vis, v.coil, p.weapon == Weapon::Charge);
         // Charging: the glow swells, and throbs once full.
         let full = p.charging >= game.rules.charge_time;
         let k = (p.charging / game.rules.charge_time).min(1.0);
@@ -574,6 +709,12 @@ fn sync_players(
         }
         if let Some(h) = gun_hand
             && let Ok(mut t) = transforms.get_mut(v.gun)
+        {
+            place(&mut t, &hands[h.index()]);
+        }
+        set_vis(&mut vis, v.gun2, alive && gun2_hand.is_some());
+        if let Some(h) = gun2_hand
+            && let Ok(mut t) = transforms.get_mut(v.gun2)
         {
             place(&mut t, &hands[h.index()]);
         }
@@ -829,6 +970,8 @@ fn speed_trails(
                     max: 0.35,
                     size: 0.045,
                     gravity: false,
+                    shape: Vec3::ONE,
+                    spin: Vec3::ZERO,
                 },
                 Mesh3d(meshes.spark.clone()),
                 MeshMaterial3d(mat.clone()),
@@ -859,7 +1002,13 @@ fn sync_bolts(
         }
         keep
     });
-    for b in &game.snap.bolts {
+    // (A prism lance's shot shows as its streak instead: `SimEvent::Streak`.)
+    for b in game
+        .snap
+        .bolts
+        .iter()
+        .filter(|b| b.vel.length_squared() < 1.0e6)
+    {
         let dir = b.vel.normalize_or(Vec3::Y);
         let head = b.pos + b.vel * a * TICK;
         // The capsule trails behind the bolt's head (a beam's long and thick); hidden right at
@@ -867,7 +1016,8 @@ fn sync_bolts(
         let scale = if b.beam {
             Vec3::new(2.5, 6.0, 2.5)
         } else {
-            Vec3::ONE
+            // (A ricochet bolt grows with every bounce.)
+            Vec3::splat(1.0 + 0.3 * b.bounces as f32)
         };
         let pos = head - dir * 0.4 * scale.y;
         let rot = Quat::from_rotation_arc(Vec3::Y, dir);
@@ -1015,6 +1165,8 @@ fn sync_grenades(
                     max: life,
                     size: 0.022,
                     gravity: false,
+                    shape: Vec3::ONE,
+                    spin: Vec3::ZERO,
                 },
                 Mesh3d(meshes.spark.clone()),
                 MeshMaterial3d(palette.bolt_for(None)),
@@ -1099,6 +1251,8 @@ fn spray(
                 max: life,
                 size,
                 gravity: rnd() > 0.0,
+                shape: Vec3::ONE,
+                spin: Vec3::ZERO,
             },
             Mesh3d(meshes.spark.clone()),
             MeshMaterial3d(mat.clone()),
@@ -1134,10 +1288,115 @@ fn burst(
                 max: life,
                 size,
                 gravity: true,
+                shape: Vec3::ONE,
+                spin: Vec3::ZERO,
             },
             Mesh3d(meshes.spark.clone()),
             MeshMaterial3d(mat.clone()),
             Transform::from_translation(at).with_scale(Vec3::splat(size)),
+        ));
+    }
+}
+
+/// Glints all along a prism lance's streak from `from` to `to`: specks of its colour (and a
+/// few white) drifting off the line and twinkling out over a second or so.
+#[allow(clippy::too_many_arguments)]
+fn glitter(
+    commands: &mut Commands,
+    meshes: &ActorMeshes,
+    mat: Handle<AccentMaterial>,
+    white: Handle<AccentMaterial>,
+    from: Vec3,
+    to: Vec3,
+    seed: u32,
+) {
+    let mut s = seed.wrapping_mul(3266489917).max(1);
+    let mut rnd = move || {
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        s as f32 / u32::MAX as f32
+    };
+    // So many a metre, the first metre (at the muzzle, in one's face) left out.
+    let len = from.distance(to);
+    let n = ((len - 1.0) * 5.0).clamp(0.0, 200.0) as usize;
+    for _ in 0..n {
+        let at = from.lerp(to, (1.0 + (len - 1.0) * rnd()) / len);
+        let off = Vec3::new(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5);
+        let life = 0.5 + 0.9 * rnd();
+        let size = 0.012 + 0.012 * rnd();
+        commands.spawn((
+            Glitter {
+                vel: off * 0.35 + Vec3::NEG_Y * 0.05,
+                life,
+                max: life,
+                size,
+                phase: rnd() * std::f32::consts::TAU,
+                rate: 6.0 + 10.0 * rnd(),
+            },
+            Mesh3d(meshes.spark.clone()),
+            MeshMaterial3d(if rnd() < 0.3 {
+                white.clone()
+            } else {
+                mat.clone()
+            }),
+            Transform::from_translation(at + off * 0.04)
+                .with_rotation(Quat::from_euler(
+                    EulerRot::XYZ,
+                    rnd() * 6.3,
+                    rnd() * 6.3,
+                    0.0,
+                ))
+                .with_scale(Vec3::ZERO),
+        ));
+    }
+}
+
+/// Shards of light over a body from `feet` to `eye`, flying away from `hit` and tumbling.
+fn shatter(
+    commands: &mut Commands,
+    meshes: &ActorMeshes,
+    mat: Handle<AccentMaterial>,
+    feet: Vec3,
+    eye: Vec3,
+    hit: Vec3,
+    seed: u32,
+) {
+    let mut s = seed.wrapping_mul(2246822519).max(1);
+    let mut rnd = move || {
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        s as f32 / u32::MAX as f32
+    };
+    let (lo, hi) = (feet.y + 0.5, eye.y + 0.15);
+    for _ in 0..28 {
+        let at = Vec3::new(
+            eye.x + (rnd() - 0.5) * 0.45,
+            lo + (hi - lo) * rnd(),
+            eye.z + (rnd() - 0.5) * 0.45,
+        );
+        let away = (at - hit).with_y(0.0).normalize_or(Vec3::X);
+        let up = Vec3::Y * (0.5 + 1.5 * rnd());
+        let life = 0.7 + 0.6 * rnd();
+        commands.spawn((
+            Spark {
+                vel: away * (1.5 + 3.0 * rnd()) + up,
+                life,
+                max: life,
+                size: 0.11 + 0.08 * rnd(),
+                gravity: true,
+                shape: Vec3::new(1.0, 0.55, 0.06),
+                spin: Vec3::new(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5) * 18.0,
+            },
+            Mesh3d(meshes.spark.clone()),
+            MeshMaterial3d(mat.clone()),
+            Transform::from_translation(at).with_rotation(Quat::from_euler(
+                EulerRot::XYZ,
+                rnd() * 6.3,
+                rnd() * 6.3,
+                rnd() * 6.3,
+            )),
         ));
     }
 }
@@ -1300,6 +1559,79 @@ fn effects(
                     0.25,
                 );
             }
+            // A prism lance's shot: a thin, bright streak along its way, fading fast.
+            SimEvent::Streak { player, from, to } => {
+                let len = from.distance(to);
+                if len > 0.01 {
+                    let dir = (to - from) / len;
+                    commands.spawn((
+                        Tracer {
+                            life: 0.45,
+                            max: 0.45,
+                            width: 0.025,
+                        },
+                        Mesh3d(meshes.spark.clone()),
+                        MeshMaterial3d(palette.bolt_for(team_of(player))),
+                        Transform::from_translation((from + to) / 2.0)
+                            .with_rotation(Quat::from_rotation_arc(Vec3::Z, dir))
+                            .with_scale(Vec3::new(0.025, 0.025, len)),
+                    ));
+                    glitter(
+                        &mut commands,
+                        &meshes,
+                        palette.bolt_for(team_of(player)),
+                        palette.bolt_for(None),
+                        from,
+                        to,
+                        seed,
+                    );
+                }
+            }
+            SimEvent::Headshot { pos, .. } => {
+                burst(
+                    &mut commands,
+                    &meshes,
+                    palette.bolt_for(None),
+                    pos,
+                    14,
+                    4.0,
+                    0.03,
+                    seed,
+                );
+            }
+            // A decoy popped: it bursts into sparks of its team's colour.
+            SimEvent::DecoyPopped { id, pos, .. } => {
+                let team = game
+                    .prev
+                    .decoys
+                    .iter()
+                    .chain(&game.snap.decoys)
+                    .find(|d| d.id == id)
+                    .map(|d| d.team);
+                burst(
+                    &mut commands,
+                    &meshes,
+                    palette.bolt_for(team),
+                    pos,
+                    24,
+                    4.0,
+                    0.035,
+                    seed,
+                );
+            }
+            // A pulse sensor's pulse: a ring sweeping out over its range.
+            SimEvent::Pulse { pos, team, .. } => {
+                commands.spawn((
+                    Ring {
+                        life: 0.7,
+                        max: 0.7,
+                        size: game.rules.sensor_range,
+                    },
+                    Mesh3d(meshes.ring.clone()),
+                    MeshMaterial3d(palette.bolt_for(Some(team))),
+                    Transform::from_translation(pos),
+                ));
+            }
             SimEvent::Launched { pos, .. } => {
                 commands.spawn((
                     Ring {
@@ -1405,6 +1737,18 @@ fn effects(
             }
             SimEvent::TaggedOut { pos, player, .. } => {
                 let team = team_of(player);
+                // The body shatters: flat shards of light over its height, flying apart.
+                if let Some(p) = game.prev.players.iter().find(|p| p.id == player) {
+                    shatter(
+                        &mut commands,
+                        &meshes,
+                        palette.bolt_for(team),
+                        p.feet,
+                        p.feet + p.head.pos,
+                        pos,
+                        seed,
+                    );
+                }
                 burst(
                     &mut commands,
                     &meshes,
@@ -1515,6 +1859,29 @@ fn effects(
 }
 
 #[allow(clippy::type_complexity)]
+fn animate_glitter(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut glints: Query<(Entity, &mut Glitter, &mut Transform)>,
+) {
+    let dt = time.delta_secs();
+    for (e, mut g, mut t) in &mut glints {
+        g.life -= dt;
+        if g.life <= 0.0 {
+            commands.entity(e).despawn();
+            continue;
+        }
+        g.vel *= 1.0 - 1.5 * dt;
+        t.translation += g.vel * dt;
+        // Sharp flashes over a faint glow, all of it dying away.
+        let age = g.max - g.life;
+        let flash = (g.phase + age * g.rate).sin().max(0.0).powi(6);
+        let k = g.life / g.max;
+        t.scale = Vec3::splat(g.size * k * (0.35 + 1.4 * flash));
+        t.rotate_local_y(dt * 4.0);
+    }
+}
+
 fn animate_sparks(
     mut commands: Commands,
     time: Res<Time>,
@@ -1553,7 +1920,10 @@ fn animate_sparks(
         }
         s.vel *= 1.0 - 2.0 * dt;
         t.translation += s.vel * dt;
-        t.scale = Vec3::splat(s.size * (s.life / s.max));
+        t.scale = s.shape * (s.size * (s.life / s.max));
+        if s.spin != Vec3::ZERO {
+            t.rotation = Quat::from_scaled_axis(s.spin * dt) * t.rotation;
+        }
     }
     for (e, mut r, mut t) in &mut rings {
         r.life -= dt;

@@ -8,7 +8,11 @@ own shader), fades `glow` by its UV V like the game, and renders with Eevee. `fl
 
 Optional positional args after the team: spacing cols lens dist height. Environment:
 PREVIEW_YAW (degrees each mesh turns about the vertical; 180 shows the -Z front towards the
-camera), PREVIEW_ONLY (comma-separated mesh names to keep), PREVIEW_TARGET (height in metres the camera looks at, default 1.0).
+camera), PREVIEW_ONLY (comma-separated mesh names to keep), PREVIEW_TARGET (height in metres the camera
+looks at, default 1.0), PREVIEW_SUN (the sun's strength, default 1.5), PREVIEW_SIZE (WxH
+pixels, default 1600x900). Avatar heads get copies of the shared eyeball and eyelids in their
+eye frames (the `head_*_eye_*` empties), the lids open as the empties say or as
+PREVIEW_LIDS=top,bottom (degrees; -5,-5 is shut).
 """
 
 import os
@@ -25,12 +29,42 @@ scene = bpy.context.scene
 
 obs = [o for o in scene.objects if o.type == "MESH"]
 only = [n for n in os.environ.get("PREVIEW_ONLY", "").split(",") if n]
+
+# Avatars: put a copy of the shared eyeball and eyelids in each head's eye frames (the empties
+# `head_*_eye_*`, carrying the lids' rest angles), as the game does.
+eye_meshes = {o.name: o for o in scene.objects if o.name == "eyelid" or o.name.startswith("eyeball")}
+if "eyeball" in eye_meshes and "eyelid" in eye_meshes:
+    M = __import__("mathutils").Matrix
+    for e in [o for o in scene.objects if o.type == "EMPTY" and "_eye_" in o.name]:
+        head = bpy.data.objects.get(e.name.split("_eye_")[0])
+        if head is None:
+            continue
+        lids = os.environ.get("PREVIEW_LIDS")
+        lt, lb = ((float(v) for v in lids.split(",")) if lids else
+                  (float(e.get("lid_top", 55)), float(e.get("lid_bot", 55))))
+        top = M.Rotation(math.radians(lt), 4, "X")
+        # (The game's turn about its Z is about Blender's Y.)
+        bot = M.Rotation(math.pi, 4, "Y") @ M.Rotation(math.radians(lb), 4, "X")
+        ball = "eyeball_" + head.name[len("head_"):]
+        ball = ball if ball in eye_meshes else "eyeball"
+        for mesh, local in ((ball, M.Identity(4)), ("eyelid", top), ("eyelid", bot)):
+            c = eye_meshes[mesh].copy()
+            c.name = "%s.%s" % (e.name, mesh)
+            scene.collection.objects.link(c)
+            c.parent = head
+            c.matrix_local = e.matrix_basis @ local
+    for o in eye_meshes.values():
+        bpy.data.objects.remove(o)
+    obs = [o for o in scene.objects if o.type == "MESH"]
+    if only:
+        only += [o.name for o in obs if o.parent is not None and o.parent.name in only]
 if only:
     for o in [o for o in obs if o.name not in only]:
         bpy.data.objects.remove(o)
     obs = [o for o in scene.objects if o.type == "MESH"]
 for o in obs:
-    o.rotation_euler.z = math.radians(float(os.environ.get("PREVIEW_YAW", "0")))
+    if o.parent is None:
+        o.rotation_euler.z = math.radians(float(os.environ.get("PREVIEW_YAW", "0")))
 bpy.context.view_layer.update()
 target_z = float(os.environ.get("PREVIEW_TARGET", "1.0"))
 x = 0.0
@@ -39,6 +73,8 @@ cols = int(args[3]) if len(args) > 3 else 8
 row_z, row_w, rowdepth = 0.0, 0, 0.0
 xmax = 0.0
 for i, o in enumerate(sorted(obs, key=lambda o: o.name)):
+    if o.parent is not None:
+        continue
     bb = [o.matrix_world @ __import__("mathutils").Vector(c) for c in o.bound_box]
     w = max(v.x for v in bb) - min(v.x for v in bb)
     d = max(v.y for v in bb) - min(v.y for v in bb)
@@ -113,7 +149,7 @@ for m in bpy.data.materials:
     elif m.name == "eye_glow":
         emissive(m, team, 3.0, fade=True, power=0.5)  # alpha (1 - v)^2
     elif m.name == "eyes":
-        emissive(m, tuple(0.6 + 0.4 * c for c in team), 12.0)
+        emissive(m, team, 5.0)
     elif m.name == "flow":
         emissive(m, team, 4.0, pulses=True)
     elif m.name == "glow_white":
@@ -145,7 +181,7 @@ fm.node_tree.nodes["Principled BSDF"].inputs["Roughness"].default_value = 0.3
 fl.data.materials.append(fm)
 
 sun = bpy.data.lights.new("sun", "SUN")
-sun.energy = 1.5
+sun.energy = float(os.environ.get("PREVIEW_SUN", "1.5"))
 so = bpy.data.objects.new("sun", sun)
 so.rotation_euler = (math.radians(50), 0, math.radians(30))
 scene.collection.objects.link(so)
@@ -166,8 +202,9 @@ co.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
 scene.camera = co
 
 scene.render.engine = "BLENDER_EEVEE"
-scene.render.resolution_x = 1600
-scene.render.resolution_y = 900
+size = os.environ.get("PREVIEW_SIZE", "1600x900").split("x")
+scene.render.resolution_x = int(size[0])
+scene.render.resolution_y = int(size[1])
 scene.render.filepath = out
 try:
     scene.eevee.taa_render_samples = 16

@@ -35,7 +35,7 @@ xr = ["dep:bevy_mod_openxr", "dep:bevy_mod_xr", "dep:openxr"]
 glvr = ["xr", "dep:glow", "dep:khronos-egl", "dep:libloading"]
 
 [dependencies]
-bevy = { version = "0.19.1", features = ["trace"] }
+bevy = { version = "0.19.1", features = ["trace", "bluenoise_texture"] }
 lt-sim.workspace = true
 lt-net.workspace = true
 glam.workspace = true

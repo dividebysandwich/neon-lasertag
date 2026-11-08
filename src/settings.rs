@@ -1,5 +1,5 @@
 //! The player's settings: the flat screen's key bindings, mouse sensitivity, inverted mouse
-//! look, field of view, crouching (held or toggled) and head bob, and the volumes of the sound effects and the music (in VR too).
+//! look, field of view, crouching (held or toggled), head bob and reflections, and the volumes of the sound effects and the music (in VR too).
 //! Changed in the options screen (src/options.rs) and kept in `settings.ron` in the user's
 //! config directory (`$XDG_CONFIG_HOME/lasertag`, `~/.config/lasertag`, `%APPDATA%\lasertag`).
 
@@ -22,12 +22,13 @@ pub enum Action {
     Fire,
     Grenade,
     Shield,
-    Barrier,
+    Gadget,
+    Zoom,
     Scores,
 }
 
 impl Action {
-    pub const ALL: [Action; 13] = [
+    pub const ALL: [Action; 14] = [
         Action::Forward,
         Action::Back,
         Action::Left,
@@ -39,7 +40,8 @@ impl Action {
         Action::Fire,
         Action::Grenade,
         Action::Shield,
-        Action::Barrier,
+        Action::Gadget,
+        Action::Zoom,
         Action::Scores,
     ];
 
@@ -56,7 +58,8 @@ impl Action {
             Action::Fire => "Fire",
             Action::Grenade => "Grenade (hold, let go)",
             Action::Shield => "Shield (switch on)",
-            Action::Barrier => "Barrier (put up)",
+            Action::Gadget => "Gadget (use)",
+            Action::Zoom => "Zoom (prism lance)",
             Action::Scores => "Scores (hold)",
         }
     }
@@ -74,26 +77,31 @@ impl Action {
             Action::Fire => "fire",
             Action::Grenade => "grenade",
             Action::Shield => "shield",
-            Action::Barrier => "barrier",
+            Action::Gadget => "barrier",
+            Action::Zoom => "zoom",
             Action::Scores => "scores",
         }
     }
 
     fn defaults(self) -> [Option<Binding>; 2] {
-        use Binding::{Key, Mouse};
+        use Binding::{Key, Mouse, Wheel};
         match self {
             Action::Forward => [Some(Key(KeyCode::KeyW)), Some(Key(KeyCode::ArrowUp))],
             Action::Back => [Some(Key(KeyCode::KeyS)), Some(Key(KeyCode::ArrowDown))],
             Action::Left => [Some(Key(KeyCode::KeyA)), Some(Key(KeyCode::ArrowLeft))],
             Action::Right => [Some(Key(KeyCode::KeyD)), Some(Key(KeyCode::ArrowRight))],
-            Action::Walk => [Some(Key(KeyCode::ShiftLeft)), None],
+            Action::Walk => [Some(Key(KeyCode::AltLeft)), None],
             Action::Crouch => [Some(Key(KeyCode::ControlLeft)), Some(Key(KeyCode::KeyC))],
             Action::Jump => [Some(Key(KeyCode::Space)), None],
-            Action::Dash => [Some(Key(KeyCode::AltLeft)), Some(Mouse(MouseButton::Back))],
+            Action::Dash => [
+                Some(Key(KeyCode::ShiftLeft)),
+                Some(Mouse(MouseButton::Back)),
+            ],
             Action::Fire => [Some(Mouse(MouseButton::Left)), None],
             Action::Grenade => [Some(Key(KeyCode::KeyG)), Some(Mouse(MouseButton::Right))],
             Action::Shield => [Some(Key(KeyCode::KeyQ)), None],
-            Action::Barrier => [Some(Key(KeyCode::KeyE)), None],
+            Action::Gadget => [Some(Key(KeyCode::KeyE)), None],
+            Action::Zoom => [Some(Key(KeyCode::KeyZ)), Some(Wheel)],
             Action::Scores => [Some(Key(KeyCode::Tab)), None],
         }
     }
@@ -103,7 +111,12 @@ impl Action {
 pub enum Binding {
     Key(KeyCode),
     Mouse(MouseButton),
+    /// The mouse wheel: rolled up, it holds the action until rolled down again.
+    Wheel,
 }
+
+/// The name the mouse wheel is shown and saved by.
+const WHEEL: &str = "Mouse Wheel";
 
 /// Keys that can be bound, with the names shown and saved.
 const KEYS: &[(KeyCode, &str)] = {
@@ -219,6 +232,7 @@ impl Binding {
                 .iter()
                 .find(|(c, _)| *c == b)
                 .map_or_else(|| format!("{b:?}"), |(_, n)| n.to_string()),
+            Binding::Wheel => WHEEL.to_string(),
         }
     }
 
@@ -232,6 +246,7 @@ impl Binding {
                     .find(|(_, n)| *n == s)
                     .map(|(b, _)| Binding::Mouse(*b))
             })
+            .or_else(|| (s == WHEEL).then_some(Binding::Wheel))
     }
 
     /// Whether this key can be bound (Esc and the like are the game's own).
@@ -253,6 +268,9 @@ pub struct Settings {
     pub head_bob: bool,
     /// The HUD marks the targets to go for (`hud::goals`), flat screen and VR.
     pub objective_markers: bool,
+    /// Glossy floors, walls and models with screen-space reflections (flat screen,
+    /// src/reflections.rs); off for weaker GPUs.
+    pub reflections: bool,
     /// VR: the holster on the left hip (`--left-handed` too); the blaster turned nose down in
     /// the hand (degrees, `GUN_TILT_RANGE`); the holster raised (m, `HOLSTER_RANGE`); the
     /// vibration's strength (0..=1); the stick moving where the left hand points (else where
@@ -309,6 +327,7 @@ impl Default for Settings {
             toggle_crouch: false,
             head_bob: true,
             objective_markers: true,
+            reflections: true,
             left_handed: false,
             gun_tilt: GUN_TILT_DEFAULT,
             holster_dy: 0.0,
@@ -328,6 +347,33 @@ impl Default for Settings {
 pub struct Inputs<'a> {
     pub keys: &'a ButtonInput<KeyCode>,
     pub mouse: &'a ButtonInput<MouseButton>,
+    pub wheel: WheelState,
+}
+
+/// The mouse wheel as a button: `held` from rolling it up until rolling it down (kept by
+/// whoever reads the input), `up` and `down` this frame's rolls.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct WheelState {
+    pub held: bool,
+    pub up: bool,
+    pub down: bool,
+}
+
+impl WheelState {
+    /// This frame's wheel, rolled `dy` (up positive), latching `held`.
+    pub fn roll(held: &mut bool, dy: f32) -> WheelState {
+        let (up, down) = (dy > 0.0, dy < 0.0);
+        if up {
+            *held = true;
+        } else if down {
+            *held = false;
+        }
+        WheelState {
+            held: *held,
+            up,
+            down,
+        }
+    }
 }
 
 impl Settings {
@@ -394,6 +440,7 @@ impl Settings {
         self.any(a, |b| match b {
             Binding::Key(k) => i.keys.pressed(k),
             Binding::Mouse(m) => i.mouse.pressed(m),
+            Binding::Wheel => i.wheel.held,
         })
     }
 
@@ -401,6 +448,7 @@ impl Settings {
         self.any(a, |b| match b {
             Binding::Key(k) => i.keys.just_pressed(k),
             Binding::Mouse(m) => i.mouse.just_pressed(m),
+            Binding::Wheel => i.wheel.up,
         })
     }
 
@@ -408,6 +456,7 @@ impl Settings {
         self.any(a, |b| match b {
             Binding::Key(k) => i.keys.just_released(k),
             Binding::Mouse(m) => i.mouse.just_released(m),
+            Binding::Wheel => i.wheel.down,
         })
     }
 
@@ -448,6 +497,7 @@ impl Settings {
                 s.toggle_crouch = saved.toggle_crouch;
                 s.head_bob = saved.head_bob;
                 s.objective_markers = saved.objective_markers;
+                s.reflections = saved.reflections;
                 s.left_handed = saved.left_handed;
                 s.gun_tilt = saved.gun_tilt.clamp(GUN_TILT_RANGE.0, GUN_TILT_RANGE.1);
                 s.holster_dy = saved.holster_dy.clamp(HOLSTER_RANGE.0, HOLSTER_RANGE.1);
@@ -484,6 +534,7 @@ impl Settings {
             toggle_crouch: self.toggle_crouch,
             head_bob: self.head_bob,
             objective_markers: self.objective_markers,
+            reflections: self.reflections,
             left_handed: self.left_handed,
             gun_tilt: self.gun_tilt,
             holster_dy: self.holster_dy,
@@ -528,6 +579,7 @@ struct Saved {
     toggle_crouch: bool,
     head_bob: bool,
     objective_markers: bool,
+    reflections: bool,
     left_handed: bool,
     gun_tilt: f32,
     holster_dy: f32,
@@ -550,6 +602,7 @@ impl Default for Saved {
             toggle_crouch: false,
             head_bob: true,
             objective_markers: true,
+            reflections: true,
             left_handed: false,
             gun_tilt: GUN_TILT_DEFAULT,
             holster_dy: 0.0,
@@ -577,6 +630,7 @@ mod tests {
         for (b, n) in BUTTONS {
             assert_eq!(Binding::parse(n), Some(Binding::Mouse(*b)));
         }
+        assert_eq!(Binding::parse(WHEEL), Some(Binding::Wheel));
     }
 
     #[test]

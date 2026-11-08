@@ -394,6 +394,11 @@ impl World {
     /// Moves a standing player (feet at `feet`) by `delta` in XZ, then applies gravity.
     /// Returns the new feet position and vertical speed.
     pub fn move_body(&self, feet: Vec3, delta: Vec2, vy: f32, dt: f32) -> (Vec3, f32) {
+        self.move_body_g(feet, delta, vy, dt, GRAVITY)
+    }
+
+    /// `move_body` with gravity `g` (m/s²).
+    pub fn move_body_g(&self, feet: Vec3, delta: Vec2, vy: f32, dt: f32, g: f32) -> (Vec3, f32) {
         let mut p = feet;
         // Substeps keep a fast move from tunnelling through thin walls.
         let steps = ((delta.length() / (BODY_RADIUS * 0.5)).ceil() as usize).clamp(1, 8);
@@ -464,7 +469,7 @@ impl World {
             p.y = ground;
             return (p, 0.0);
         }
-        vy -= GRAVITY * dt;
+        vy -= g * dt;
         p.y += vy * dt;
         if p.y <= ground {
             p.y = ground;

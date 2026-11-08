@@ -69,7 +69,7 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 
-use crate::collide::{BODY_RADIUS, GRAVITY, World};
+use crate::collide::{BODY_RADIUS, World};
 use crate::level::{self, Dims, Level, MoverKind};
 use crate::sim::{EYE, PICKUP_HEIGHT, Player, Sim, TICK, eye_on_neck, look_rot, yaw_of};
 use crate::types::*;
@@ -866,6 +866,9 @@ enum Plan {
     /// Megatarget mode: hit both secondary targets, then get into the room and hit the
     /// megatarget.
     Mega,
+    /// Prism mode: take the enemy's prism home, bring one's own back, or see a team mate's
+    /// carrier home.
+    Prism,
 }
 
 /// Something to do before going on with the plan.
@@ -1416,6 +1419,10 @@ impl Bot {
             if d < HEAR || d < SHOT_HEAR && o.fire_cd > o.fire_interval(&sim.rules) - 0.05 {
                 known = true;
             }
+            // (Shown by a pulse sensor of the bot's team.)
+            if o.revealed > 0.0 {
+                known = true;
+            }
             if known {
                 self.remember(o.id, o.feet, now);
             }
@@ -1464,11 +1471,11 @@ fn apply_error(dir: Vec3, (angle, phi): (f32, f32)) -> Vec3 {
 }
 
 /// Where a grenade thrown from `from` with `vel` first hits the arena (as the sim flies it).
-fn first_impact(world: &World, from: Vec3, vel: Vec3) -> Option<Vec3> {
+fn first_impact(world: &World, from: Vec3, vel: Vec3, g: f32) -> Option<Vec3> {
     let mut pos = from;
     let mut vel = vel;
     for _ in 0..(3.5 / TICK) as usize {
-        vel.y -= GRAVITY * TICK;
+        vel.y -= g * TICK;
         let to = pos + vel * TICK;
         if let Some((_, q, _)) = world.ray(pos, to) {
             return Some(q);
@@ -1483,8 +1490,14 @@ fn first_impact(world: &World, from: Vec3, vel: Vec3) -> Option<Vec3> {
 
 /// A throw from `from` whose first impact is within `THROW_LAND` of `aim`: low and high arcs
 /// are tried, each simulated against the world and its speed corrected a couple of times.
-/// Returns the velocity and the impact point.
-pub fn solve_throw(world: &World, from: Vec3, aim: Vec3, max_speed: f32) -> Option<(Vec3, Vec3)> {
+/// Returns the velocity and the impact point (at gravity `g`).
+pub fn solve_throw(
+    world: &World,
+    from: Vec3,
+    aim: Vec3,
+    max_speed: f32,
+    g: f32,
+) -> Option<(Vec3, Vec3)> {
     let d3 = aim - from;
     let flat = Vec2::new(d3.x, d3.z);
     let dist = flat.length();
@@ -1499,13 +1512,13 @@ pub fn solve_throw(world: &World, from: Vec3, aim: Vec3, max_speed: f32) -> Opti
         if denom <= 0.0 {
             continue;
         }
-        let mut v = (GRAVITY * dist * dist / denom).sqrt();
+        let mut v = (g * dist * dist / denom).sqrt();
         for _ in 0..3 {
             if v > max_speed {
                 break;
             }
             let vel = Vec3::new(dir.x * v * c, v * s, dir.y * v * c);
-            let Some(q) = first_impact(world, from, vel) else {
+            let Some(q) = first_impact(world, from, vel, g) else {
                 break;
             };
             let err = Vec2::new(q.x - aim.x, q.z - aim.z).length();
@@ -1608,6 +1621,36 @@ impl Bot {
         self.route_goal = None;
         self.peek = None;
         self.mega_spot = None;
+        // Infection: phantoms hunt; survivors mostly hold together, now and then hunt back.
+        if sim.level.mode == crate::level::GameMode::Infection {
+            let hunt = p.team == Team::Red || self.rng.random_bool(0.3);
+            for plan in [if hunt { Plan::Engage } else { Plan::Hold }, Plan::Engage] {
+                if plan == Plan::Engage {
+                    self.plan = Plan::Engage;
+                    return;
+                }
+                if let Some(s) = self.pick_spot(sim, g, p, plan) {
+                    self.plan = plan;
+                    self.spot = Some(s);
+                    self.claim(p.team, g.pos[s]);
+                    return;
+                }
+            }
+        }
+        // Prism mode: most go for the prisms, the rest hunt.
+        if sim.level.prisms.is_some() {
+            let go = match self.role {
+                Role::Offense => 0.85,
+                Role::Defense => 0.6,
+            };
+            if self.rng.random_bool(go) {
+                self.plan = Plan::Prism;
+                self.plan_left = self.rng.random_range(20.0..30.0);
+            } else {
+                self.plan = Plan::Engage;
+            }
+            return;
+        }
         let role_plan = match (self.role, sim.level.mega.is_some()) {
             (Role::Offense, false) => Plan::Attack,
             (Role::Defense, false) => Plan::Defend,
@@ -1715,7 +1758,7 @@ impl Bot {
                     }
                     2.0 * t.cover - 0.06 * dist
                 }
-                Plan::Engage | Plan::Mega => continue,
+                Plan::Engage | Plan::Mega | Plan::Prism => continue,
             };
             // Worse bots care less about cover: their choice is noisier and cover counts less.
             s *= 0.5 + 0.5 * self.skill;
@@ -1741,6 +1784,42 @@ impl Bot {
             Plan::Hold | Plan::Attack | Plan::Defend => self.spot.map(|s| (s, g.pos[s])),
             Plan::Engage => self.engage_dest(sim, g, p),
             Plan::Mega => self.mega_dest(sim, g, p),
+            Plan::Prism => self
+                .prism_dest(sim, g, p)
+                .or_else(|| self.engage_dest(sim, g, p)),
+        }
+    }
+
+    /// The prism plan's next stop: home with the enemy's prism; one's own, lying about, to
+    /// bring it back, or its carrier, to tag them out; else the enemy's prism, or (a team mate
+    /// carrying it) along with them.
+    fn prism_dest(&mut self, sim: &Sim, g: &BotGraph, p: &Player) -> Option<(usize, Vec3)> {
+        let homes = sim.level.prisms?;
+        let own = sim.prisms.iter().find(|x| x.team == p.team)?;
+        let theirs = sim.prisms.iter().find(|x| x.team != p.team)?;
+        let at = |pos: Vec3| g.nearest(&sim.world, pos).map(|n| (n, pos));
+        let feet_of = |id: PlayerId| sim.player(id).map(|o| o.feet);
+        let floor = |pos: Vec3| pos - Vec3::Y * crate::level::PRISM_HOVER;
+        if theirs.carrier == Some(p.id) {
+            return at(floor(homes[p.team.index()]));
+        }
+        if !own.at_home() {
+            return match own.carrier {
+                Some(c) => feet_of(c).and_then(at),
+                None => at(floor(own.pos)),
+            };
+        }
+        match theirs.carrier {
+            None => at(floor(theirs.pos)),
+            // (Escorting: a few metres off is close enough.)
+            Some(c) => {
+                let f = feet_of(c)?;
+                if f.distance(p.feet) < 4.0 {
+                    None
+                } else {
+                    at(f)
+                }
+            }
         }
     }
 
@@ -2010,11 +2089,20 @@ impl Bot {
         };
         let mut cands: Vec<(PlayerId, f32, Vec3)> = self.visible.clone();
         cands.sort_by(|a, b| {
-            let key = |c: &(PlayerId, f32, Vec3)| (!hittable(c.0), Some(c.0) != self.enemy, c.1);
+            // (A bounty first, then the one already fought.)
+            let key = |c: &(PlayerId, f32, Vec3)| {
+                (
+                    !hittable(c.0),
+                    sim.bounty != Some(c.0),
+                    Some(c.0) != self.enemy,
+                    c.1,
+                )
+            };
             let (ka, kb) = (key(a), key(b));
             ka.0.cmp(&kb.0)
                 .then(ka.1.cmp(&kb.1))
-                .then(ka.2.total_cmp(&kb.2))
+                .then(ka.2.cmp(&kb.2))
+                .then(ka.3.total_cmp(&kb.3))
         });
         cands.first().map(|&(id, d, pt)| (id, d, pt, hittable(id)))
     }
@@ -2161,6 +2249,7 @@ impl Bot {
             p.feet + rel,
             aim + Vec3::Y * 0.05,
             sim.rules.grenade_max_speed,
+            sim.gravity(),
         )?;
         if land.distance(p.feet) < SELF_CLEAR || mates.iter().any(|m| m.distance(land) < MATE_CLEAR)
         {
@@ -2332,8 +2421,24 @@ impl Controller for Bot {
         let eye = p.eye();
         let body = Quat::from_rotation_y(yaw_of(Vec3::new(self.aim.x, 0.0, self.aim.z)));
         let muzzle = feet + body * Vec3::new(0.18, EYE - 0.25, -0.35);
-        let shoot_at = match target {
-            Some((id, d, point, ok)) => {
+        // An enemy decoy in sight, nearer than the enemy (if any): the bot takes it for one.
+        let fwd = Vec2::new(self.aim.x, self.aim.z).normalize_or_zero();
+        let decoy = sim
+            .decoys
+            .iter()
+            .filter(|d| d.team != p.team)
+            .map(|d| (d.chest(), d.chest().distance(eye)))
+            .filter(|&(c, d)| {
+                let to = c - eye;
+                d < SIGHT
+                    && (d < SENSE || fwd.dot(Vec2::new(to.x, to.z).normalize_or_zero()) > FOV_COS)
+                    && clear(&sim.world, eye, c)
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .filter(|&(_, d)| target.is_none_or(|t| d < t.1));
+        let shoot_at = match (decoy, target) {
+            (Some((c, _)), _) => Some((c, self.seen_for >= self.reaction || target.is_none())),
+            (None, Some((id, d, point, ok))) => {
                 let vel = self
                     .memory
                     .iter()
@@ -2342,11 +2447,26 @@ impl Controller for Bot {
                 let lead = vel * (d / sim.rules.blaster_bolt_speed) * (0.4 + 0.6 * self.skill);
                 Some((point + lead, ok && self.seen_for >= self.reaction))
             }
-            None => self.panel_in_reach(sim, p, eye, muzzle).map(|c| (c, true)),
+            (None, None) => self.panel_in_reach(sim, p, eye, muzzle).map(|c| (c, true)),
         };
-        let want = match shoot_at {
-            Some((pt, _)) => apply_error((pt - muzzle).normalize_or(self.aim), self.shot_err),
-            None => self.look_dir(sim, p, move_dir, now),
+        // With a med beam and no enemy to shoot: a hurt team mate in reach and in sight.
+        let mate = (p.gadget_kind() == Some(Gadget::Medbeam) && shoot_at.is_none())
+            .then(|| {
+                sim.players
+                    .iter()
+                    .filter(|o| o.id != p.id && o.team == p.team && o.alive() && o.hits > 0)
+                    .map(|o| (o.chest(), o.chest().distance(eye)))
+                    .filter(|&(c, d)| {
+                        d < sim.rules.medbeam_range * 0.9 && clear(&sim.world, eye, c)
+                    })
+                    .min_by(|a, b| a.1.total_cmp(&b.1))
+                    .map(|(c, _)| c)
+            })
+            .flatten();
+        let want = match (shoot_at, mate) {
+            (Some((pt, _)), _) => apply_error((pt - muzzle).normalize_or(self.aim), self.shot_err),
+            (None, Some(c)) => (c - muzzle).normalize_or(self.aim),
+            (None, None) => self.look_dir(sim, p, move_dir, now),
         };
         let want = want.normalize_or(self.aim);
         let angle = self.aim.angle_between(want);
@@ -2370,7 +2490,7 @@ impl Controller for Bot {
                 self.roll_error();
             }
         } else if let Some((pt, true)) = shoot_at
-            && (!p.shotgun || pt.distance(muzzle) < sim.rules.shotgun_range * 0.9)
+            && (p.weapon != Weapon::Shotgun || pt.distance(muzzle) < sim.rules.shotgun_range * 0.9)
             && !self.fire_prev
             && p.fire_cd <= 0.0
             && p.cooldown <= 0.0
@@ -2396,15 +2516,25 @@ impl Controller for Bot {
         let throw = self.try_grenade(sim, p, now);
         // A carried shield goes on in a fight.
         let shield = p.shields > 0 && p.shield <= 0.0 && target.is_some();
-        // A carried barrier goes up when hit in a fight, towards the enemy (the bot faces its
-        // aim).
-        let barrier = p.barriers > 0 && p.cooldown > 0.0 && target.is_some();
+        // A carried gadget: a barrier goes up when hit in a fight, towards the enemy (the bot
+        // faces its aim).
+        let gadget = match p.gadget_kind() {
+            // (A mirror too: it turns their bolts back at them.)
+            Some(Gadget::Barrier | Gadget::Mirror) => p.cooldown > 0.0 && target.is_some(),
+            // The med beam, held on a hurt team mate.
+            Some(Gadget::Medbeam) => mate.is_some(),
+            // A decoy runs off to draw fire when hit in a fight.
+            Some(Gadget::Decoy) => p.cooldown > 0.0 && target.is_some(),
+            // A sensor goes out ahead, now and then, when no enemy's in sight.
+            Some(Gadget::Sensor) => target.is_none() && self.rng.random::<f32>() < TICK / 4.0,
+            None => false,
+        };
         self.pose(PlayerCmd {
             stick: move_dir.clamp_length_max(1.0),
             fire,
             throw,
             shield,
-            barrier,
+            gadget,
             ..Default::default()
         })
     }
@@ -2983,13 +3113,82 @@ mod tests {
         let mut found = 0;
         for k in 0..20 {
             let aim = from + Vec3::new(k as f32 - 10.0, -1.5, -8.0 - k as f32 * 0.5);
-            if let Some((v, q)) = solve_throw(&world, from, aim, 16.0) {
+            if let Some((v, q)) = solve_throw(&world, from, aim, 16.0, crate::collide::GRAVITY) {
                 found += 1;
                 assert!(v.length() <= 16.0);
                 assert!(Vec2::new(q.x - aim.x, q.z - aim.z).length() < THROW_LAND);
             }
         }
         assert!(found > 3, "{found}");
+    }
+
+    #[test]
+    fn bots_take_and_capture_prisms() {
+        let mut n = [0usize; 3];
+        for seed in [3u64, 8] {
+            let mut sim = Sim::new(
+                seed,
+                Rules {
+                    mode: level::GameMode::Prism,
+                    match_time: 300.0,
+                    ..Rules::default()
+                },
+            );
+            let mut bots = Bots::default();
+            bots.fill(&mut sim, 8, 0.6);
+            for _ in 0..(300.0 / TICK) as usize {
+                bots.think(&mut sim);
+                sim.step();
+                for e in sim.drain_events() {
+                    match e {
+                        SimEvent::PrismTaken { .. } => n[0] += 1,
+                        SimEvent::PrismReturned { by: Some(_), .. } => n[1] += 1,
+                        SimEvent::PrismCaptured { .. } => n[2] += 1,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        println!(
+            "prisms taken {}, returned {}, captured {}",
+            n[0], n[1], n[2]
+        );
+        assert!(n[0] >= 4, "taken: {n:?}");
+        assert!(n[2] >= 1, "captured: {n:?}");
+    }
+
+    #[test]
+    fn phantom_bots_infect_survivors() {
+        let mut sim = Sim::new(
+            6,
+            Rules {
+                mode: level::GameMode::Infection,
+                match_time: 240.0,
+                ..Rules::default()
+            },
+        );
+        let mut bots = Bots::default();
+        bots.fill(&mut sim, 8, 0.6);
+        let mut infected = 0;
+        for _ in 0..(240.0 / TICK) as usize {
+            bots.think(&mut sim);
+            sim.step();
+            infected += sim
+                .drain_events()
+                .iter()
+                .filter(|e| matches!(e, SimEvent::Infected { .. }))
+                .count();
+            if sim.over {
+                break;
+            }
+        }
+        let red = sim.players.iter().filter(|p| p.team == Team::Red).count();
+        println!(
+            "infected {infected}, phantoms at the end {red}, scores {:?}",
+            sim.scores
+        );
+        // (Two to start with, and more since.)
+        assert!(infected >= 4, "infected {infected}");
     }
 
     #[test]

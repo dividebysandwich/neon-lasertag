@@ -68,13 +68,37 @@ pub enum PickupKind {
     /// deals `Rules::beam_damage` hits (for `Rules::beam_cost` shots); taking one also fills it
     /// up.
     Charge,
-    /// Carried until put up (`PlayerCmd::barrier`): a wall of hard light in front of the
+    /// The ricochet rifle instead of the blaster until tagged out: slower bolts that bounce
+    /// off every wall up to `Rules::ricochet_bounces` times; taking one also fills it up.
+    Ricochet,
+    /// The prism lance instead of the blaster until tagged out: a slow-firing marksman rifle
+    /// whose shot reaches `Rules::lance_range` at once and deals `Rules::lance_head_damage`
+    /// hits to the head (for `Rules::lance_cost` shots); taking one also fills it up.
+    Lance,
+    /// Dual pistols instead of the blaster until tagged out: one in each hand, each firing at
+    /// `Rules::dual_cooldown`, sharing the shots; taking them also fills them up.
+    Dual,
+    /// A gadget: a mirror put up like a barrier (`PlayerCmd::gadget`) for `Rules::mirror_time`,
+    /// turning back every bolt that meets it, anyone's.
+    Mirror,
+    /// A gadget: thrown (`PlayerCmd::gadget`), it sticks where it lands and for
+    /// `Rules::sensor_time` shows the enemies within `Rules::sensor_range` to its team every
+    /// `Rules::sensor_every` seconds, through walls and cloaks.
+    Sensor,
+    /// A gadget: a copy of its player (`PlayerCmd::gadget`) that runs on ahead for
+    /// `Rules::decoy_time`, drawing fire (a bolt pops it).
+    Decoy,
+    /// A gadget: held (`PlayerCmd::gadget`) on a team mate in front within
+    /// `Rules::medbeam_range`, a beam that heals a hit every `Rules::medbeam_tick` seconds and
+    /// refills their blaster, for `Rules::medbeam_time` seconds of beam in all.
+    Medbeam,
+    /// A gadget, carried until put up (`PlayerCmd::gadget`): a wall of hard light in front of the
     /// player for `Rules::barrier_time`, stopping every bolt but its team's.
     Barrier,
 }
 
 impl PickupKind {
-    pub const ALL: [PickupKind; 8] = [
+    pub const ALL: [PickupKind; 15] = [
         PickupKind::Grenade,
         PickupKind::Rapid,
         PickupKind::Shield,
@@ -83,9 +107,16 @@ impl PickupKind {
         PickupKind::Speed,
         PickupKind::Charge,
         PickupKind::Barrier,
+        PickupKind::Ricochet,
+        PickupKind::Lance,
+        PickupKind::Mirror,
+        PickupKind::Sensor,
+        PickupKind::Decoy,
+        PickupKind::Medbeam,
+        PickupKind::Dual,
     ];
     /// The powerups (everything but the grenade).
-    pub const POWERUPS: [PickupKind; 7] = [
+    pub const POWERUPS: [PickupKind; 14] = [
         PickupKind::Rapid,
         PickupKind::Shield,
         PickupKind::Shotgun,
@@ -93,6 +124,13 @@ impl PickupKind {
         PickupKind::Speed,
         PickupKind::Charge,
         PickupKind::Barrier,
+        PickupKind::Ricochet,
+        PickupKind::Lance,
+        PickupKind::Mirror,
+        PickupKind::Sensor,
+        PickupKind::Decoy,
+        PickupKind::Medbeam,
+        PickupKind::Dual,
     ];
 
     pub fn name(self) -> &'static str {
@@ -105,6 +143,13 @@ impl PickupKind {
             PickupKind::Speed => "speed boost",
             PickupKind::Charge => "charge gun",
             PickupKind::Barrier => "barrier",
+            PickupKind::Ricochet => "ricochet rifle",
+            PickupKind::Lance => "prism lance",
+            PickupKind::Mirror => "mirror",
+            PickupKind::Sensor => "pulse sensor",
+            PickupKind::Decoy => "decoy",
+            PickupKind::Medbeam => "med beam",
+            PickupKind::Dual => "dual pistols",
         }
     }
 
@@ -119,11 +164,126 @@ impl PickupKind {
             PickupKind::Speed => "speed",
             PickupKind::Charge => "charge",
             PickupKind::Barrier => "barrier",
+            PickupKind::Ricochet => "ricochet",
+            PickupKind::Lance => "lance",
+            PickupKind::Mirror => "mirror",
+            PickupKind::Sensor => "sensor",
+            PickupKind::Decoy => "decoy",
+            PickupKind::Medbeam => "medbeam",
+            PickupKind::Dual => "dual",
         }
     }
 
     pub fn parse(s: &str) -> Option<PickupKind> {
         Self::ALL.into_iter().find(|k| k.id() == s)
+    }
+
+    /// The pool a powerup slot rolls it from (none: the grenade has slots of its own).
+    pub fn pool(self) -> Option<Pool> {
+        match self {
+            PickupKind::Grenade => None,
+            PickupKind::Shotgun
+            | PickupKind::Charge
+            | PickupKind::Ricochet
+            | PickupKind::Lance
+            | PickupKind::Dual => Some(Pool::Weapon),
+            PickupKind::Barrier
+            | PickupKind::Mirror
+            | PickupKind::Sensor
+            | PickupKind::Decoy
+            | PickupKind::Medbeam => Some(Pool::Gadget),
+            PickupKind::Rapid | PickupKind::Shield | PickupKind::Cloak | PickupKind::Speed => {
+                Some(Pool::Power)
+            }
+        }
+    }
+
+    /// The gun it gives.
+    pub fn weapon(self) -> Option<Weapon> {
+        match self {
+            PickupKind::Shotgun => Some(Weapon::Shotgun),
+            PickupKind::Charge => Some(Weapon::Charge),
+            PickupKind::Ricochet => Some(Weapon::Ricochet),
+            PickupKind::Lance => Some(Weapon::Lance),
+            PickupKind::Dual => Some(Weapon::Dual),
+            _ => None,
+        }
+    }
+
+    /// The gadget it gives.
+    pub fn gadget(self) -> Option<Gadget> {
+        match self {
+            PickupKind::Barrier => Some(Gadget::Barrier),
+            PickupKind::Mirror => Some(Gadget::Mirror),
+            PickupKind::Sensor => Some(Gadget::Sensor),
+            PickupKind::Decoy => Some(Gadget::Decoy),
+            PickupKind::Medbeam => Some(Gadget::Medbeam),
+            _ => None,
+        }
+    }
+}
+
+/// Which gun a player holds: the blaster, or the special one a pickup gave until tagged out.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Weapon {
+    #[default]
+    Blaster,
+    Shotgun,
+    Charge,
+    /// Bolts bounce off every wall (`Rules::ricochet_bounces`).
+    Ricochet,
+    /// Hitscan: the shot crosses `Rules::lance_range` at once, a head hit counts double.
+    Lance,
+    /// A pistol in each hand (`PlayerCmd::gun2_hand`), sharing the shots.
+    Dual,
+}
+
+/// A carried gadget (one at a time, used with `PlayerCmd::gadget`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Gadget {
+    Barrier,
+    Mirror,
+    Sensor,
+    Decoy,
+    Medbeam,
+}
+
+impl Gadget {
+    pub fn name(self) -> &'static str {
+        match self {
+            Gadget::Barrier => "barrier",
+            Gadget::Mirror => "mirror",
+            Gadget::Sensor => "pulse sensor",
+            Gadget::Decoy => "decoy",
+            Gadget::Medbeam => "med beam",
+        }
+    }
+}
+
+/// The kinds of pickup a powerup slot rolls from each time it fills.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Pool {
+    Weapon,
+    Gadget,
+    Power,
+}
+
+impl Pool {
+    pub const ALL: [Pool; 3] = [Pool::Weapon, Pool::Gadget, Pool::Power];
+
+    /// Slots of this pool in each half per `Rules::powerup_pairs`.
+    pub fn slots(self) -> usize {
+        match self {
+            Pool::Weapon => 2,
+            Pool::Gadget => 2,
+            Pool::Power => 3,
+        }
+    }
+
+    pub fn kinds(self) -> impl Iterator<Item = PickupKind> {
+        PickupKind::POWERUPS
+            .into_iter()
+            .filter(move |k| k.pool() == Some(self))
     }
 }
 
@@ -163,14 +323,48 @@ pub enum ArenaEvent {
     Blackout,
     /// Every pickup missing from the arena comes back at once.
     Overdrive,
+    /// For `Rules::storm_time` every wall turns a bolt back like a mirror (once).
+    MirrorStorm,
+    /// For `Rules::lowgrav_time` everything falls at `Rules::lowgrav_factor` of the gravity
+    /// (jump pads' flights aside).
+    LowGravity,
+    /// For `Rules::bounty_time` the top scorer (`Sim::bounty`) is marked for everyone, and
+    /// tagging them out is worth `Rules::bounty_points`; lasting it out pays them as much.
+    Bounty,
 }
 
 impl ArenaEvent {
+    pub const ALL: [ArenaEvent; 5] = [
+        ArenaEvent::Blackout,
+        ArenaEvent::Overdrive,
+        ArenaEvent::MirrorStorm,
+        ArenaEvent::LowGravity,
+        ArenaEvent::Bounty,
+    ];
+
     pub fn name(self) -> &'static str {
         match self {
             ArenaEvent::Blackout => "BLACKOUT",
             ArenaEvent::Overdrive => "OVERDRIVE",
+            ArenaEvent::MirrorStorm => "MIRROR STORM",
+            ArenaEvent::LowGravity => "LOW GRAVITY",
+            ArenaEvent::Bounty => "BOUNTY",
         }
+    }
+
+    /// A short name for scripts (`LT_DEV`).
+    pub fn id(self) -> &'static str {
+        match self {
+            ArenaEvent::Blackout => "blackout",
+            ArenaEvent::Overdrive => "overdrive",
+            ArenaEvent::MirrorStorm => "storm",
+            ArenaEvent::LowGravity => "lowgrav",
+            ArenaEvent::Bounty => "bounty",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<ArenaEvent> {
+        Self::ALL.into_iter().find(|k| k.id() == s)
     }
 }
 
@@ -234,6 +428,13 @@ pub struct PlayerCmd {
     /// The blaster's muzzle relative to the feet; bolts leave from here along its forward.
     pub muzzle: Pose,
     pub fire: bool,
+    /// Dual pistols: the hand holding the second, its muzzle (as `muzzle`) and its trigger.
+    #[serde(default)]
+    pub gun2_hand: Option<Hand>,
+    #[serde(default)]
+    pub muzzle2: Pose,
+    #[serde(default)]
+    pub fire2: bool,
     /// A grenade is in this hand (drawn, not yet thrown).
     pub grenade_hand: Option<Hand>,
     /// The player is in VR (its throws get `Rules::vr_throw_factor`).
@@ -252,9 +453,9 @@ pub struct PlayerCmd {
     /// Crouching (moves at `Rules::crouch_factor` of the speed).
     #[serde(default)]
     pub crouch: bool,
-    /// Put up the carried barrier (powerup), in front of the player (on pressing).
+    /// Use the carried gadget (on pressing; some work while held).
     #[serde(default)]
-    pub barrier: bool,
+    pub gadget: bool,
     /// The sim tick the client was showing (the snapshot tick it rendered, after its
     /// interpolation delay) when it made this command; 0 = unknown or local (no lag
     /// compensation). The server flies a bolt fired with it through the other players as they
@@ -324,6 +525,43 @@ pub enum SimEvent {
         id: u32,
         pos: Vec3,
     },
+    /// A pulse sensor thrown (`Sim::sensors`), stuck where it landed, pulsing (the enemies
+    /// within its range, by player id bit), and gone.
+    SensorThrown {
+        id: u32,
+        player: PlayerId,
+        pos: Vec3,
+    },
+    SensorStuck {
+        id: u32,
+        pos: Vec3,
+    },
+    Pulse {
+        id: u32,
+        team: Team,
+        pos: Vec3,
+        seen: u64,
+    },
+    SensorDown {
+        id: u32,
+        pos: Vec3,
+    },
+    /// A decoy sent off (`Sim::decoys`), popped by a bolt (`by` its shooter), and gone with
+    /// its time up.
+    DecoyOut {
+        id: u32,
+        player: PlayerId,
+        pos: Vec3,
+    },
+    DecoyPopped {
+        id: u32,
+        by: PlayerId,
+        pos: Vec3,
+    },
+    DecoyGone {
+        id: u32,
+        pos: Vec3,
+    },
     /// A player's speed boost ran out.
     SpeedDown {
         player: PlayerId,
@@ -332,6 +570,59 @@ pub enum SimEvent {
     Blocked {
         player: PlayerId,
         pos: Vec3,
+    },
+    /// Prism mode: `team`'s prism taken by `player` (from its home or the floor), thrown,
+    /// caught, dropped (its carrier tagged out), back home, and carried home by the enemy.
+    PrismTaken {
+        team: Team,
+        player: PlayerId,
+        pos: Vec3,
+    },
+    PrismThrown {
+        team: Team,
+        player: PlayerId,
+        pos: Vec3,
+    },
+    PrismCaught {
+        team: Team,
+        player: PlayerId,
+        pos: Vec3,
+    },
+    PrismDropped {
+        team: Team,
+        pos: Vec3,
+    },
+    PrismReturned {
+        team: Team,
+        /// Brought back by a team mate (`None`: its time on the floor ran out).
+        by: Option<PlayerId>,
+        pos: Vec3,
+    },
+    PrismCaptured {
+        team: Team,
+        by: PlayerId,
+        pos: Vec3,
+    },
+    /// Infection: `player` is a phantom now (at the start, or tagged out as a survivor).
+    Infected {
+        player: PlayerId,
+    },
+    /// A bounty on `player` (`Sim::bounty`), claimed by `by` tagging them out, or lasted out.
+    BountyOn {
+        player: PlayerId,
+    },
+    BountyClaimed {
+        player: PlayerId,
+        by: PlayerId,
+    },
+    BountySurvived {
+        player: PlayerId,
+    },
+    /// A team mate's med beam took a hit off `player` (`hits` left).
+    Mended {
+        player: PlayerId,
+        by: PlayerId,
+        hits: u8,
     },
     /// A hit player stepped onto its team's spawn pads and is unhurt again.
     Healed {
@@ -348,6 +639,18 @@ pub enum SimEvent {
         player: PlayerId,
         pos: Vec3,
         kind: PickupKind,
+    },
+    /// A prism lance's shot: its way from `from` to `to` (one leg of it, a mirror turning it).
+    Streak {
+        player: PlayerId,
+        from: Vec3,
+        to: Vec3,
+    },
+    /// A hit to the head that counted extra (before its `Hit`).
+    Headshot {
+        player: PlayerId,
+        by: PlayerId,
+        pos: Vec3,
     },
     /// A bolt hit a player (`hits` taken so far, 1..=hits_to_tag); `by` is the shooter.
     Hit {

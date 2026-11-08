@@ -98,11 +98,13 @@ impl MeshData {
     }
 }
 
-/// A glb file: each named mesh split by material name, and the named nodes' positions.
+/// A glb file: each named mesh split by material name, and the named nodes' positions (and
+/// their whole transforms, for nodes that place a mesh).
 #[derive(Clone, Debug, Default)]
 pub struct GlbFile {
     pub meshes: HashMap<String, HashMap<String, MeshData>>,
     pub nodes: HashMap<String, Vec3>,
+    pub xforms: HashMap<String, Transform>,
 }
 
 pub fn asset_dir() -> PathBuf {
@@ -163,8 +165,16 @@ pub fn load_glb(rel: &str) -> anyhow::Result<GlbFile> {
     }
     for node in doc.nodes() {
         if let Some(name) = node.name() {
-            let (t, _, _) = node.transform().decomposed();
+            let (t, r, s) = node.transform().decomposed();
             out.nodes.insert(name.to_string(), Vec3::from(t));
+            out.xforms.insert(
+                name.to_string(),
+                Transform {
+                    translation: Vec3::from(t),
+                    rotation: Quat::from_array(r).normalize(),
+                    scale: Vec3::from(s),
+                },
+            );
         }
     }
     Ok(out)
@@ -206,11 +216,20 @@ pub struct Models {
     /// The blaster's muzzle in its own frame.
     pub muzzle: Vec3,
     /// Animal heads (origin between the eyes, looking along -Z).
-    pub heads: Vec<Model>,
+    pub heads: Vec<HeadModel>,
+    /// The eyeball and eyelid every head's eyes are made of (unit radius, looking along -Z;
+    /// `HeadModel::eyes` places them): `crate::eyes`.
+    pub eyeball: Model,
+    pub eyelid: Model,
     /// The floating chest (origin at its top centre), with lights `hit_1`..`hit_3`.
     pub torso: Model,
     /// Left and right gloves (origin at the palm, fingers along -Z).
     pub hands: [Model; 2],
+    /// Rigid body segments posed by `crate::rig`, one mesh for both sides; each hangs from its
+    /// joint (the origin) down -Y, front -Z: the neck (from the head's pivot), the pelvis (top
+    /// centre, tucked into the chest's hem), upper arm (shoulder), forearm (elbow), thigh
+    /// (hip), shin (knee) and boot (ankle; toe along -Z).
+    pub body: BodyModels,
     /// A reload station (origin on the floor in the middle of its cell).
     pub reload: Model,
     /// The powerups lying in the arena (origin at their centre, front towards -Z; the shotgun
@@ -221,8 +240,44 @@ pub struct Models {
     pub shotgun_muzzle: Vec3,
 }
 
-pub const ANIMALS: [&str; 8] = [
-    "wolf", "cat", "deer", "fox", "bear", "rabbit", "owl", "boar",
+#[derive(Clone, Default)]
+pub struct BodyModels {
+    pub neck: Model,
+    pub pelvis: Model,
+    pub upper_arm: Model,
+    pub forearm: Model,
+    pub thigh: Model,
+    pub shin: Model,
+    pub boot: Model,
+}
+
+/// An animal head: its model, and where its eyes are.
+#[derive(Clone, Default)]
+pub struct HeadModel {
+    pub model: Model,
+    /// The left and right eye's frame in the head: origin at the eyeball's centre, -Z where it
+    /// looks at rest, scaled by its radius (the `head_<animal>_eye_l/r` nodes); none in a
+    /// model without them.
+    pub eyes: Option<[Transform; 2]>,
+    /// This animal's own eyeball (a cat's slit pupil: `eyeball_<animal>`), else the shared one.
+    pub eyeball: Option<Model>,
+    /// How wide open the eyes rest: the upper and the lower lid's edge, radians above and
+    /// below the eye's forward point.
+    pub lids: [f32; 2],
+}
+
+/// The animals, with how wide open their eyes rest (the upper and the lower lid's edge, in
+/// degrees above and below the eye's forward point; tools/models/avatars.py LIDS).
+pub const ANIMALS: [(&str, f32, f32); 9] = [
+    ("wolf", 40.0, 44.0),
+    ("cat", 46.0, 48.0),
+    ("deer", 54.0, 52.0),
+    ("fox", 36.0, 44.0),
+    ("bear", 48.0, 48.0),
+    ("rabbit", 58.0, 54.0),
+    ("owl", 62.0, 58.0),
+    ("boar", 40.0, 42.0),
+    ("dragon", 42.0, 46.0),
 ];
 
 /// A powerup's mesh in powerups.glb.
@@ -236,6 +291,13 @@ fn powerup_mesh(kind: lt_sim::PickupKind) -> &'static str {
         lt_sim::PickupKind::Speed => "speed",
         lt_sim::PickupKind::Charge => "charge",
         lt_sim::PickupKind::Barrier => "barrier",
+        lt_sim::PickupKind::Ricochet => "ricochet",
+        lt_sim::PickupKind::Lance => "lance",
+        lt_sim::PickupKind::Mirror => "mirror",
+        lt_sim::PickupKind::Sensor => "sensor",
+        lt_sim::PickupKind::Decoy => "decoy",
+        lt_sim::PickupKind::Medbeam => "medbeam",
+        lt_sim::PickupKind::Dual => "dual",
     }
 }
 
@@ -259,10 +321,34 @@ pub fn load_models(meshes: &mut Assets<Mesh>) -> Models {
     }
     match load_glb("models/avatars.glb") {
         Ok(f) => {
-            for a in ANIMALS {
+            for (a, top, bottom) in ANIMALS {
                 let name = format!("head_{a}");
                 if f.meshes.contains_key(&name) {
-                    models.heads.push(Model::from_glb(&f, Some(&name), meshes));
+                    let eyes = match (
+                        f.xforms.get(&format!("{name}_eye_l")),
+                        f.xforms.get(&format!("{name}_eye_r")),
+                    ) {
+                        (Some(l), Some(r)) => Some([*l, *r]),
+                        _ => None,
+                    };
+                    let own = format!("eyeball_{a}");
+                    models.heads.push(HeadModel {
+                        model: Model::from_glb(&f, Some(&name), meshes),
+                        eyes,
+                        eyeball: f
+                            .meshes
+                            .contains_key(&own)
+                            .then(|| Model::from_glb(&f, Some(&own), meshes)),
+                        lids: [top.to_radians(), bottom.to_radians()],
+                    });
+                }
+            }
+            for (n, m) in [
+                ("eyeball", &mut models.eyeball),
+                ("eyelid", &mut models.eyelid),
+            ] {
+                if f.meshes.contains_key(n) {
+                    *m = Model::from_glb(&f, Some(n), meshes);
                 }
             }
             if f.meshes.contains_key("torso") {
@@ -271,6 +357,20 @@ pub fn load_models(meshes: &mut Assets<Mesh>) -> Models {
             for (i, n) in ["hand_left", "hand_right"].iter().enumerate() {
                 if f.meshes.contains_key(*n) {
                     models.hands[i] = Model::from_glb(&f, Some(n), meshes);
+                }
+            }
+            let b = &mut models.body;
+            for (n, m) in [
+                ("neck", &mut b.neck),
+                ("pelvis", &mut b.pelvis),
+                ("upper_arm", &mut b.upper_arm),
+                ("forearm", &mut b.forearm),
+                ("thigh", &mut b.thigh),
+                ("shin", &mut b.shin),
+                ("boot", &mut b.boot),
+            ] {
+                if f.meshes.contains_key(n) {
+                    *m = Model::from_glb(&f, Some(n), meshes);
                 }
             }
         }
@@ -342,22 +442,25 @@ pub fn load_models(meshes: &mut Assets<Mesh>) -> Models {
         ];
     }
     if models.heads.is_empty() {
-        models.heads.push(Model {
-            parts: vec![
-                (
-                    "body".into(),
-                    meshes.add(Sphere::new(0.13).mesh().ico(1).unwrap()),
-                ),
-                (
-                    "accent".into(),
-                    meshes.add(
-                        Cuboid::new(0.2, 0.045, 0.03)
-                            .mesh()
-                            .build()
-                            .translated_by(Vec3::new(0.0, 0.0, -0.12)),
+        models.heads.push(HeadModel {
+            model: Model {
+                parts: vec![
+                    (
+                        "body".into(),
+                        meshes.add(Sphere::new(0.13).mesh().ico(1).unwrap()),
                     ),
-                ),
-            ],
+                    (
+                        "accent".into(),
+                        meshes.add(
+                            Cuboid::new(0.2, 0.045, 0.03)
+                                .mesh()
+                                .build()
+                                .translated_by(Vec3::new(0.0, 0.0, -0.12)),
+                        ),
+                    ),
+                ],
+                ..default()
+            },
             ..default()
         });
     }

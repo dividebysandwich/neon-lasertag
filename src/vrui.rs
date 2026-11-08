@@ -592,7 +592,7 @@ const VR_CONTROLS: [&str; 12] = [
     "Fire: trigger",
     "Grenade: hold B or Y, throw, let go",
     "Shield: trigger of the free hand",
-    "Barrier: grip of the free hand",
+    "Gadget: grip of the free hand",
     "Menu: right menu button",
     "Recenter: left menu button",
 ];
@@ -647,7 +647,7 @@ fn build_help(b: &mut Builder, game: &Game, height: f32) {
     y -= 0.03;
     b.text("RULES", th, Vec2::new(left, y), Align::Left, &violet, None);
     y -= 0.05;
-    for rule in crate::hud::rules_lines(&game.rules, game.level.mega.is_some()) {
+    for rule in crate::hud::rules_lines(&game.rules, game.level.mode) {
         for line in wrap(&rule, lh, width) {
             b.text(&line, lh, Vec2::new(left, y), Align::Left, &white, None);
             y -= lh * 1.5;
@@ -1923,7 +1923,7 @@ fn place_marks(
         ];
         // (The goals' own glows, in their colours at `hud::GOAL_ALPHA`.)
         let mut fades = Vec::new();
-        for _ in 0..crate::hud::MAX_GOALS {
+        for _ in 0..crate::hud::MAX_GOALS + crate::hud::MAX_REVEALED {
             let glow = glows.add(GlowMaterial {
                 overlay: true,
                 neon: NeonUniform::fixed(Vec3::ONE, 0.0),
@@ -1969,12 +1969,24 @@ fn place_marks(
                 continue;
             }
             let (mesh, c) = match kind {
-                GoalKind::Attack => (solid, team_color(Some(p.team.other()))),
-                GoalKind::Defend => (frame, team_color(Some(p.team))),
+                GoalKind::Attack | GoalKind::Prism => (solid, team_color(Some(p.team.other()))),
+                GoalKind::Defend | GoalKind::Rescue | GoalKind::Home => {
+                    (frame, team_color(Some(p.team)))
+                }
                 GoalKind::Secondary => (solid, Hue::Amber.color()),
                 GoalKind::Core => (solid, Hue::Magenta.color()),
             };
             places.push(Some((pos, 0.02, Some((mesh.clone(), c)))));
+        }
+    }
+    // The enemies a pulse sensor shows.
+    places.resize(2 + crate::hud::MAX_GOALS, None);
+    if let Some(p) = me.filter(|_| alive) {
+        let c = team_color(Some(p.team.other()));
+        let gold = Vec3::new(1.0, 0.82, 0.2);
+        for (pos, bounty) in crate::hud::revealed(&game, p) {
+            let c = if bounty { gold } else { c };
+            places.push(Some((pos, 0.016 * pulse, Some((solid.clone(), c)))));
         }
     }
     places.resize(ents.len(), None);

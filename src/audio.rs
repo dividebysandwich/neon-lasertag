@@ -13,7 +13,7 @@ use std::collections::HashMap;
 
 use bevy::audio::{DefaultSpatialScale, PlaybackMode, SpatialScale, Volume};
 use bevy::prelude::*;
-use lt_sim::{PlayerId, SimEvent};
+use lt_sim::{PlayerId, SimEvent, Weapon};
 
 use crate::game::{Game, GameEvent};
 use crate::settings::Settings;
@@ -49,11 +49,16 @@ struct Sounds {
     charge_loop: Handle<AudioSource>,
     charge_full: Handle<AudioSource>,
     beam_fire: Handle<AudioSource>,
+    lance_fire: Handle<AudioSource>,
+    headshot: Handle<AudioSource>,
+    sensor_pulse: Handle<AudioSource>,
     barrier_up: Handle<AudioSource>,
     barrier_hit: Handle<AudioSource>,
     barrier_down: Handle<AudioSource>,
     event_blackout: Handle<AudioSource>,
     event_overdrive: Handle<AudioSource>,
+    event_storm: Handle<AudioSource>,
+    event_lowgrav: Handle<AudioSource>,
     event_double: Handle<AudioSource>,
     tick: Handle<AudioSource>,
     power_up: Handle<AudioSource>,
@@ -114,6 +119,9 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
     commands.insert_resource(Sounds {
         fire: s("laser_fire"),
         fire_red: s("laser_fire_red"),
+        lance_fire: s("prismrifle"),
+        headshot: s("headshot"),
+        sensor_pulse: s("sensor_pulse"),
         shotgun: s("shotgun"),
         deny: s("deny"),
         hit: s("hit_player"),
@@ -143,6 +151,8 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
         barrier_down: s("barrier_down"),
         event_blackout: s("event_blackout"),
         event_overdrive: s("event_overdrive"),
+        event_storm: s("event_storm"),
+        event_lowgrav: s("event_lowgrav"),
         event_double: s("event_double"),
         tick: s("power_tick"),
         power_up: s("power_up"),
@@ -367,13 +377,17 @@ fn play_events(
                     .players
                     .iter()
                     .any(|p| p.id == player && p.team == lt_sim::Team::Red);
-                let shotgun = game
+                let weapon = game
                     .snap
                     .players
                     .iter()
-                    .any(|p| p.id == player && p.shotgun);
+                    .find(|p| p.id == player)
+                    .map(|p| p.weapon);
+                let shotgun = weapon == Some(Weapon::Shotgun);
                 let sound = if shotgun {
                     &sounds.shotgun
+                } else if weapon == Some(Weapon::Lance) {
+                    &sounds.lance_fire
                 } else if red {
                     &sounds.fire_red
                 } else {
@@ -435,6 +449,58 @@ fn play_events(
                     .flatten();
                 play(&mut commands, gain, &sounds.charge_full, at, 0.8, 1.0)
             }
+            SimEvent::Infected { player } if Some(player) == me => {
+                play(&mut commands, gain, &sounds.tagged, None, 0.8, 0.6)
+            }
+            SimEvent::PrismTaken { pos, .. } | SimEvent::PrismCaught { pos, .. } => {
+                play(&mut commands, gain, &sounds.pickup, Some(pos), 1.0, 0.8)
+            }
+            SimEvent::PrismThrown { pos, .. } => {
+                play(&mut commands, gain, &sounds.throw, Some(pos), 0.9, 0.9)
+            }
+            SimEvent::PrismDropped { pos, .. } => {
+                play(&mut commands, gain, &sounds.bounce, Some(pos), 1.0, 0.7)
+            }
+            SimEvent::PrismReturned { .. } => {
+                play(&mut commands, gain, &sounds.power_up, None, 0.6, 1.2)
+            }
+            SimEvent::PrismCaptured { .. } => {
+                play(&mut commands, gain, &sounds.mega_win, None, 1.0, 1.0)
+            }
+            SimEvent::BountyClaimed { .. } | SimEvent::BountySurvived { .. } => {
+                play(&mut commands, gain, &sounds.mega_win, None, 0.6, 1.3)
+            }
+            SimEvent::DecoyOut { pos, .. } => {
+                play(&mut commands, gain, &sounds.power_up, Some(pos), 0.6, 1.4)
+            }
+            SimEvent::DecoyPopped { pos, .. } => {
+                play(&mut commands, gain, &sounds.other_hit, Some(pos), 1.0, 1.35)
+            }
+            SimEvent::SensorThrown { pos, .. } => {
+                play(&mut commands, gain, &sounds.throw, Some(pos), 0.7, 1.3)
+            }
+            SimEvent::SensorStuck { pos, .. } => {
+                play(&mut commands, gain, &sounds.bounce, Some(pos), 0.8, 1.6)
+            }
+            SimEvent::Pulse { pos, .. } => play(
+                &mut commands,
+                gain,
+                &sounds.sensor_pulse,
+                Some(pos),
+                0.9,
+                1.0,
+            ),
+            SimEvent::Headshot { by, pos, .. } => {
+                let mine = Some(by) == me;
+                play(
+                    &mut commands,
+                    gain,
+                    &sounds.headshot,
+                    (!mine).then_some(pos),
+                    if mine { 0.9 } else { 0.7 },
+                    1.0,
+                )
+            }
             SimEvent::BeamFired { player, pos, .. } => {
                 let mine = Some(player) == me;
                 play(
@@ -451,6 +517,9 @@ fn play_events(
                 let sound = match kind {
                     lt_sim::ArenaEvent::Blackout => &sounds.event_blackout,
                     lt_sim::ArenaEvent::Overdrive => &sounds.event_overdrive,
+                    lt_sim::ArenaEvent::MirrorStorm => &sounds.event_storm,
+                    lt_sim::ArenaEvent::LowGravity => &sounds.event_lowgrav,
+                    lt_sim::ArenaEvent::Bounty => &sounds.event_double,
                 };
                 play(&mut commands, gain, sound, None, 1.0, 1.0)
             }
@@ -530,6 +599,9 @@ fn play_events(
             }
             SimEvent::Healed { player } if Some(player) == me => {
                 play(&mut commands, gain, &sounds.reload_done, None, 0.8, 1.5)
+            }
+            SimEvent::Mended { player, by, .. } if Some(player) == me || Some(by) == me => {
+                play(&mut commands, gain, &sounds.reload_done, None, 0.6, 1.8)
             }
             SimEvent::PickedUp {
                 player, pos, kind, ..
