@@ -758,6 +758,7 @@ fn held(input: &XrInput, b: VrButton, hand: Option<usize>, free: usize, near: [b
         VrButton::Secondary => (0..2).any(|i| by(i) && h[i].secondary),
         VrButton::LeftStick => by(0) && h[0].stick_click,
         VrButton::RightStick => by(1) && h[1].stick_click,
+        VrButton::StickUp => by(1) && h[1].stick.y > 0.7 && h[1].stick.x.abs() < 0.5,
         VrButton::StickDown => by(1) && h[1].stick.y < -0.7 && h[1].stick.x.abs() < 0.5,
         VrButton::FreeTrigger => by(free) && h[free].trigger > 0.75,
         VrButton::FreeGrip => by(free) && !near[free] && h[free].squeeze > 0.75,

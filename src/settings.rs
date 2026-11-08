@@ -165,7 +165,7 @@ impl VrAction {
     pub fn default_button(self) -> VrButton {
         match self {
             VrAction::Jump => VrButton::Primary,
-            VrAction::Dash => VrButton::LeftStick,
+            VrAction::Dash => VrButton::StickUp,
             VrAction::Crouch => VrButton::StickDown,
             VrAction::Grenade => VrButton::Secondary,
             VrAction::Shield => VrButton::FreeTrigger,
@@ -186,6 +186,7 @@ impl VrAction {
                 Secondary,
                 LeftStick,
                 RightStick,
+                StickUp,
                 StickDown,
                 FreeTrigger,
                 FreeGrip,
@@ -214,7 +215,8 @@ pub enum VrButton {
     /// Clicking the left stick (the left controller's trackpad), or the right one.
     LeftStick,
     RightStick,
-    /// The right stick pulled down.
+    /// The right stick pushed forward, or pulled down.
+    StickUp,
     StickDown,
     /// The trigger and grip of the hand without the blaster (gripping near the holster draws
     /// it instead).
@@ -224,11 +226,12 @@ pub enum VrButton {
 }
 
 impl VrButton {
-    const ALL: [VrButton; 8] = [
+    const ALL: [VrButton; 9] = [
         VrButton::Primary,
         VrButton::Secondary,
         VrButton::LeftStick,
         VrButton::RightStick,
+        VrButton::StickUp,
         VrButton::StickDown,
         VrButton::FreeTrigger,
         VrButton::FreeGrip,
@@ -242,6 +245,7 @@ impl VrButton {
             VrButton::Secondary => "B OR Y",
             VrButton::LeftStick => "LEFT STICK CLICK",
             VrButton::RightStick => "RIGHT STICK CLICK",
+            VrButton::StickUp => "RIGHT STICK FORWARD",
             VrButton::StickDown => "RIGHT STICK DOWN",
             VrButton::FreeTrigger => "FREE HAND TRIGGER",
             VrButton::FreeGrip => "FREE HAND GRIP",
@@ -255,6 +259,7 @@ impl VrButton {
             VrButton::Secondary => "secondary",
             VrButton::LeftStick => "left_stick",
             VrButton::RightStick => "right_stick",
+            VrButton::StickUp => "stick_up",
             VrButton::StickDown => "stick_down",
             VrButton::FreeTrigger => "free_trigger",
             VrButton::FreeGrip => "free_grip",
@@ -917,7 +922,7 @@ mod tests {
     #[test]
     fn dual_pistols_move_the_free_hand_actions() {
         let mut s = Settings::default();
-        assert_eq!(s.vr_dual(VrAction::Shield), VrButton::LeftStick);
+        assert_eq!(s.vr_dual(VrAction::Shield), VrButton::StickUp);
         assert_eq!(s.vr_dual(VrAction::Gadget), VrButton::Secondary);
         s.set_vr(VrAction::Dash, VrButton::RightStick);
         assert_eq!(s.vr_dual(VrAction::Shield), VrButton::RightStick);
