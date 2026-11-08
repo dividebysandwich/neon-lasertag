@@ -358,6 +358,12 @@ fn play_events(
             SimEvent::TaggedOut { player, by, .. } if Some(by) == me && enemy(player) => {
                 play(&mut commands, gain, &sounds.bleep_tag, None, 0.8, 1.0)
             }
+            // A hit that did nothing (they were still recovering, or shielded): a dull tink.
+            SimEvent::Immune { player, by, .. } | SimEvent::Blocked { player, by, .. }
+                if Some(by) == me && enemy(player) =>
+            {
+                play(&mut commands, gain, &sounds.deny, None, 0.3, 0.6)
+            }
             SimEvent::TargetHit { by, .. }
             | SimEvent::SecondaryHit { by, .. }
             | SimEvent::TurretOff { by, .. }

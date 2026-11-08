@@ -2205,12 +2205,18 @@ impl Sim {
         if p.shield > 0.0 {
             self.events.push(SimEvent::Blocked {
                 player: p.id,
+                by: b.owner,
                 pos: at,
             });
             return;
         }
         if p.cooldown > 0.0 || p.protect > 0.0 {
             // Still recovering from the last hit (or just respawned): the bolt just fizzles.
+            self.events.push(SimEvent::Immune {
+                player: p.id,
+                by: b.owner,
+                pos: at,
+            });
             self.events.push(SimEvent::BoltImpact {
                 pos: at,
                 normal: (b.pos - at).normalize_or_zero(),
@@ -6247,6 +6253,21 @@ mod tests {
         );
         shoot(&mut sim, a, b);
         assert_eq!(sim.player(b).unwrap().hits, 1, "the shield ran out");
+    }
+
+    #[test]
+    fn a_hit_while_recovering_tells_the_shooter() {
+        let (mut sim, a, b) = duel();
+        shoot(&mut sim, a, b);
+        assert_eq!(sim.player(b).unwrap().hits, 1);
+        sim.drain_events();
+        shoot(&mut sim, a, b);
+        assert_eq!(sim.player(b).unwrap().hits, 1, "still recovering");
+        assert!(
+            sim.drain_events().iter().any(
+                |e| matches!(e, SimEvent::Immune { player, by, .. } if *player == b && *by == a)
+            )
+        );
     }
 
     #[test]

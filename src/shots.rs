@@ -344,9 +344,17 @@ impl Shots {
                         hit.push_back((clock, p.id));
                         struck.push_back((clock, at));
                         // As the server will likely judge it.
+                        if p.shield <= 0.0 && (p.cooldown > 0.0 || p.protect > 0.0) {
+                            out.push(SimEvent::Immune {
+                                player: p.id,
+                                by: f.bolt.owner,
+                                pos: at,
+                            });
+                        }
                         out.push(if p.shield > 0.0 {
                             SimEvent::Blocked {
                                 player: p.id,
+                                by: f.bolt.owner,
                                 pos: at,
                             }
                         } else if p.cooldown > 0.0 || p.protect > 0.0 {
@@ -450,6 +458,7 @@ impl Shots {
             SimEvent::Headshot { by, .. } => by == me,
             SimEvent::Hit { player, by, .. } if by == me => self.seen_hit(player),
             SimEvent::Blocked { player, .. } => self.seen_hit(player),
+            SimEvent::Immune { player, by, .. } if by == me => self.seen_hit(player),
             SimEvent::BoltImpact { pos, .. }
             | SimEvent::Reflected { pos, .. }
             | SimEvent::BarrierHit { pos, .. } => {

@@ -2187,7 +2187,7 @@ struct PlaceMarks {
 }
 
 /// One's hits on enemies: a white X where the bolt struck, for a moment (a tag-out: a bigger
-/// pink one, longer), facing the eyes and as big at any distance (as the flat screen's mark
+/// pink one, longer; a hit that did nothing: a small violet or cyan one), facing the eyes and as big at any distance (as the flat screen's mark
 /// round the crosshair).
 #[allow(clippy::too_many_arguments)]
 fn hit_marks(
@@ -2224,17 +2224,26 @@ fn hit_marks(
         })
         .clone();
     for GameEvent(e) in events.read() {
-        let Some(tag) = crate::hud::hit_confirm(e, &game) else {
+        let Some(confirm) = crate::hud::hit_confirm(e, &game) else {
             continue;
         };
         let pos = match *e {
-            SimEvent::Hit { pos, .. } | SimEvent::TaggedOut { pos, .. } => pos,
+            SimEvent::Hit { pos, .. }
+            | SimEvent::TaggedOut { pos, .. }
+            | SimEvent::Immune { pos, .. }
+            | SimEvent::Blocked { pos, .. } => pos,
             _ => continue,
         };
-        let (mat, life, size) = if tag {
-            (mats.tints[Hue::Pink as usize].text.clone(), 0.5, 1.6)
-        } else {
-            (mats.white.clone(), 0.25, 1.0)
+        let (mat, life, size) = match confirm {
+            crate::hud::Confirm::Tag => (mats.tints[Hue::Pink as usize].text.clone(), 0.5, 1.6),
+            crate::hud::Confirm::Hit => (mats.white.clone(), 0.25, 1.0),
+            // (A hit that did nothing: small and brief, violet or shield cyan.)
+            crate::hud::Confirm::Immune => {
+                (mats.tints[Hue::Violet as usize].text.clone(), 0.18, 0.7)
+            }
+            crate::hud::Confirm::Shielded => {
+                (mats.tints[Hue::Cyan as usize].text.clone(), 0.18, 0.7)
+            }
         };
         let e = commands
             .spawn((

@@ -126,9 +126,9 @@ struct Feed {
     lines: Vec<(String, Color, f32)>,
     flash: f32,
     marks: Vec<HitMark>,
-    /// The hit marker's seconds left, and whether it marks a tag-out.
+    /// The hit marker's seconds left, and what it marks.
     hit_mark: f32,
-    tag_mark: bool,
+    mark: Confirm,
     /// The points just scored: text and seconds left.
     points: Vec<(String, f32)>,
 }
@@ -139,6 +139,8 @@ pub const LOW_AMMO: f32 = 0.25;
 /// Seconds the hit marker shows (a tag-out's, longer), and a points line.
 const HIT_MARK: f32 = 0.22;
 const TAG_MARK: f32 = 0.5;
+/// (A hit that did nothing: shorter.)
+const WASTED_MARK: f32 = 0.16;
 const POINTS_LIFE: f32 = 1.6;
 const POINTS_LINES: usize = 4;
 
@@ -918,12 +920,12 @@ pub fn feed_entries(e: &SimEvent, game: &Game) -> Vec<(String, Color, f32)> {
 
 fn events(mut events: MessageReader<GameEvent>, game: Res<Game>, mut feed: ResMut<Feed>) {
     for GameEvent(e) in events.read() {
-        // (A hit doesn't cut a tag-out's marker short.)
-        if let Some(tag) = hit_confirm(e, &game)
-            && (tag || !feed.tag_mark || feed.hit_mark <= 0.0)
+        // (A lesser marker doesn't cut a greater one short.)
+        if let Some(c) = hit_confirm(e, &game)
+            && (c.rank() >= feed.mark.rank() || feed.hit_mark <= 0.0)
         {
-            feed.hit_mark = if tag { TAG_MARK } else { HIT_MARK };
-            feed.tag_mark = tag;
+            feed.hit_mark = c.mark_time();
+            feed.mark = c;
         }
         if let Some((what, points)) = my_points(e, &game) {
             let x2 = if game.snap.double { "  X2" } else { "" };
@@ -1378,8 +1380,45 @@ pub fn near_forcefield(game: &Game, p: &lt_sim::sim::PlayerSnap) -> bool {
         })
 }
 
-/// Whether `e` is the local player's bolt hitting an enemy: `Some(true)` for a tag-out.
-pub fn hit_confirm(e: &SimEvent, game: &Game) -> Option<bool> {
+/// What the local player's bolt hitting an enemy did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Confirm {
+    /// A hit, not the last.
+    #[default]
+    Hit,
+    /// The hit that tagged them out.
+    Tag,
+    /// Nothing: they were still recovering from a hit (or had just respawned).
+    Immune,
+    /// Nothing: their shield took it.
+    Shielded,
+}
+
+impl Confirm {
+    /// Whether the hit counted.
+    pub fn counted(self) -> bool {
+        matches!(self, Confirm::Hit | Confirm::Tag)
+    }
+
+    fn rank(self) -> u8 {
+        match self {
+            Confirm::Immune | Confirm::Shielded => 0,
+            Confirm::Hit => 1,
+            Confirm::Tag => 2,
+        }
+    }
+
+    fn mark_time(self) -> f32 {
+        match self {
+            Confirm::Hit => HIT_MARK,
+            Confirm::Tag => TAG_MARK,
+            Confirm::Immune | Confirm::Shielded => WASTED_MARK,
+        }
+    }
+}
+
+/// What the local player's bolt hitting an enemy did, if `e` is one.
+pub fn hit_confirm(e: &SimEvent, game: &Game) -> Option<Confirm> {
     let me = game.me?;
     let team = |id| {
         game.snap
@@ -1392,8 +1431,12 @@ pub fn hit_confirm(e: &SimEvent, game: &Game) -> Option<bool> {
     match *e {
         SimEvent::Hit {
             player, by, hits, ..
-        } if by == me && enemy(player) && hits < game.rules.hits_to_tag => Some(false),
-        SimEvent::TaggedOut { player, by, .. } if by == me && enemy(player) => Some(true),
+        } if by == me && enemy(player) && hits < game.rules.hits_to_tag => Some(Confirm::Hit),
+        SimEvent::TaggedOut { player, by, .. } if by == me && enemy(player) => Some(Confirm::Tag),
+        SimEvent::Immune { player, by, .. } if by == me && enemy(player) => Some(Confirm::Immune),
+        SimEvent::Blocked { player, by, .. } if by == me && enemy(player) => {
+            Some(Confirm::Shielded)
+        }
         _ => None,
     }
 }
@@ -1404,7 +1447,9 @@ pub fn my_points(e: &SimEvent, game: &Game) -> Option<(&'static str, u32)> {
     let me = game.me?;
     let r = &game.rules;
     let (what, points) = match *e {
-        SimEvent::TaggedOut { .. } if hit_confirm(e, game) == Some(true) => ("TAG", r.tag_points),
+        SimEvent::TaggedOut { .. } if hit_confirm(e, game) == Some(Confirm::Tag) => {
+            ("TAG", r.tag_points)
+        }
         SimEvent::Assist { player, .. } if player == me => ("ASSIST", r.assist_points),
         SimEvent::Defended { player, .. } if player == me => ("DEFEND", r.defend_points),
         SimEvent::TargetHit { by, .. } if by == me => ("TARGET", r.target_points),
@@ -1421,7 +1466,7 @@ pub fn my_points(e: &SimEvent, game: &Game) -> Option<(&'static str, u32)> {
     Some((what, if game.snap.double { points * 2 } else { points }))
 }
 
-/// The hit marker (white, a tag-out's bigger and pink) and the points rising beside the
+/// The hit marker (white, a tag-out's bigger and pink, a wasted hit's small and grey or cyan) and the points rising beside the
 /// crosshair.
 #[allow(clippy::type_complexity)]
 fn hit_marker(
@@ -1438,17 +1483,17 @@ fn hit_marker(
 ) {
     let dt = time.delta_secs();
     feed.hit_mark = (feed.hit_mark - dt).max(0.0);
-    let total = if feed.tag_mark { TAG_MARK } else { HIT_MARK };
-    let k = feed.hit_mark / total;
-    let c = if feed.tag_mark {
-        neonui::PINK
-    } else {
-        Color::WHITE
+    let k = feed.hit_mark / feed.mark.mark_time();
+    // (A hit that did nothing: small, dim and grey, or shield cyan.)
+    let (c, alpha, grow) = match feed.mark {
+        Confirm::Hit => (Color::WHITE, 1.0, 1.0),
+        Confirm::Tag => (neonui::PINK, 1.0, 1.6),
+        Confirm::Immune => (neonui::DIM, 0.7, 0.7),
+        Confirm::Shielded => (neonui::CYAN, 0.7, 0.7),
     };
     for (mut bg, mut tr) in &mut strokes {
-        bg.0 = c.with_alpha(k.sqrt());
+        bg.0 = c.with_alpha(alpha * k.sqrt());
         // (Springing out a little, further for a tag-out.)
-        let grow = if feed.tag_mark { 1.6 } else { 1.0 };
         tr.scale = Vec2::splat(grow * (0.8 + 0.4 * k));
     }
     for l in feed.points.iter_mut() {

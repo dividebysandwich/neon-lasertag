@@ -1832,8 +1832,16 @@ fn haptics(
                 rumble.both(0.15, 0.08, 0.25);
             }
             // A light tick for each hit on an enemy.
-            SimEvent::Hit { .. } if crate::hud::hit_confirm(e, &game) == Some(false) => {
+            SimEvent::Hit { .. }
+                if crate::hud::hit_confirm(e, &game) == Some(crate::hud::Confirm::Hit) =>
+            {
                 rumble.play(gun, 0.0, 0.02, 0.5);
+            }
+            // A hit that did nothing: a faint one.
+            SimEvent::Immune { .. } | SimEvent::Blocked { .. }
+                if crate::hud::hit_confirm(e, &game).is_some() =>
+            {
+                rumble.play(gun, 0.0, 0.015, 0.12);
             }
             _ => {}
         }

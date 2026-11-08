@@ -569,6 +569,13 @@ pub enum SimEvent {
     /// A bolt hit a shielded player (and did nothing).
     Blocked {
         player: PlayerId,
+        by: PlayerId,
+        pos: Vec3,
+    },
+    /// A bolt hit a player still recovering from a hit or just respawned (and did nothing).
+    Immune {
+        player: PlayerId,
+        by: PlayerId,
         pos: Vec3,
     },
     /// Prism mode: `team`'s prism taken by `player` (from its home or the floor), thrown,
