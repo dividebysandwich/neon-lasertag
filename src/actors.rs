@@ -210,7 +210,7 @@ pub fn spawn_model(
         let mut e = commands.spawn((Mesh3d(mesh.clone()), Transform::IDENTITY, ChildOf(parent)));
         match mat.as_str() {
             "body" => {
-                e.insert(MeshMaterial3d(palette.suit.clone()));
+                e.insert(MeshMaterial3d(palette.avatar.clone()));
             }
             "fur_light" => {
                 e.insert(MeshMaterial3d(palette.fur.clone()));

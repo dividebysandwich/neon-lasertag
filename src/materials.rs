@@ -332,6 +332,9 @@ impl NeonGlobals {
 pub struct Palette {
     pub body: Handle<StandardMaterial>,
     pub suit: Handle<StandardMaterial>,
+    /// The avatars' own dark surfaces: a touch greyer than `suit`, so they don't read as
+    /// pitch black.
+    pub avatar: Handle<StandardMaterial>,
     /// Lighter surfaces of the avatars (muzzles, patches).
     pub fur: Handle<StandardMaterial>,
     /// The whites of the avatars' eyes (a little self-lit, so they read in the dark).
@@ -413,6 +416,11 @@ fn make_palette(
         perceptual_roughness: 0.6,
         ..default()
     });
+    let avatar = std.add(StandardMaterial {
+        base_color: Color::linear_rgb(0.06, 0.06, 0.068),
+        perceptual_roughness: 0.6,
+        ..default()
+    });
     let fur = std.add(StandardMaterial {
         base_color: Color::linear_rgb(0.14, 0.14, 0.16),
         perceptual_roughness: 0.8,
@@ -430,6 +438,7 @@ fn make_palette(
     commands.insert_resource(Palette {
         body,
         suit,
+        avatar,
         fur,
         sclera,
         arena_accent: accents.add(AccentMaterial {

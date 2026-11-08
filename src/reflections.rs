@@ -107,6 +107,7 @@ fn apply(
     for (handle, g) in [
         (&palette.body, BODY),
         (&palette.suit, SUIT),
+        (&palette.avatar, SUIT),
         (&palette.fur, FUR),
     ] {
         if let Some(mut m) = std.get_mut(handle) {
