@@ -3,7 +3,7 @@
 //!
 //!     lt-server [--port 27420] [--name NAME] [--seed N] [--bots 8] [--difficulty normal]
 //!               [--arena small|medium|large|random] [--mode classic|megatarget|prism|infection]
-//!               [--master URL] [--private] [--no-lan]
+//!               [--master URL] [--private] [--no-lan] [--lock-teams]
 
 use std::time::{Duration, Instant};
 
@@ -27,6 +27,8 @@ struct Args {
     private: bool,
     /// Announce the server on the local network.
     lan: bool,
+    /// Nobody changes sides during a match (`Rules::team_switch`).
+    lock_teams: bool,
 }
 
 fn args() -> Args {
@@ -41,6 +43,7 @@ fn args() -> Args {
         master: DEFAULT_MASTER.into(),
         private: false,
         lan: true,
+        lock_teams: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -64,6 +67,7 @@ fn args() -> Args {
             "--master" => a.master = it.next().unwrap_or(a.master),
             "--private" => a.private = true,
             "--no-lan" => a.lan = false,
+            "--lock-teams" => a.lock_teams = true,
             "-h" | "--help" => {
                 println!(
                     "lt-server [--port N] [--name NAME] [--seed N] [--bots N] [--difficulty easy|normal|hard] \
@@ -90,6 +94,7 @@ fn new_match(
     arena: SizeChoice,
     mode: GameMode,
     warmup: bool,
+    lock_teams: bool,
 ) -> (Sim, Bots) {
     let mut sim = Sim::new(
         seed,
@@ -97,6 +102,7 @@ fn new_match(
             arena: arena.pick(rand::random()),
             mode,
             warmup: if warmup { WARMUP } else { 0.0 },
+            team_switch: !lock_teams,
             ..Rules::default()
         },
     );
@@ -116,6 +122,7 @@ fn main() {
         args.arena,
         args.mode,
         true,
+        args.lock_teams,
     );
     let mut server = match Server::listen(args.port, &args.name, seed) {
         Ok(s) => s,
@@ -167,6 +174,7 @@ fn main() {
                     args.arena,
                     args.mode,
                     false,
+                    args.lock_teams,
                 );
                 server.move_to(&mut next_sim, &mut next_bots, &sim);
                 sim = next_sim;
