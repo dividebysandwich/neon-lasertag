@@ -2,7 +2,8 @@
 
     blender -b --factory-startup --python-exit-code 1 --python tools/models/avatars.py
 
-Players are floating parts: a head, a torso and two hands, no neck/arms/legs.
+Players are a head, a torso and two hands, joined by rigid body segments (neck, pelvis, arms,
+legs, boots) that the game poses by IK every frame.
 
 - `head_wolf`, `head_cat`, `head_deer`, `head_fox`, `head_bear`, `head_rabbit`, `head_owl`,
   `head_boar`: faceted low-poly animal heads. Origin at the midpoint between the eyes (the VR
@@ -13,6 +14,8 @@ Players are floating parts: a head, a torso and two hands, no neck/arms/legs.
 - `hand_left`, `hand_right`: gloved hands gripping, origin at the palm centre, fingers along
   -Z, palm facing +X (left) / -X (right). Built separately (mirror images), not mirrored at
   runtime.
+- `neck`, `pelvis`, `upper_arm`, `forearm`, `thigh`, `shin`, `boot`: rigid body segments, each
+  hanging from its joint (the origin) down -Y, front -Z; one mesh serves both sides.
 
 Materials: `body` (near-black), `fur_light` (mid grey: muzzles, cheeks, facial discs so the
 faces read in the dark), `accent` (noses, ear inners, trim; recoloured to the team colour by the
@@ -816,6 +819,126 @@ def mirrored(geo):
 
 
 # ---------------------------------------------------------------------------------------------
+# Body segments: rigid pieces the game poses by IK. Each hangs from its origin (the joint it
+# turns about) down -Y, front -Z, X mirror symmetric; the game stretches it along Y a little.
+
+def sec_at(secs, y):
+    """(half width, half depth, chamfer) of the octagon loft `secs` at height y."""
+    for (ya, ax, az, ac), (yb, bx, bz, bc) in zip(secs, secs[1:]):
+        if yb <= y <= ya:
+            t = (ya - y) / (ya - yb)
+            return ax + (bx - ax) * t, az + (bz - az) * t, ac + (bc - ac) * t
+    raise ValueError("y = %.3f outside the loft" % y)
+
+
+def segment(secs, bands=(), flows=(), flow_w=0.006, front_flow=None):
+    """Octagonal loft through secs = [(y, half width, half depth, chamfer)] top to bottom, with
+    accent bands (y0, y1) and `flow` lines down its sides at the given (y0, y1) (one each side,
+    on the X faces) and optionally one down the front at x = 0."""
+    g = L.Geo()
+    loft(g, [[(x, y, z) for x, z in L.octagon_xz(hx, hz, ch)] for y, hx, hz, ch in secs])
+    for y0, y1 in bands:
+        rings = []
+        for y in (y0, y1):
+            hx, hz, ch = sec_at(secs, y)
+            rings.append([(x, y, z) for x, z in L.octagon_xz(hx + 0.003, hz + 0.003, ch)])
+        loft(g, rings, mat="accent", cap0=None, cap1=None)
+    solid = L.Geo()
+    solid.faces = [f for f in g.faces if f[1] == "body"]
+    for y0, y1 in flows:
+        for s in (-1, 1):
+            ray_strip(g, [solid], [(s * 0.01, y0, 0.0), (s * 0.01, y1, 0.0)],
+                      lambda p, s=s: ((s * 0.4, p[1], 0.0), (-s, 0.0, 0.0)), flow_w, step=0.02)
+    if front_flow:
+        y0, y1 = front_flow
+        ray_strip(g, [solid], [(0.0, y0, 0.0), (0.0, y1, 0.0)],
+                  lambda p: ((0.0, p[1], -0.4), Z), flow_w, step=0.02, mid=True)
+    return g
+
+
+def neck():
+    """From the neck point (the head's pivot) down 0.2 m into the vest's collar."""
+    secs = [(0.03, 0.035, 0.04, 0.012), (-0.03, 0.048, 0.052, 0.016),
+            (-0.17, 0.056, 0.058, 0.018), (-0.235, 0.072, 0.065, 0.022)]
+    return segment(secs, bands=[(-0.16, -0.172)], flows=[(-0.035, -0.15)], flow_w=0.005)
+
+
+def pelvis():
+    """Hips, origin at the top centre (tucked 4 cm up into the vest's hem), hip joints at
+    (+-0.095, -0.12, 0). Round enough at the top to turn inside the hem."""
+    secs = [(0.0, 0.088, 0.074, 0.03), (-0.05, 0.118, 0.084, 0.034),
+            (-0.11, 0.132, 0.09, 0.038), (-0.17, 0.11, 0.08, 0.034), (-0.205, 0.06, 0.052, 0.02)]
+    g = segment(secs, bands=[(-0.055, -0.068)])
+    # Buckle, and light lines down the front from the belt to the crotch.
+    plate(g, (0.0, -0.0615, -0.087), NZ, L.chamfer_rect(-0.022, -0.012, 0.022, 0.012, 0.005),
+          h=0.004, depth=0.006)
+    solid = L.Geo()
+    solid.faces = [f for f in g.faces if f[1] == "body"]
+    for s in (-1, 1):
+        ray_strip(g, [solid], [(s * 0.07, -0.075, 0.0), (s * 0.035, -0.18, 0.0)],
+                  lambda p: ((p[0], p[1], -0.4), Z), 0.005, step=0.01)
+    return g
+
+
+def upper_arm():
+    """Shoulder ball at the origin, the sleeve 0.27 m down to the elbow."""
+    secs = [(0.045, 0.028, 0.028, 0.01), (0.02, 0.052, 0.052, 0.017), (-0.025, 0.058, 0.058, 0.02),
+            (-0.075, 0.048, 0.048, 0.016), (-0.25, 0.04, 0.04, 0.013), (-0.285, 0.032, 0.032, 0.011)]
+    return segment(secs, bands=[(-0.06, -0.072)], flows=[(-0.09, -0.24)], flow_w=0.005)
+
+
+def forearm():
+    """Elbow cap at the origin, a bracer 0.25 m down to the wrist, flattening to slide into the
+    glove's cuff (narrow in X, the glove's palm axis; deep in Z, the glove's -Y)."""
+    secs = [(0.03, 0.028, 0.028, 0.01), (0.0, 0.044, 0.044, 0.015), (-0.05, 0.044, 0.048, 0.016),
+            (-0.17, 0.028, 0.04, 0.011), (-0.265, 0.016, 0.034, 0.007)]
+    return segment(secs, bands=[(-0.04, -0.052)], flows=[(-0.06, -0.17)], flow_w=0.005)
+
+
+def thigh():
+    """Hip ball at the origin, the thigh 0.38 m down to the knee, an accent knee guard."""
+    secs = [(0.05, 0.035, 0.035, 0.012), (0.02, 0.064, 0.064, 0.022), (-0.06, 0.074, 0.074, 0.025),
+            (-0.3, 0.055, 0.058, 0.019), (-0.38, 0.05, 0.052, 0.017), (-0.41, 0.034, 0.034, 0.012)]
+    g = segment(secs, bands=[(-0.07, -0.082)], flows=[(-0.1, -0.3)])
+    plate(g, (0.0, -0.37, -0.052), NZ, L.chamfer_rect(-0.03, -0.035, 0.03, 0.03, 0.012), h=0.006,
+          depth=0.012)
+    return g
+
+
+def shin():
+    """Knee at the origin, the shin 0.37 m down to the ankle, a light line down the guard."""
+    secs = [(0.035, 0.038, 0.038, 0.013), (0.0, 0.054, 0.058, 0.018), (-0.1, 0.057, 0.062, 0.02),
+            (-0.3, 0.042, 0.046, 0.015), (-0.37, 0.04, 0.042, 0.014), (-0.395, 0.03, 0.03, 0.01)]
+    return segment(secs, bands=[(-0.31, -0.322)], front_flow=(-0.05, -0.29))
+
+
+def boot():
+    """Ankle at the origin, sole 0.08 m below, toe 0.17 m forward (-Z), heel 0.06 m back."""
+    g = L.Geo()
+
+    def ring(z, hx, y0, y1, ch):
+        return [(x, y, z) for x, y in L.chamfer_rect(-hx, y0, hx, y1, ch)]
+    loft(g, [ring(0.065, 0.04, -0.072, -0.0, 0.015), ring(0.03, 0.05, -0.072, 0.03, 0.018),
+             ring(-0.06, 0.052, -0.072, 0.0, 0.018), ring(-0.14, 0.045, -0.072, -0.035, 0.014),
+             ring(-0.172, 0.032, -0.07, -0.05, 0.008)])
+    # Ankle collar the shin sinks into.
+    loft(g, [[(x, y, z + 0.01) for x, z in L.octagon_xz(hx, hz, ch)]
+             for y, hx, hz, ch in ((0.045, 0.045, 0.046, 0.015), (-0.02, 0.05, 0.05, 0.017))])
+    # Accent sole, a little proud all round.
+    loft(g, [ring(0.07, 0.044, -0.08, -0.068, 0.006), ring(-0.06, 0.056, -0.08, -0.068, 0.006),
+             ring(-0.178, 0.036, -0.08, -0.068, 0.004)], mat="accent")
+    solid = L.Geo()
+    solid.faces = [f for f in g.faces if f[1] == "body"]
+    ray_strip(g, [solid], [(0.0, 0.0, -0.03), (0.0, 0.0, -0.15)],
+              lambda p: ((0.0, 0.4, p[2]), NY), 0.006, step=0.01, mid=True)
+    return g
+
+
+SEGMENTS = (("neck", neck), ("pelvis", pelvis), ("upper_arm", upper_arm), ("forearm", forearm),
+            ("thigh", thigh), ("shin", shin), ("boot", boot))
+
+
+# ---------------------------------------------------------------------------------------------
 
 def main():
     L.reset_scene()
@@ -830,8 +953,9 @@ def main():
     pieces += [("torso", torso())]
     left = hand_left()
     pieces += [("hand_left", left), ("hand_right", mirrored(left))]
+    pieces += [(name, build()) for name, build in SEGMENTS]
     for name, g in pieces:
-        if name.startswith("head_") or name == "torso":
+        if not name.startswith("hand_"):
             bad = g.mirror_errors()
             if bad:
                 raise RuntimeError("%s is not X mirror symmetric: %s" % (name, bad[:5]))

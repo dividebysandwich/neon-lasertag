@@ -9,8 +9,9 @@ within +-0.025 m, protruding at most 0.02 m beyond them, and whose `body` primit
 fill the bounds. All meshes: NORMAL and TEXCOORD_0 on every primitive, only known material
 names. avatars.glb: the 8 heads, torso and both hands by exact mesh name, only the avatar
 materials, hit_1..3 on the torso, and size sanity (heads within +-0.35 m of the eye point in X/Z
-and at most 0.6 m tall, torso top at y = 0, hands within 0.15 m of the palm centre); every head
-has `eyes` and `eye_glow`, every part `flow`. reload.glb: one mesh `reload_station` inside its
+and at most 0.6 m tall, torso top at y = 0, hands within 0.15 m of the palm centre, body segments
+hanging their length down -Y from the joint); every head has `eyes` and `eye_glow`, every part
+`flow`. reload.glb: one mesh `reload_station` inside its
 2 m cell (|x|, |z| <= 1), on the floor, with nothing between 0.04 m and 2.25 m (walkable).
 Halo materials (`glow`, `eye_glow`, `halo_white`) and `flow` must have UV V within 0..1 and
 `flow` UV U >= 0 (arc length). Exits non-zero on any mismatch.
@@ -191,6 +192,9 @@ def check_model(ck, file, allowed, required, nodes=()):
 
 
 AVATAR_HEADS = ("wolf", "cat", "deer", "fox", "bear", "rabbit", "owl", "boar")
+# Body segments: (name, nominal length down -Y from the joint at the origin).
+AVATAR_SEGMENTS = (("neck", 0.2), ("pelvis", 0.12), ("upper_arm", 0.27), ("forearm", 0.25),
+                   ("thigh", 0.38), ("shin", 0.37), ("boot", 0.08))
 
 
 def check_avatars(ck):
@@ -207,7 +211,8 @@ def check_avatars(ck):
     used = {m["name"]: {mats[p["material"]] for p in m["primitives"] if "material" in p}
             for m in gltf["meshes"]}
     heads = ["head_" + h for h in AVATAR_HEADS]
-    for name in heads + ["torso", "hand_left", "hand_right"]:
+    segments = [n for n, _ in AVATAR_SEGMENTS]
+    for name in heads + ["torso", "hand_left", "hand_right"] + segments:
         if name not in meshes:
             ck.err("avatars.glb: no mesh named %r" % name)
             continue
@@ -220,6 +225,7 @@ def check_avatars(ck):
             ck.err("avatars.glb/%s: %s" % (name, msg))
             ok = False
         need = {"body", "accent", "flow"}
+        seg = dict(AVATAR_SEGMENTS).get(name)
         if name == "torso":
             need |= {"hit_1", "hit_2", "hit_3"}
         elif name.startswith("head_"):
@@ -238,13 +244,18 @@ def check_avatars(ck):
                 bad("top at y = %.3f (want 0, the neck point)" % mx[1])
             if mn[1] > -0.3:
                 bad("does not hang down from the origin")
+        elif seg is not None:
+            if not (mn[1] < -seg + 0.03 and mx[1] < 0.06):
+                bad("does not hang %.2f m down -Y from its joint" % seg)
+            if max(abs(mn[0]), mx[0]) > 0.14 or max(abs(mn[2]), mx[2]) > 0.2:
+                bad("wider than a body segment")
         else:
             if max(max(abs(a), abs(b)) for a, b in zip(mn, mx)) > 0.15:
                 bad("extends more than 0.15 m from the palm centre")
         print("%-4s avatars.glb/%-12s %4d tris, extent %s .. %s, materials %s" % (
             "ok" if ok else "BAD", name, tris, [round(v, 3) for v in mn],
             [round(v, 3) for v in mx], ",".join(sorted(used[name]))))
-    extra = set(meshes) - set(heads) - {"torso", "hand_left", "hand_right"}
+    extra = set(meshes) - set(heads) - set(segments) - {"torso", "hand_left", "hand_right"}
     if extra:
         ck.err("avatars.glb: unexpected meshes %s" % sorted(extra))
 
