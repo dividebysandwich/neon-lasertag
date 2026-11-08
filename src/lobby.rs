@@ -364,7 +364,9 @@ fn spawn_squad(commands: &mut Commands, models: &Models, palette: &Palette) {
                 .id();
             let animal = &models.heads[(i * 7 + 3) % models.heads.len()];
             spawn_model(commands, grown, &animal.model, palette, team);
-            crate::eyes::spawn_eyes(commands, grown, animal, models, palette, team, i as u64);
+            crate::eyes::spawn_eyes(
+                commands, grown, animal, models, palette, team, i as u64, None,
+            );
         }
         // The left hand hanging loose, fingers down.
         let gloves = [

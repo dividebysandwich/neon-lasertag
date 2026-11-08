@@ -77,6 +77,7 @@ impl EyeRig {
 
 /// Gives the head model at `head` (an entity in the head's frame) its eyes, animated from now
 /// on; nothing for a model without eye frames.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_eyes(
     commands: &mut Commands,
     head: Entity,
@@ -85,6 +86,7 @@ pub fn spawn_eyes(
     palette: &Palette,
     team: Option<lt_sim::Team>,
     seed: u64,
+    mut ghost: Option<crate::actors::Ghost>,
 ) {
     let Some(frames) = animal.eyes else {
         return;
@@ -103,11 +105,19 @@ pub fn spawn_eyes(
     rig.saccade = rig.range(SACCADE);
     rig.blink_in = rig.range(BLINK_EVERY) * 0.5;
     for frame in frames {
-        let part = |commands: &mut Commands, model| {
+        // (A cloaking avatar's eyes are spawned twice too, see `actors::spawn_dual`.)
+        let mut part = |commands: &mut Commands, model| {
             let e = commands
                 .spawn((frame, Visibility::default(), ChildOf(head)))
                 .id();
-            crate::actors::spawn_model(commands, e, model, palette, team);
+            match ghost.as_mut() {
+                Some(g) => {
+                    crate::actors::spawn_dual(commands, e, model, palette, team, g.0, g.1, g.2);
+                }
+                None => {
+                    crate::actors::spawn_model(commands, e, model, palette, team);
+                }
+            }
             e
         };
         let ball = part(commands, animal.eyeball.as_ref().unwrap_or(&models.eyeball));

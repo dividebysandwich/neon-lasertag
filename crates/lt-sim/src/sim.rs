@@ -41,7 +41,7 @@ pub const HISTORY: usize = 60;
 /// A cloaked player can't be seen from further than `CLOAK_FAR` (m), and is see-through, fading
 /// in to `CLOAK_NEAR` (the bots and turrets see one closer than `CLOAK_NEAR`).
 pub const CLOAK_NEAR: f32 = 3.0;
-pub const CLOAK_FAR: f32 = 7.0;
+pub const CLOAK_FAR: f32 = 9.0;
 /// (600 ms: also the oldest moment a client's hit claim may be about.)
 pub const MAX_LAG: u64 = 36;
 

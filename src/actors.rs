@@ -248,10 +248,17 @@ pub fn spawn_model(
 const CLOAK_TINT: Vec3 = Vec3::new(0.6, 0.75, 1.0);
 const CLOAK_GLOW: f32 = 2.2;
 
+/// A cloakable avatar's shimmer material and its solid / ghost part lists (see `spawn_dual`).
+pub type Ghost<'a> = (
+    &'a Handle<GlowMaterial>,
+    &'a mut Vec<Entity>,
+    &'a mut Vec<Entity>,
+);
+
 /// Spawns a model under `parent` twice (see `AvatarParts::solid`); returns the parts named
 /// `hit_N` with their N.
 #[allow(clippy::too_many_arguments)]
-fn spawn_dual(
+pub fn spawn_dual(
     commands: &mut Commands,
     parent: Entity,
     model: &Model,
@@ -349,7 +356,16 @@ fn spawn_avatar(
         &mut solid,
         &mut ghost,
     );
-    crate::eyes::spawn_eyes(commands, grown, animal, models, palette, team, p.id as u64);
+    crate::eyes::spawn_eyes(
+        commands,
+        grown,
+        animal,
+        models,
+        palette,
+        team,
+        p.id as u64,
+        Some((&ghost_mat, &mut solid, &mut ghost)),
+    );
     let hands = [0, 1].map(|i| {
         let h = commands
             .spawn((Transform::IDENTITY, Visibility::default(), ChildOf(root)))
