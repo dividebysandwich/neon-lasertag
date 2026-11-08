@@ -964,7 +964,20 @@ pub struct Bot {
     alarm_seen: f64,
     /// Megatarget plan: the secondary target going for and the node to shoot it from.
     mega_spot: Option<(usize, usize)>,
+    /// Jumps and dashes made (`PlayerCmd::jumps`, `PlayerCmd::dashes`), and the last bolt
+    /// coming at it that it thought about dodging.
+    jumps: u32,
+    dashes: u32,
+    dodge_seen: Option<u32>,
 }
+
+/// How likely a bot of skill 1 dashes out of a bolt's way (falling off with the skill squared),
+/// and how often (per second) it hops in a fight.
+const DODGE: f32 = 0.7;
+const HOPS: f32 = 0.4;
+/// How far ahead (m) a bolt coming at a bot is noticed, and how near its line has to pass.
+const DODGE_SEE: f32 = 12.0;
+const DODGE_NEAR: f32 = 0.8;
 
 /// The original name of the bot (the client's autopilot uses it).
 pub type WanderBot = Bot;
@@ -1033,6 +1046,9 @@ impl Bot {
             aim: Vec3::NEG_Z,
             shot_err: (0.0, 0.0),
             fire_prev: false,
+            jumps: 0,
+            dashes: 0,
+            dodge_seen: None,
             strafe: 1.0,
             peek: None,
             peek_t: 3.0,
@@ -2489,6 +2505,38 @@ impl Controller for Bot {
             self.peek = (t > TICK).then_some((d, t - TICK));
         }
 
+        // Dodging (the better, the more): a dash sideways out of a bolt's way, a hop now and then.
+        if target.is_some() && doorway.is_none() && p.vy == 0.0 && p.air == Vec2::ZERO {
+            let chest = p.chest();
+            let incoming = sim.bolts.iter().find(|b| {
+                let v = b.vel.normalize_or_zero();
+                let to = chest - b.pos;
+                let along = to.dot(v);
+                b.team.is_some_and(|t| t != p.team)
+                    && along > 0.0
+                    && along < DODGE_SEE
+                    && (to - v * along).length() < DODGE_NEAR
+            });
+            if let Some(b) = incoming
+                && self.dodge_seen != Some(b.id)
+            {
+                self.dodge_seen = Some(b.id);
+                let across = Vec2::new(-b.vel.z, b.vel.x).normalize_or_zero() * self.strafe;
+                let to = feet + Vec3::new(across.x, 0.0, across.y) * 3.0;
+                if p.moves.dash_ready <= 0.0
+                    && across != Vec2::ZERO
+                    && walkable(world, feet, to)
+                    && sim.level.spawn_at(to).is_none_or(|t| t == p.team)
+                    && self.rng.random::<f32>() < DODGE * self.skill * self.skill
+                {
+                    move_dir = across;
+                    self.dashes = self.dashes.wrapping_add(1);
+                }
+            } else if self.rng.random::<f32>() < TICK * HOPS * self.skill {
+                self.jumps = self.jumps.wrapping_add(1);
+            }
+        }
+
         // Aiming and shooting.
         let eye = p.eye();
         let body = Quat::from_rotation_y(yaw_of(Vec3::new(self.aim.x, 0.0, self.aim.z)));
@@ -2622,8 +2670,11 @@ impl Controller for Bot {
 }
 
 impl Bot {
-    /// Fills in the body, head, hands and blaster from the current aim.
+    /// Fills in the body, head, hands and blaster from the current aim (and the jumps and
+    /// dashes made: counted, so in every command).
     fn pose(&self, mut cmd: PlayerCmd) -> PlayerCmd {
+        cmd.jumps = self.jumps;
+        cmd.dashes = self.dashes;
         let yaw = yaw_of(Vec3::new(self.aim.x, 0.0, self.aim.z));
         let body = Quat::from_rotation_y(yaw);
         let look = look_rot(self.aim);
@@ -2824,6 +2875,8 @@ mod tests {
         pickups: u32,
         grenades: u32,
         launches: u32,
+        dashes: u32,
+        jumps: u32,
         zaps: u32,
         moved: f32,
     }
@@ -2874,6 +2927,8 @@ mod tests {
                     SimEvent::PickedUp { .. } => s.pickups += 1,
                     SimEvent::GrenadeThrown { .. } => s.grenades += 1,
                     SimEvent::Launched { .. } => s.launches += 1,
+                    SimEvent::Dashed { .. } => s.dashes += 1,
+                    SimEvent::Jumped { .. } => s.jumps += 1,
                     SimEvent::GateZap { .. } => s.zaps += 1,
                     _ => {}
                 }
@@ -2906,6 +2961,7 @@ mod tests {
         assert!(s.fired > 20, "bots fire: {s:?}");
         assert!(s.hits > 3, "bots hit: {s:?}");
         assert!(s.moved > 200.0, "bots move: {s:?}");
+        assert!(s.dashes > 0 && s.jumps > 0, "bots dodge: {s:?}");
     }
 
     #[test]
