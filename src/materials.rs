@@ -334,6 +334,8 @@ pub struct Palette {
     pub suit: Handle<StandardMaterial>,
     /// Lighter surfaces of the avatars (muzzles, patches).
     pub fur: Handle<StandardMaterial>,
+    /// The whites of the avatars' eyes (a little self-lit, so they read in the dark).
+    pub sclera: Handle<StandardMaterial>,
     pub arena_accent: Handle<AccentMaterial>,
     pub arena_glow: Handle<GlowMaterial>,
     /// The border walls around the arena: a fixed colour, turned slowly through the rainbow and
@@ -416,12 +418,20 @@ fn make_palette(
         perceptual_roughness: 0.8,
         ..default()
     });
+    let sclera = std.add(StandardMaterial {
+        base_color: Color::linear_rgb(0.62, 0.62, 0.66),
+        emissive: LinearRgba::new(0.05, 0.05, 0.06, 1.0),
+        perceptual_roughness: 0.35,
+        reflectance: 0.5,
+        ..default()
+    });
     let fixed = |c: Vec3, i: f32| NeonUniform::fixed(c, i);
     let colors = [RED, BLUE, WHITE];
     commands.insert_resource(Palette {
         body,
         suit,
         fur,
+        sclera,
         arena_accent: accents.add(AccentMaterial {
             overlay: false,
             neon: NeonUniform::team_zoned(3.0).dimmable(),
@@ -459,7 +469,7 @@ fn make_palette(
         eyes: colors.map(|c| {
             accents.add(AccentMaterial {
                 overlay: false,
-                neon: fixed(c, 7.0),
+                neon: fixed(c, 4.0),
             })
         }),
         flow: colors.map(|c| {

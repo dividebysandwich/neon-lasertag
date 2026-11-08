@@ -7,10 +7,11 @@ kit.glb: every piece of tools/models/kit_dims.json is a mesh named exactly the p
 POSITION extent (union over primitives, read from the binary buffer) equals the piece bounds
 within +-0.025 m, protruding at most 0.02 m beyond them, and whose `body` primitives alone also
 fill the bounds. All meshes: NORMAL and TEXCOORD_0 on every primitive, only known material
-names. avatars.glb: the 8 heads, torso and both hands by exact mesh name, only the avatar
+names. avatars.glb: the 9 heads (each with its two eye nodes), the shared eyeball and eyelid,
+torso and both hands by exact mesh name, only the avatar
 materials, hit_1..3 on the torso, and size sanity (heads within +-0.35 m of the eye point in X/Z
 and at most 0.6 m tall, torso top at y = 0, hands within 0.15 m of the palm centre, body segments
-hanging their length down -Y from the joint); every head has `eyes` and `eye_glow`, every part
+hanging their length down -Y from the joint); the eyeball has `eyes` and `sclera`, every part
 `flow`. reload.glb: one mesh `reload_station` inside its
 2 m cell (|x|, |z| <= 1), on the floor, with nothing between 0.04 m and 2.25 m (walkable).
 Halo materials (`glow`, `eye_glow`, `halo_white`) and `flow` must have UV V within 0..1 and
@@ -191,7 +192,7 @@ def check_model(ck, file, allowed, required, nodes=()):
               [round(v, 3) for v in mn], [round(v, 3) for v in mx]))
 
 
-AVATAR_HEADS = ("wolf", "cat", "deer", "fox", "bear", "rabbit", "owl", "boar")
+AVATAR_HEADS = ("wolf", "cat", "deer", "fox", "bear", "rabbit", "owl", "boar", "dragon")
 # Body segments: (name, nominal length down -Y from the joint at the origin).
 AVATAR_SEGMENTS = (("neck", 0.2), ("pelvis", 0.12), ("upper_arm", 0.27), ("forearm", 0.25),
                    ("thigh", 0.38), ("shin", 0.37), ("boot", 0.08))
@@ -204,7 +205,7 @@ def check_avatars(ck):
         return
     gltf, binary = load_glb(path)
     allowed = {"body", "fur_light", "accent", "glow", "hit_1", "hit_2", "hit_3", "eyes",
-               "eye_glow", "flow"}
+               "eye_glow", "flow", "sclera", "glow_white"}
     meshes = check_common(ck, "avatars.glb", gltf, binary, allowed)
     check_uvs(ck, "avatars.glb", gltf, binary)
     mats = [m.get("name") for m in gltf.get("materials", [])]
@@ -212,7 +213,9 @@ def check_avatars(ck):
             for m in gltf["meshes"]}
     heads = ["head_" + h for h in AVATAR_HEADS]
     segments = [n for n, _ in AVATAR_SEGMENTS]
-    for name in heads + ["torso", "hand_left", "hand_right"] + segments:
+    nodes = {n.get("name"): n for n in gltf.get("nodes", [])}
+    eyeballs = ["eyeball"] + sorted(m for m in meshes if m.startswith("eyeball_"))
+    for name in heads + eyeballs + ["eyelid", "torso", "hand_left", "hand_right"] + segments:
         if name not in meshes:
             ck.err("avatars.glb: no mesh named %r" % name)
             continue
@@ -228,8 +231,10 @@ def check_avatars(ck):
         seg = dict(AVATAR_SEGMENTS).get(name)
         if name == "torso":
             need |= {"hit_1", "hit_2", "hit_3"}
-        elif name.startswith("head_"):
-            need |= {"eyes", "eye_glow"}
+        elif name.startswith("eyeball"):
+            need = {"body", "eyes", "sclera"}
+        elif name == "eyelid":
+            need = {"body", "accent"}
         for m in sorted(need - used[name]):
             bad("material %r not used" % m)
         if name.startswith("head_"):
@@ -239,6 +244,22 @@ def check_avatars(ck):
                 bad("%.3f m tall (max 0.6)" % (mx[1] - mn[1]))
             if not (mn[1] < 0 < mx[1] and mn[2] < 0 < mx[2]):
                 bad("origin (eye point) is not inside the head's extent")
+            # The eye frames: one each side, within the head, 2.5-6 cm eyeballs, looking ahead.
+            for side, sx in (("l", -1.0), ("r", 1.0)):
+                node = nodes.get("%s_eye_%s" % (name, side))
+                if node is None:
+                    bad("no node %s_eye_%s" % (name, side))
+                    continue
+                t = node.get("translation", [0, 0, 0])
+                sc = node.get("scale", [1, 1, 1])
+                if t[0] * sx < 0.02 or t[0] * sx > 0.1 or t[2] > 0.0 or abs(t[1]) > 0.001:
+                    bad("eye %s at %s (want it beside the origin, ahead of it)" % (side, t))
+                if max(sc) - min(sc) > 1e-5 or not 0.025 <= sc[0] <= 0.06:
+                    bad("eye %s scale %s (want a uniform 2.5-6 cm radius)" % (side, sc))
+        elif name.startswith("eyeball") or name == "eyelid":
+            lim = 1.13 if name == "eyelid" else 1.03
+            if max(max(abs(a), abs(b)) for a, b in zip(mn, mx)) > lim:
+                bad("extends more than %.2f from the eye's centre (unit radius)" % lim)
         elif name == "torso":
             if abs(mx[1]) > 0.03:
                 bad("top at y = %.3f (want 0, the neck point)" % mx[1])
@@ -255,7 +276,8 @@ def check_avatars(ck):
         print("%-4s avatars.glb/%-12s %4d tris, extent %s .. %s, materials %s" % (
             "ok" if ok else "BAD", name, tris, [round(v, 3) for v in mn],
             [round(v, 3) for v in mx], ",".join(sorted(used[name]))))
-    extra = set(meshes) - set(heads) - set(segments) - {"torso", "hand_left", "hand_right"}
+    extra = set(meshes) - set(heads) - set(segments) - set(eyeballs) - {
+        "torso", "hand_left", "hand_right", "eyelid"}
     if extra:
         ck.err("avatars.glb: unexpected meshes %s" % sorted(extra))
 

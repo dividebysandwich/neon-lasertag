@@ -200,6 +200,9 @@ pub fn spawn_model(
             "fur_light" => {
                 e.insert(MeshMaterial3d(palette.fur.clone()));
             }
+            "sclera" => {
+                e.insert(MeshMaterial3d(palette.sclera.clone()));
+            }
             "glow" | "eye_glow" => {
                 e.insert(MeshMaterial3d::<GlowMaterial>(palette.glow_for(team)));
             }
@@ -322,8 +325,16 @@ fn spawn_avatar(
         ))
         .id();
     spawn_dual(
-        commands, grown, animal, palette, team, &ghost_mat, &mut solid, &mut ghost,
+        commands,
+        grown,
+        &animal.model,
+        palette,
+        team,
+        &ghost_mat,
+        &mut solid,
+        &mut ghost,
     );
+    crate::eyes::spawn_eyes(commands, grown, animal, models, palette, team, p.id as u64);
     let hands = [0, 1].map(|i| {
         let h = commands
             .spawn((Transform::IDENTITY, Visibility::default(), ChildOf(root)))

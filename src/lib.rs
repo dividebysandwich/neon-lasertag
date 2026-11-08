@@ -24,6 +24,7 @@ pub mod assets;
 pub mod audio;
 pub mod desktop;
 pub mod endscreen;
+pub mod eyes;
 pub mod features;
 pub mod game;
 #[cfg(all(feature = "glvr", target_os = "linux"))]
@@ -336,6 +337,7 @@ pub fn run() {
         game::GamePlugin,
         menu::MenuModelPlugin,
         actors::ActorsPlugin,
+        eyes::EyesPlugin,
         audio::SoundPlugin,
         sevenseg::ScoreboardPlugin,
         music::MusicPlugin,
