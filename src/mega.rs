@@ -244,26 +244,33 @@ fn spawn_core(
     // Chevrons climbing the inside walls: columns between the doorways, staggered.
     let chevron = meshes.add(crate::targets::chevron());
     let climb = accent(accents, CORE, 6.0);
-    let (a, b) = m.room;
     let inset = 0.06;
-    // Columns at x (or z) = -3, -1, 1, 3 on every wall, but not in a doorway.
+    // Columns every 2 m round the inside of the walls, but not in a doorway.
     let in_doorway = |p: Vec3| {
-        m.shields
-            .iter()
-            .any(|s| (p.z - s.min.z).abs() < 0.5 && p.x > s.min.x - 0.3 && p.x < s.max.x + 0.3)
+        m.shields.iter().any(|s| {
+            let c = (s.min + s.max) / 2.0;
+            Vec2::new(p.x - c.x, p.z - c.z).length() < (s.max.x - s.min.x) / 2.0 + 0.5
+        })
     };
+    let n = m.inner.len();
+    let edge = |i: usize| (m.inner[i], m.inner[(i + 1) % n]);
+    let perimeter: f32 = (0..n).map(|i| edge(i).0.distance(edge(i).1)).sum();
     let mut columns: Vec<Vec3> = Vec::new();
-    for k in 0..4 {
-        let u = -3.0 + 2.0 * k as f32;
-        for z in [b.z - inset, a.z + inset] {
-            let p = Vec3::new(u, 0.0, z);
+    let mut along = 1.0;
+    let mut start = 0.0;
+    for i in 0..n {
+        let (a, b) = edge(i);
+        let len = a.distance(b);
+        while along < start + len && along < perimeter {
+            let e = (b - a) / len;
+            let q = a + e * (along - start) + Vec2::new(-e.y, e.x) * inset;
+            let p = Vec3::new(q.x, 0.0, q.y);
             if !in_doorway(p) {
                 columns.push(p);
             }
+            along += 2.0;
         }
-        for x in [b.x - inset, a.x + inset] {
-            columns.push(Vec3::new(x, 0.0, u));
-        }
+        start += len;
     }
     let top = ceiling - 0.4;
     for (i, p) in columns.into_iter().enumerate() {
@@ -806,16 +813,18 @@ fn animate(
     }
 }
 
-/// The way into the room from a point on its wall.
+/// The way into the room from a point on its wall: away from the nearest side of its inside.
 fn facing_into(p: Vec3, m: &Mega) -> Vec3 {
-    let (a, b) = m.room;
-    let d = [
-        (p.x - a.x, Vec3::X),
-        (b.x - p.x, Vec3::NEG_X),
-        (p.z - a.z, Vec3::Z),
-        (b.z - p.z, Vec3::NEG_Z),
-    ];
-    d.iter()
+    let n = m.inner.len();
+    let q = Vec2::new(p.x, p.z);
+    (0..n)
+        .map(|i| {
+            let (a, b) = (m.inner[i], m.inner[(i + 1) % n]);
+            let e = (b - a).normalize_or_zero();
+            let t = (q - a).dot(b - a) / (b - a).length_squared().max(1e-6);
+            let d = q.distance(a + (b - a) * t.clamp(0.0, 1.0));
+            (d, Vec3::new(-e.y, 0.0, e.x))
+        })
         .min_by(|x, y| x.0.total_cmp(&y.0))
         .map_or(Vec3::Z, |d| d.1)
 }

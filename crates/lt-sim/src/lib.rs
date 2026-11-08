@@ -10,6 +10,7 @@ pub mod level;
 pub mod rules;
 pub mod shot;
 pub mod sim;
+pub mod structures;
 pub mod types;
 
 pub use rules::Rules;

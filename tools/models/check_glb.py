@@ -15,7 +15,11 @@ hanging their length down -Y from the joint); the eyeball has `eyes` and `sclera
 `flow`. reload.glb: one mesh `reload_station` inside its
 2 m cell (|x|, |z| <= 1), on the floor, with nothing between 0.04 m and 2.25 m (walkable).
 Halo materials (`glow`, `eye_glow`, `halo_white`) and `flow` must have UV V within 0..1 and
-`flow` UV U >= 0 (arc length). Exits non-zero on any mismatch.
+`flow` UV U >= 0 (arc length). structures.glb: every structure of tools/models/structures.json
+is a mesh by its name whose body fills the solids' bounds (x, z within +-0.025 m, standing on
+the floor up to its highest solid) and whose accents stand at most 0.02 m (lamps: their
+housings, 0.5 m) beyond them; only `body`, `accent`, `glow` and `lamp`. Exits non-zero on any
+mismatch.
 """
 
 import json
@@ -316,6 +320,43 @@ def check_reload(ck):
             [round(v, 3) for v in mx], ",".join(sorted(used))))
 
 
+def check_structures(ck):
+    data = json.load(open(os.path.join(HERE, "structures.json")))
+    path = os.path.join(ROOT, "assets/models/structures.glb")
+    if not os.path.exists(path):
+        ck.err("structures.glb missing")
+        return
+    gltf, binary = load_glb(path)
+    meshes = check_common(ck, "structures", gltf, binary, {"body", "accent", "glow", "lamp"})
+    check_uvs(ck, "structures", gltf, binary)
+    for name, spec in data.items():
+        if name not in meshes:
+            ck.err("structures: no mesh named %r" % name)
+            continue
+        pts, body, tris = meshes[name]
+        corners = [(x, s["y"][0], z) for s in spec["solids"] for x, z in s["poly"]]
+        corners += [(x, s["y"][1], z) for s in spec["solids"] for x, z in s["poly"]]
+        want_mn, want_mx = extent(corners)
+        ok = True
+        bmn, bmx = extent(body)
+        for ax in range(3):
+            if abs(bmn[ax] - want_mn[ax]) > TOL or abs(bmx[ax] - want_mx[ax]) > TOL:
+                # (Lamp housings are body too, above the parapets they stand on.)
+                if not (ax == 1 and spec["lamps"] and bmx[1] <= want_mx[1] + 0.5):
+                    ck.err("structures/%s: body extent on %s %.3f..%.3f vs solids %.3f..%.3f"
+                           % (name, "xyz"[ax], bmn[ax], bmx[ax], want_mn[ax], want_mx[ax]))
+                    ok = False
+        mn, mx = extent(pts)
+        slack = 0.5 if spec["lamps"] else PROUD
+        if any(mn[ax] < want_mn[ax] - slack or mx[ax] > want_mx[ax] + slack for ax in range(3)):
+            ck.err("structures/%s: accents stand out of its solids (%s .. %s)" % (name, mn, mx))
+            ok = False
+        print("%-4s structures/%-14s %6d tris" % ("ok" if ok else "BAD", name, tris))
+    extra = set(meshes) - set(data)
+    if extra:
+        ck.err("structures.glb: unexpected meshes %s" % sorted(extra))
+
+
 def main():
     ck = Checker()
     check_kit(ck)
@@ -324,6 +365,7 @@ def main():
     check_model(ck, "grenade.glb", {"body", "glow_white", "glow"}, ("body", "glow_white"))
     check_avatars(ck)
     check_reload(ck)
+    check_structures(ck)
     check_model(ck, "powerups.glb", {"body", "accent", "hit_1", "hit_2", "hit_3", "muzzle"},
                 ("body", "accent", "hit_1", "hit_2", "hit_3", "muzzle"), nodes=("shotgun_muzzle",))
     if ck.errors:

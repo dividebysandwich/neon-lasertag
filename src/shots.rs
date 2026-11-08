@@ -525,10 +525,31 @@ mod tests {
         let b = sim.add_player("b", Some(Team::Blue), false).unwrap();
         sim.players[0].client_hits = true;
         let world = sim.level.world();
+        // (With the doors where they are while the shot flies.)
+        let worlds: Vec<_> = [0, 60, 120]
+            .map(|t| sim.level.world_at(sim.tick + t))
+            .into_iter()
+            .collect();
         let nav = &sim.level.nav;
         let open: Vec<Vec3> = (0..nav.pos.len())
             // (Off the spawn pads: the enemy's tag out.)
             .filter(|&i| nav.valid[i] && sim.level.spawn_at(nav.pos[i]).is_none())
+            // (Away from the bases' walls and gates.)
+            .filter(|&i| {
+                Team::ALL
+                    .iter()
+                    .all(|t| sim.level.base_centre(*t).distance(nav.pos[i]) > 6.0)
+            })
+            // (Nowhere a sliding panel would push the players about.)
+            .filter(|&i| {
+                let dm = sim.level.dims();
+                dm.cell_at(nav.pos[i]).is_some_and(|(x, z)| {
+                    (z.saturating_sub(1)..=(z + 1).min(dm.h - 1)).all(|zz| {
+                        (x.saturating_sub(1)..=(x + 1).min(dm.w - 1))
+                            .all(|xx| !sim.level.on_track(xx, zz))
+                    })
+                })
+            })
             .map(|i| nav.pos[i])
             .collect();
         let (p, q) = open
@@ -538,8 +559,11 @@ mod tests {
                 let d = p.distance(*q);
                 (3.5..5.0).contains(&d)
                     && (p.y - q.y).abs() < 0.01
-                    && world.clear(*p + Vec3::Y * EYE, *q + Vec3::Y * 1.2)
-                    && world.clear(*p + Vec3::Y * 1.4, *q + Vec3::Y * 1.4)
+                    && worlds.iter().all(|w| {
+                        w.clear(*p + Vec3::Y * EYE, *q + Vec3::Y * 1.2)
+                            && w.clear(*p + Vec3::Y * 1.4, *q + Vec3::Y * 1.4)
+                            && w.clear(*p + Vec3::Y * 1.45, *q + Vec3::Y * 1.0)
+                    })
             })
             .expect("an open line");
         sim.teleport(a, p, lt_sim::sim::yaw_of(q - p));

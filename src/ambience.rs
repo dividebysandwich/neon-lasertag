@@ -4,7 +4,9 @@
 //! - faint shafts of light falling through the holes in the upper floor, in the colour of the
 //!   zone below, swelling a little with the music's bass;
 //! - faint haze lying on the floor in slowly drifting patches (`NeonUniform::haze`);
-//! - glowing motes floating in the air, in a few merged meshes drifting as a whole.
+//! - glowing motes floating in the air, in a few merged meshes drifting as a whole;
+//! - the structures' spotlights: a soft cone of light from each lens, tilted down at the
+//!   arena and sweeping slowly to and fro.
 //!
 //! Everything is made of the neon materials, so the foveated GL renderer draws it too, and kept
 //! to a handful of draws.
@@ -28,7 +30,7 @@ impl Plugin for AmbiencePlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            (animate, place_movers.run_if(resource_exists::<Game>)),
+            (animate, sweep, place_movers.run_if(resource_exists::<Game>)),
         );
     }
 }
@@ -51,6 +53,22 @@ struct Drift {
     phase: f32,
     spin: f32,
 }
+
+/// A structure's spotlight beam: it looks along `dir` (level) tilted down by `tilt`
+/// (radians), turned to and fro about the vertical by up to `swing` at `rate` Hz.
+#[derive(Component)]
+struct Spotlight {
+    dir: Vec3,
+    tilt: f32,
+    swing: f32,
+    rate: f32,
+    phase: f32,
+}
+
+/// Spotlights: the beam's intensity, how far down they look and how far they swing.
+const SPOT: f32 = 0.32;
+const SPOT_TILT: f32 = 0.6;
+const SPOT_SWING: f32 = 0.7;
 
 const STATION_COLUMN: f32 = 0.5;
 const STATION_FLOOR: f32 = 0.9;
@@ -297,6 +315,38 @@ pub fn spawn(
         add(commands, m, mat, Some(b));
     }
 
+    // The structures' spotlights: a beam from each lens down to the floor, sweeping.
+    let spot_mat = glows.add(GlowMaterial {
+        overlay: false,
+        neon: NeonUniform::fixed(WHITE * 0.9 + Vec3::new(0.0, 0.05, 0.1), SPOT)
+            .volume()
+            .dimmable(),
+    });
+    let mut k = 0;
+    for p in &level.grid.structures {
+        for lamp in p.lamps() {
+            // The lens: in front of the housing on its post (tools/models/structures.py).
+            let lens = lamp.pos + Vec3::Y * 0.28 + lamp.dir * 0.17;
+            let len = (lens.y / SPOT_TILT.sin()).max(3.0) * 1.05;
+            let mut beam = MeshData::default();
+            cone(&mut beam, Vec3::ZERO, Vec3::Y, len, 0.1, len * 0.16, 16);
+            commands.spawn((
+                ArenaPart,
+                Mesh3d(meshes.add(beam.to_mesh())),
+                MeshMaterial3d(spot_mat.clone()),
+                Transform::from_translation(lens),
+                Spotlight {
+                    dir: lamp.dir,
+                    tilt: SPOT_TILT,
+                    swing: SPOT_SWING,
+                    rate: 0.05 + 0.015 * (k % 3) as f32,
+                    phase: k as f32 * 1.7,
+                },
+            ));
+            k += 1;
+        }
+    }
+
     // Motes: a few groups scattered through the air, each drifting as a whole.
     let mut rng = level.seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
     let mut rand = move || {
@@ -357,6 +407,16 @@ fn animate(
             (t * 0.04 + d.phase).cos() * 0.8,
         );
         tr.rotation = Quat::from_rotation_y(t * d.spin + d.phase);
+    }
+}
+
+fn sweep(time: Res<Time>, mut q: Query<(&Spotlight, &mut Transform)>) {
+    let t = time.elapsed_secs_wrapped();
+    for (s, mut tf) in &mut q {
+        let yaw = s.swing * (t * s.rate * TAU + s.phase).sin();
+        let level = Quat::from_rotation_y(yaw) * s.dir;
+        let look = level * s.tilt.cos() - Vec3::Y * s.tilt.sin();
+        tf.rotation = Quat::from_rotation_arc(Vec3::Y, look.normalize_or(Vec3::NEG_Y));
     }
 }
 

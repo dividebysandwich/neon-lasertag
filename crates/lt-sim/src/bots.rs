@@ -718,6 +718,15 @@ impl BotGraph {
                 }
             }
         }
+        // The structures' nodes (after the grid's).
+        for n in 2 * dm.cells()..self.pos.len() {
+            let p = self.pos[n];
+            let dy = (p.y - feet.y).abs();
+            let flat = Vec2::new(p.x - feet.x, p.z - feet.z).length();
+            if self.valid[n] && dy < 1.6 && flat < 2.5 {
+                cands.push((flat + dy * 2.0, n));
+            }
+        }
         cands.sort_by(|a, b| a.0.total_cmp(&b.0));
         cands
             .iter()

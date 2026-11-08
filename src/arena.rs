@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 use lt_sim::kit::{self, PieceKind, Shape};
 use lt_sim::level::Level;
+use lt_sim::structures::StructKind;
 
 use crate::assets::{MeshData, load_glb};
 use crate::materials::{BLUE, Palette, RED, WHITE, ZONE_COLORS};
@@ -28,6 +29,8 @@ pub struct Kit {
     pub shapes: HashMap<PieceKind, Vec<Shape3>>,
     /// Each piece's ceiling bands (material `CEILING`), one per face.
     pub ceiling: HashMap<PieceKind, Vec<MeshData>>,
+    /// The structures (assets/models/structures.glb): material name → triangles.
+    pub structures: HashMap<StructKind, HashMap<String, MeshData>>,
 }
 
 /// The material of the bands where an upper floor's underside meets a wall face (the slab
@@ -173,8 +176,67 @@ impl Kit {
             let ceiling = kit.pieces[&k].get(CEILING).map(islands).unwrap_or_default();
             kit.ceiling.insert(k, ceiling);
         }
+        match load_glb("models/structures.glb") {
+            Ok(f) => {
+                for k in StructKind::ALL {
+                    match f.meshes.get(k.name()) {
+                        Some(m) => {
+                            kit.structures.insert(k, m.clone());
+                        }
+                        None => warn!("structures.glb has no {}", k.name()),
+                    }
+                }
+            }
+            Err(e) => warn!("structures: {e}; using plain prisms"),
+        }
+        for k in StructKind::ALL {
+            kit.structures
+                .entry(k)
+                .or_insert_with(|| fallback_structure(k));
+        }
         kit
     }
+}
+
+/// A stand-in structure: its solids, a light line round the top of each.
+fn fallback_structure(k: StructKind) -> HashMap<String, MeshData> {
+    let mut body = MeshData::default();
+    let mut accent = MeshData::default();
+    for s in &k.design().solids {
+        let n = s.poly.len();
+        let at = |p: Vec2, y: f32| Vec3::new(p.x, y, p.y);
+        let base = body.pos.len() as u32;
+        for p in &s.poly {
+            body.pos.push(at(*p, s.y1).to_array());
+            body.nrm.push([0.0, 1.0, 0.0]);
+            body.uv.push([0.0, 0.0]);
+        }
+        for i in 1..n as u32 - 1 {
+            body.idx.extend([base, base + i + 1, base + i]);
+        }
+        for i in 0..n {
+            let (a, b) = (s.poly[i], s.poly[(i + 1) % n]);
+            let e = (b - a).normalize_or_zero();
+            let nrm = Vec3::new(e.y, 0.0, -e.x);
+            quad(
+                &mut body,
+                [at(a, s.y0), at(b, s.y0), at(b, s.y1), at(a, s.y1)],
+                nrm,
+            );
+            let lift = nrm * 0.01;
+            quad(
+                &mut accent,
+                [
+                    at(a, s.y1 - 0.06) + lift,
+                    at(b, s.y1 - 0.06) + lift,
+                    at(b, s.y1 - 0.02) + lift,
+                    at(a, s.y1 - 0.02) + lift,
+                ],
+                nrm,
+            );
+        }
+    }
+    HashMap::from([("body".to_string(), body), ("accent".to_string(), accent)])
 }
 
 /// A stand-in piece built from the collision shapes, with accent strips along its top edges.
@@ -387,6 +449,9 @@ fn piece_random(level: &Level, kind: PieceKind, pos: Vec3, salt: u64) -> f32 {
     (h >> 40) as f32 / (1u64 << 24) as f32
 }
 
+/// The brightness of the structures' neon.
+const STRUCTURE: f32 = 0.85;
+
 /// The share of an ordinary piece's accent shapes it keeps (its outline always stays).
 const KEEP: f32 = 0.6;
 /// Brightness of the floors' white grid.
@@ -589,6 +654,40 @@ pub fn spawn_arena(
                     .entry(accent_slot)
                     .or_default()
                     .append_tinted(band, rot, p.pos, tint);
+            }
+        }
+    }
+    // The structures: all their neon, in the zone's colour, a little brighter than ordinary
+    // pieces; the spotlights' lenses white.
+    for p in &level.grid.structures {
+        let Some(parts) = kit.structures.get(&p.kind) else {
+            continue;
+        };
+        let key = (
+            ((p.pos.x + hw + 2.0) / CHUNK).floor() as i32,
+            ((p.pos.z + hl + 2.0) / CHUNK).floor() as i32,
+        );
+        let chunk = chunks.entry(key).or_default();
+        let rot = kit::turn(p.rot);
+        let tint = (zone_color(level, p.pos) * STRUCTURE)
+            .extend(1.0)
+            .to_array();
+        let lens = (WHITE * 2.5).extend(1.0).to_array();
+        for (mat, data) in parts {
+            match mat.as_str() {
+                "body" => chunk.entry("body").or_default().append(data, rot, p.pos),
+                "glow" => chunk
+                    .entry("glow")
+                    .or_default()
+                    .append_tinted(data, rot, p.pos, tint),
+                "lamp" => chunk
+                    .entry("accent")
+                    .or_default()
+                    .append_tinted(data, rot, p.pos, lens),
+                _ => chunk
+                    .entry("accent")
+                    .or_default()
+                    .append_tinted(data, rot, p.pos, tint),
             }
         }
     }

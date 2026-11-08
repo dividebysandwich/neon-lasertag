@@ -14,6 +14,15 @@
 //! broken up, and every attempt is checked for connectivity (and the targets for being
 //! hittable) before it's accepted.
 //!
+//! Structures (structures.rs) break up the right angles: round bunkers and towers, octagonal
+//! rooms, a colonnade, picked from the set for the arena's size. Either one stands in the
+//! centre (its doorways towards the teams; the bridge then crosses beside it and a walkway
+//! on the upper level goes round it) or they stand in mirrored pairs in the middle of each
+//! half, clear of the walkways from the targets. Their cells are `Ground::Struct`; their own
+//! nav nodes come after the grid's, linked to the cells outside their doorways (which are
+//! kept clear and must be reached from the bases). In the Megatarget mode the megatarget's
+//! room is one of four such rooms (octagonal, round, hexagonal, a long octagon).
+//!
 //! Some pieces move (`Mover`), driven only by the sim tick so that every client works out
 //! where they are from a snapshot's tick, with no extra network data:
 //!
@@ -37,6 +46,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::collide::{Collider, GRAVITY, World};
 use crate::kit::{self, CELL, PieceKind, STOREY};
+use crate::structures::{StructKind, StructPlace, turn2};
 use crate::types::Team;
 
 /// How big an arena is: Small is 14 x 28 cells (28 m x 56 m), Medium about 25 % more each way
@@ -325,6 +335,8 @@ pub enum Ground {
     },
     /// A reload station for blasters (walls with windows on its x sides).
     Reload,
+    /// Under a structure (`Grid::structures`, which has its own nodes).
+    Struct,
 }
 
 impl Ground {
@@ -403,6 +415,11 @@ pub struct Grid {
     pub hwall: [Vec<Wall>; 2],
     /// Walls on the lines of constant x, per floor: index `iz * (dm.w + 1) + l`, line `l` in 0..=dm.w.
     pub vwall: [Vec<Wall>; 2],
+    /// The structures standing on the grid (both halves'; their cells are `Ground::Struct`).
+    pub structures: Vec<StructPlace>,
+    /// Megatarget mode: the megatarget's room (one of `StructKind::MEGA_ROOMS`, also in
+    /// `structures`).
+    pub mega_room: Option<StructKind>,
 }
 
 /// A point's counterpart in the other half.
@@ -442,7 +459,18 @@ impl Grid {
                 vec![Wall::None; (dm.w + 1) * dm.h],
                 vec![Wall::None; (dm.w + 1) * dm.h],
             ],
+            structures: Vec::new(),
+            mega_room: None,
         }
+    }
+
+    /// Whether a cell is next to (or under) a structure.
+    fn near_struct(&self, ix: usize, iz: usize) -> bool {
+        let dm = self.dims;
+        (iz.saturating_sub(1)..=(iz + 1).min(dm.h - 1)).any(|z| {
+            (ix.saturating_sub(1)..=(ix + 1).min(dm.w - 1))
+                .any(|x| self.ground[dm.idx(x, z)] == Ground::Struct)
+        })
     }
 
     pub fn wall(&self, floor: usize, ix: usize, iz: usize, dir: u8) -> Wall {
@@ -736,14 +764,15 @@ pub struct Shield {
     pub inside: Vec3,
 }
 
-/// The Megatarget mode's pieces (all fixed by the arena's size).
+/// The Megatarget mode's pieces (fixed by the arena's size and the room picked).
 ///
 /// The secondary targets hang on the back of a wall two storeys high, one cell in from the
 /// arena's -x and +x edges and across the centre line: a pocket four cells long and two deep,
 /// closed at its ends, entered by a doorway at each end of that wall. Two turrets sit on the
 /// wall's outer face above the doorways, a deactivation target above each. The megatarget
-/// hangs from the ceiling of a room in the middle of the arena (four cells square, two storeys
-/// high, roofed), entered through a forcefield in its +z wall (on Red's side) and one in its
+/// hangs from the ceiling of a room in the middle of the arena (one of the structures'
+/// `MEGA_ROOMS`: octagonal, round, hexagonal or a long octagon, two storeys high, roofed),
+/// entered through a forcefield in the middle of its +z wall (on Red's side) and one in its
 /// -z wall (Blue's).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Mega {
@@ -755,8 +784,10 @@ pub struct Mega {
     pub turrets: Vec<Turret>,
     /// The megatarget on the room's ceiling (facing down).
     pub core: Panel,
-    /// The room's inside, floor to ceiling.
+    /// The room's inside, floor to ceiling: its bounds, and the inside of its walls (x, z,
+    /// convex, anticlockwise).
     pub room: (Vec3, Vec3),
+    pub inner: Vec<glam::Vec2>,
     pub shields: [Shield; 2],
 }
 
@@ -765,9 +796,8 @@ pub const TURRET_Y: f32 = STOREY + 0.75;
 pub const CORE_HALF: f32 = 0.55;
 
 impl Mega {
-    fn layout(dm: Dims) -> Mega {
+    pub fn layout(dm: Dims, room: StructKind) -> Mega {
         let hw = dm.half_width();
-        let ceiling = 2.0 * STOREY - kit::FLOOR_T;
         // The left pocket's wall: two cells in from the edge; its posts stand out a little more.
         let wall_x = 2.0 * CELL - hw;
         let back = wall_x - kit::POST / 2.0;
@@ -814,14 +844,23 @@ impl Mega {
             Vec3::new(wall_x, 0.0, 2.0 * CELL),
         );
         let (a, b) = (mirror_point(pocket.0), mirror_point(pocket.1));
-        // The room: the four middle cells each way (the arena's width is even).
-        let r = 2.0 * CELL - kit::WALL_T / 2.0;
-        let shield = |x0: f32, z: f32, side: f32| Shield {
-            min: Vec3::new(x0 + kit::POST / 2.0, 0.0, z - 0.05),
-            max: Vec3::new(x0 + CELL - kit::POST / 2.0, STOREY, z + 0.05),
-            outside: Vec3::new(x0 + CELL / 2.0, 0.0, z + side * 1.0),
-            inside: Vec3::new(x0 + CELL / 2.0, 0.0, z - side * 1.0),
-        };
+        // The room, in the middle (its +z doorway Red's).
+        let d = room.design();
+        let ceiling = d.ceiling;
+        let shields: Vec<Shield> = d
+            .doorways
+            .iter()
+            .map(|w| Shield {
+                min: Vec3::new(w.centre.x - w.half_w, 0.0, w.centre.z - 0.05),
+                max: Vec3::new(w.centre.x + w.half_w, w.height, w.centre.z + 0.05),
+                outside: w.centre + w.out * (w.outer + 1.0),
+                inside: w.centre - w.out * (w.inner + 1.0),
+            })
+            .collect();
+        let (lo, hi) = d.inner.iter().fold(
+            (glam::Vec2::splat(f32::MAX), glam::Vec2::splat(f32::MIN)),
+            |(a, b), p| (a.min(*p), b.max(*p)),
+        );
         Mega {
             secondaries: [left, left.mirrored()],
             pockets: [pocket, (a.min(b), a.max(b))],
@@ -831,19 +870,22 @@ impl Mega {
                 Vec3::splat(CORE_HALF),
                 Vec3::NEG_Y,
             ),
-            room: (Vec3::new(-r, 0.0, -r), Vec3::new(r, ceiling, r)),
-            // Red's doorway in the +z wall (left of the middle), Blue's turned round.
-            shields: [
-                shield(-CELL, 2.0 * CELL, 1.0),
-                shield(0.0, -2.0 * CELL, -1.0),
-            ],
+            room: (Vec3::new(lo.x, 0.0, lo.y), Vec3::new(hi.x, ceiling, hi.y)),
+            inner: d.inner.clone(),
+            shields: [shields[0], shields[1]],
         }
     }
 
     /// Whether a player standing at `feet` is in the megatarget's room.
     pub fn in_room(&self, feet: Vec3) -> bool {
-        let (a, b) = self.room;
-        feet.x > a.x && feet.x < b.x && feet.z > a.z && feet.z < b.z && feet.y < b.y
+        let p = glam::Vec2::new(feet.x, feet.z);
+        let n = self.inner.len();
+        feet.y < self.room.1.y
+            && n >= 3
+            && (0..n).all(|i| {
+                let (a, b) = (self.inner[i], self.inner[(i + 1) % n]);
+                (b - a).perp_dot(p - a) > 0.0
+            })
     }
 
     /// The forcefield a player standing at `feet` touches, if any.
@@ -873,10 +915,6 @@ impl Mega {
             PieceKind::WallFull | PieceKind::WallWindow | PieceKind::PostFull => {
                 let wall_x = self.pockets[0].1.x;
                 (pos.x.abs() - wall_x.abs()).abs() < 0.01 && pos.z.abs() <= 2.0 * CELL + 0.01
-            }
-            PieceKind::UpperTile => {
-                let (a, b) = self.room;
-                pos.y > STOREY + 0.5 && pos.x > a.x && pos.x < b.x && pos.z > a.z && pos.z < b.z
             }
             _ => false,
         }
@@ -1039,8 +1077,31 @@ impl Nav {
             (true, true) => Some(pick(g, u)),
             (true, false) => Some(g),
             (false, true) => Some(u),
-            _ => None,
+            // Under a structure: the nearest of its own nodes.
+            _ => self.extra_near(p, 1.6),
         }
+    }
+
+    /// The structures' nodes (after the grid's two floors').
+    pub fn extras(&self) -> std::ops::Range<usize> {
+        self.dims.cells() * 2..self.pos.len()
+    }
+
+    /// The structure node nearest `p` (by distance, height counted double) within `r`
+    /// horizontally.
+    pub fn extra_near(&self, p: Vec3, r: f32) -> Option<usize> {
+        self.extras()
+            .filter(|&n| {
+                let q = self.pos[n];
+                self.valid[n] && glam::Vec2::new(q.x - p.x, q.z - p.z).length() < r
+            })
+            .min_by(|&a, &b| {
+                let cost = |n: usize| {
+                    let q = self.pos[n];
+                    glam::Vec2::new(q.x - p.x, q.z - p.z).length() + 2.0 * (q.y - p.y).abs()
+                };
+                cost(a).total_cmp(&cost(b))
+            })
     }
 
     /// Breadth-first reachability from `start` (every door closed).
@@ -1183,7 +1244,7 @@ impl Level {
         for attempt in 0..500u64 {
             let mut rng =
                 ChaCha8Rng::seed_from_u64(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ attempt);
-            if let Some(mut grid) = try_grid(&mut rng, dm, mode) {
+            if let Some(mut grid) = try_grid(&mut rng, dm, size, mode, attempt) {
                 let nav = build_nav(&grid);
                 if validate(&grid, &nav, mode) {
                     // Movers only turn existing walls into doors and use open cells, so the
@@ -1435,7 +1496,42 @@ fn upper_crosses(g: &Grid, nav: &Nav) -> bool {
     false
 }
 
-fn try_grid(rng: &mut ChaCha8Rng, dm: Dims, mode: GameMode) -> Option<Grid> {
+/// Whether one walks on the upper level (through no walls) from around the first target (in
+/// `cols`) to around its mirror image (true without targets).
+fn upper_cross_grid(g: &Grid, cols: &[usize]) -> bool {
+    let dm = g.dims;
+    let Some(&ix) = cols.first() else {
+        return true;
+    };
+    let a = (ix, dm.target_row() + 2);
+    let b = dm.mirror_cell(a.0, a.1);
+    let mut seen = vec![false; dm.cells()];
+    let mut stack = vec![a];
+    seen[dm.idx(a.0, a.1)] = true;
+    while let Some((x, z)) = stack.pop() {
+        if (x, z) == b {
+            return true;
+        }
+        for d in 0..4 {
+            if let Some((nx, nz)) = dm.step(x, z, d, 1) {
+                let i = dm.idx(nx, nz);
+                if !seen[i] && g.upper_walkable(i) && g.wall(1, x, z, d) == Wall::None {
+                    seen[i] = true;
+                    stack.push((nx, nz));
+                }
+            }
+        }
+    }
+    false
+}
+
+fn try_grid(
+    rng: &mut ChaCha8Rng,
+    dm: Dims,
+    size: ArenaSize,
+    mode: GameMode,
+    attempt: u64,
+) -> Option<Grid> {
     let mut g = Grid::new(dm);
     let mut res = Reserve {
         dims: dm,
@@ -1500,7 +1596,7 @@ fn try_grid(rng: &mut ChaCha8Rng, dm: Dims, mode: GameMode) -> Option<Grid> {
     let two = rng.random_bool(0.5);
     let cols: Vec<usize> = if mode == GameMode::Megatarget {
         // No team targets: the pockets and the room instead (walled in step 6b).
-        mega_reserve(&mut res, dm);
+        mega_reserve(&mut g, &mut res, rng);
         Vec::new()
     } else if two {
         let c = rng.random_range(dm.across(2)..=dm.across(3));
@@ -1538,13 +1634,33 @@ fn try_grid(rng: &mut ChaCha8Rng, dm: Dims, mode: GameMode) -> Option<Grid> {
         }
     }
 
+    // 2a. Structures: one in the centre, or none, and a few mirrored pairs (fewer as the
+    //     attempts go on, so that an arena is always found).
+    let centre_cols = place_structures(&mut g, &mut res, rng, size, mode, attempt, &cols);
+
     // 2b. A reload station in the middle third, open along z, walled with windows along x.
     {
-        let rz = dm.half() + rng.random_range(dm.along(2)..=dm.along(5));
-        let rx = rng.random_range(2..=dm.w - 3);
-        if res.has(rx, rz) {
-            return None;
+        let mut spot = None;
+        for _ in 0..30 {
+            let rz = dm.half() + rng.random_range(dm.along(2)..=dm.along(5));
+            let rx = rng.random_range(2..=dm.w - 3);
+            let clear =
+                |x: usize, z: usize| !res.has(x, z) && g.ground[dm.idx(x, z)] == Ground::Open;
+            // (Not where the walkway round a structure in the centre will go, step 3.)
+            let walkway = g.structures.iter().any(|p| {
+                p.pos == Vec3::ZERO
+                    && p.cells
+                        .iter()
+                        .map(|c| c.1)
+                        .max()
+                        .is_some_and(|z| z + 2 == rz)
+            });
+            if !walkway && clear(rx, rz) && clear(rx, rz + 1) && clear(rx, rz - 1) {
+                spot = Some((rx, rz));
+                break;
+            }
         }
+        let (rx, rz) = spot?;
         g.set_ground(rx, rz, Ground::Reload);
         res.cell(rx, rz);
         for d in [0u8, 2] {
@@ -1574,7 +1690,70 @@ fn try_grid(rng: &mut ChaCha8Rng, dm: Dims, mode: GameMode) -> Option<Grid> {
         }
     };
     let bw = rng.random_range(3..=5usize);
-    let bx = rng.random_range(2..=dm.w - 2 - bw);
+    // With a structure in the centre the bridge stands beside it, its two ends on either side
+    // (each half's end the other's mirror image): a walkway round the structure's far side, a
+    // row clear of it, joins them, and the targets' walkways join that. The cells it takes.
+    let walkway_x =
+        |bx: usize, bw: usize, ix: usize| if bx + bw / 2 < ix { ix - 1 } else { ix + 1 };
+    let centre_z = g
+        .structures
+        .iter()
+        .find(|p| p.pos == Vec3::ZERO)
+        .map(|c| c.cells.iter().map(|c| c.1).max().unwrap_or(dm.half()) + 2);
+    // (`k`: which of the bridge's columns the walkway leaves it by.)
+    let ring_cells = |bx: usize, bw: usize, z: usize, k: usize| -> Vec<(usize, usize)> {
+        let (a0, a1) = (bx, bx + bw - 1);
+        let (b0, b1) = (dm.w - bx - bw, dm.w - 1 - bx);
+        let (a, b) = (a0 + k, b1 - k);
+        let (lo, hi) = (a.min(b), a.max(b));
+        let lo = cols
+            .iter()
+            .map(|&ix| walkway_x(bx, bw, ix))
+            .fold(lo, usize::min);
+        let hi = cols
+            .iter()
+            .map(|&ix| walkway_x(bx, bw, ix))
+            .fold(hi, usize::max);
+        let mut cells: Vec<(usize, usize)> = (lo..=hi).map(|x| (x, z)).collect();
+        let _ = (a1, b0);
+        for x in [lo, hi] {
+            cells.extend((dm.half()..z).map(|zz| (x, zz)));
+        }
+        for &ix in &cols {
+            let x = walkway_x(bx, bw, ix);
+            cells.extend((z + 1..dm.target_row()).map(|zz| (x, zz)));
+        }
+        cells
+    };
+    let mut ring = None;
+    let (bx, bw) = match (centre_cols, centre_z) {
+        // Beside the structure in the centre (and so its mirror image on the other side).
+        (Some((c0, c1)), Some(z)) => {
+            if z + 1 >= dm.target_row() {
+                return None;
+            }
+            let mut fits: Vec<(usize, usize, usize, usize)> = (3..=5usize)
+                .flat_map(|w| (2..=dm.w - 2 - w).map(move |x| (x, w)))
+                .filter(|&(x, w)| x + w <= c0 || x > c1)
+                .flat_map(|(x, w)| {
+                    (z..(z + 2).min(dm.target_row() - 1))
+                        .flat_map(move |zz| (0..w).map(move |k| (x, w, zz, k)))
+                })
+                .filter(|&(x, w, zz, k)| {
+                    ring_cells(x, w, zz, k)
+                        .iter()
+                        .all(|&(cx, cz)| !res.has(cx, cz))
+                })
+                .collect();
+            if fits.is_empty() {
+                return None;
+            }
+            let (x, w, zz, k) = fits.swap_remove(rng.random_range(0..fits.len()));
+            ring = Some((zz, k));
+            (x, w)
+        }
+        _ => (rng.random_range(2..=dm.w - 2 - bw), bw),
+    };
     rect(&mut g, &res, bx, dm.half(), bw, rng.random_range(3..=5));
     // Its other end over the centre line (Blue's half is turned round: this joins the two).
     for ix in bx..bx + bw {
@@ -1603,7 +1782,11 @@ fn try_grid(rng: &mut ChaCha8Rng, dm: Dims, mode: GameMode) -> Option<Grid> {
         let z0 = rng.random_range(dm.half() + 1..=dm.upper_max() + 1 - l);
         rect(&mut g, &res, x0, z0, w, l);
     }
-    let red_cells = (dm.upper_max() + 1 - dm.half()) * dm.w;
+    let red_cells = (dm.half()..=dm.upper_max())
+        .flat_map(|iz| (0..dm.w).map(move |ix| (ix, iz)))
+        .filter(|&(ix, iz)| g.ground[dm.idx(ix, iz)] != Ground::Struct)
+        .count()
+        .max(1);
     let coverage = |g: &Grid| {
         (dm.half()..=dm.upper_max())
             .flat_map(|iz| (0..dm.w).map(move |ix| (ix, iz)))
@@ -1624,18 +1807,30 @@ fn try_grid(rng: &mut ChaCha8Rng, dm: Dims, mode: GameMode) -> Option<Grid> {
         return None;
     }
     // A walkway on the upper level from each target's surroundings to the bridge, where the
-    // upper level doesn't join them already: the upper level always crosses the arena.
+    // upper level doesn't join them already: the upper level always crosses the arena (round
+    // a structure in the centre: see the bridge).
+    if let Some((z, k)) = ring {
+        for (x, zz) in ring_cells(bx, bw, z, k) {
+            g.set_upper(x, zz, true);
+        }
+    }
+    let ring = ring.map(|r| r.0);
+    let walkway_x = |ix: usize| walkway_x(bx, bw, ix);
     for &ix in &cols {
         if upper_joined(&g, (ix + 1, dm.target_row() + 2), (bx, dm.half())) {
             continue;
         }
-        // Along z beside the target, on the side towards the bridge, then along x.
-        let x = if bx + bw / 2 < ix { ix - 1 } else { ix + 1 };
-        for z in (dm.half()..dm.target_row()).rev() {
+        // Along z beside the target, on the side towards the bridge, then along x (or down to
+        // the walkway round the centre).
+        let x = walkway_x(ix);
+        for z in (ring.unwrap_or(dm.half())..dm.target_row()).rev() {
             if res.has(x, z) && !g.upper[dm.idx(x, z)] {
                 return None;
             }
             g.set_upper(x, z, true);
+        }
+        if ring.is_some() {
+            continue;
         }
         let (lo, hi) = if x < bx { (x, bx) } else { (bx + bw - 1, x) };
         for xx in lo..=hi {
@@ -1831,6 +2026,11 @@ fn try_grid(rng: &mut ChaCha8Rng, dm: Dims, mode: GameMode) -> Option<Grid> {
                 break;
             }
             g.set_wall(1, e, w);
+            // Never cutting the way across the arena on the upper level.
+            if !upper_cross_grid(&g, &cols) {
+                g.set_wall(1, e, Wall::None);
+                break;
+            }
         }
     }
     for _ in 0..rng.random_range(1..=dm.scaled(2)) {
@@ -1842,6 +2042,9 @@ fn try_grid(rng: &mut ChaCha8Rng, dm: Dims, mode: GameMode) -> Option<Grid> {
             && (0..4).all(|d| !is_ramp_top(&g, ix, iz, d))
         {
             g.set_upper_block(ix, iz, true);
+            if !upper_cross_grid(&g, &cols) {
+                g.set_upper_block(ix, iz, false);
+            }
         }
     }
 
@@ -1981,8 +2184,10 @@ fn mega_row(dm: Dims) -> usize {
 }
 
 /// Keeps the Megatarget mode's pockets and room (and the ground in front of the pockets and
-/// the room's doorways) clear of everything else.
-fn mega_reserve(res: &mut Reserve, dm: Dims) {
+/// the room's doorways) clear of everything else, and stands the room (picked at random) in
+/// the middle.
+fn mega_reserve(g: &mut Grid, res: &mut Reserve, rng: &mut ChaCha8Rng) {
+    let dm = g.dims;
     let z0 = mega_row(dm);
     // A pocket and two cells in front of it, a row beyond its ends (the other side mirrored).
     for iz in z0 - 1..=z0 + 4 {
@@ -1990,20 +2195,34 @@ fn mega_reserve(res: &mut Reserve, dm: Dims) {
             res.cell(ix, iz);
         }
     }
-    let cx = dm.w / 2;
-    for iz in z0..z0 + 4 {
-        for ix in cx - 2..cx + 2 {
-            res.cell(ix, iz);
+    let kind = StructKind::MEGA_ROOMS[rng.random_range(0..StructKind::MEGA_ROOMS.len())];
+    let mut place = StructPlace {
+        kind,
+        pos: Vec3::ZERO,
+        rot: 0,
+        cells: Vec::new(),
+        ports: Vec::new(),
+    };
+    place.cells = footprint(dm, &place).expect("the room fits");
+    for &(x, z) in &place.cells {
+        res.cell(x, z);
+        g.set_ground(x, z, Ground::Struct);
+    }
+    // The ground in front of its doorways, two cells out (Red's; Blue's mirrored).
+    let m = Mega::layout(dm, kind);
+    let s = m.shields[0];
+    for out in [0.0, CELL] {
+        for dx in [-0.9, 0.9] {
+            if let Some((x, z)) = dm.cell_at(s.outside + Vec3::new(dx, 0.0, out)) {
+                res.cell(x, z);
+            }
         }
     }
-    // Red's doorway (+z wall, left of the middle) and the way to it.
-    for iz in z0 + 4..=z0 + 5 {
-        res.cell(cx - 1, iz);
-    }
+    g.structures.push(place);
+    g.mega_room = Some(kind);
 }
 
-/// The Megatarget mode's walls: the pockets' (two storeys, a doorway at each end of the inner
-/// wall) and the room's (two storeys, a forcefield in a doorway on each team's side).
+/// The Megatarget mode's pockets' walls: two storeys, a doorway at each end of the inner wall.
 fn mega_walls(g: &mut Grid) {
     let dm = g.dims;
     let z0 = mega_row(dm);
@@ -2020,22 +2239,240 @@ fn mega_walls(g: &mut Grid) {
             }
         }
     }
-    let cx = dm.w / 2;
-    for ix in cx - 2..cx + 2 {
-        for l in [z0, z0 + 4] {
-            let doorway = l == z0 + 4 && ix == cx - 1 || l == z0 && ix == cx;
-            let e = Edge::H { l, ix };
-            g.set_wall(0, e, if doorway { Wall::Shield } else { Wall::Full });
-            g.set_wall(1, e, Wall::Full);
-        }
+}
+
+/// The cells a structure stands on (`None` if it doesn't fit in the arena).
+fn footprint(dm: Dims, p: &StructPlace) -> Option<Vec<(usize, usize)>> {
+    let d = p.design();
+    let (a, b) = (turn2(d.min, p.rot), turn2(d.max, p.rot));
+    let o = glam::Vec2::new(p.pos.x + dm.half_width(), p.pos.z + dm.half_length());
+    let (lo, hi) = (a.min(b) + o, a.max(b) + o);
+    let eps = 0.05;
+    let x0 = ((lo.x + eps) / CELL).floor();
+    let z0 = ((lo.y + eps) / CELL).floor();
+    let x1 = ((hi.x - eps) / CELL).ceil();
+    let z1 = ((hi.y - eps) / CELL).ceil();
+    if x0 < 0.0 || z0 < 0.0 || x1 > dm.w as f32 || z1 > dm.h as f32 {
+        return None;
     }
-    for iz in z0..z0 + 4 {
-        for l in [cx - 2, cx + 2] {
-            for floor in 0..2 {
-                g.set_wall(floor, Edge::V { l, iz }, Wall::Full);
+    Some(
+        (z0 as usize..z1 as usize)
+            .flat_map(|z| (x0 as usize..x1 as usize).map(move |x| (x, z)))
+            .collect(),
+    )
+}
+
+/// The grid cells right outside a structure that one walks in from, each with the structure's
+/// node it leads to: the cells next to its own that `ok` allows, from whose middle a body
+/// walks straight to one of its nodes on the ground (the nearest it can, within 3.8 m).
+fn find_ports(
+    dm: Dims,
+    p: &StructPlace,
+    ok: impl Fn(usize, usize) -> bool,
+) -> Vec<(u16, (usize, usize))> {
+    let d = p.design();
+    let mut out: Vec<(u16, (usize, usize))> = Vec::new();
+    for &(x, z) in &p.cells {
+        for dir in 0..4 {
+            let Some(c) = dm.step(x, z, dir, 1) else {
+                continue;
+            };
+            if p.cells.contains(&c) || out.iter().any(|o| o.1 == c) || !ok(c.0, c.1) {
+                continue;
+            }
+            let at = p.to_local(dm.cell_centre(c.0, c.1));
+            let mut near: Vec<(f32, usize)> = d
+                .nodes
+                .iter()
+                .enumerate()
+                .filter(|(_, n)| n.y < 0.3)
+                .map(|(i, n)| (glam::Vec2::new(n.x - at.x, n.z - at.z).length(), i))
+                .filter(|(dist, _)| *dist < 3.8)
+                .collect();
+            near.sort_by(|a, b| a.0.total_cmp(&b.0));
+            if let Some(&(_, i)) = near.iter().find(|(_, i)| d.walk(at, d.nodes[*i])) {
+                out.push((i as u16, c));
             }
         }
     }
+    out
+}
+
+/// The structures for an arena of `size` in `mode`: one for its centre (maybe), and those to
+/// stand in pairs, one in each half.
+fn plan_structures(
+    rng: &mut ChaCha8Rng,
+    size: ArenaSize,
+    mode: GameMode,
+) -> (Option<StructKind>, Vec<StructKind>, StructKind) {
+    use StructKind::*;
+    let pick = |rng: &mut ChaCha8Rng, set: &[StructKind]| set[rng.random_range(0..set.len())];
+    let (centre, chance, pairs, count): (&[StructKind], f64, &[StructKind], (usize, usize)) =
+        match (mode.layout(), size) {
+            (GameMode::Megatarget, ArenaSize::Small) => (
+                &[],
+                0.0,
+                &[Pillbox, OctoHut, Watchtower, RoundTower],
+                (1, 2),
+            ),
+            (GameMode::Megatarget, ArenaSize::Medium) => (
+                &[],
+                0.0,
+                &[Watchtower, RoundTower, OctoCourt, Rotunda, VantageTower],
+                (2, 2),
+            ),
+            (GameMode::Megatarget, ArenaSize::Large) => (
+                &[],
+                0.0,
+                &[RoundTower, OctoCourt, Rotunda, VantageTower],
+                (2, 3),
+            ),
+            (_, ArenaSize::Small) => (
+                &[Pillbox, OctoHut, RoundTower],
+                0.5,
+                &[Pillbox, OctoHut, Watchtower],
+                (1, 2),
+            ),
+            (_, ArenaSize::Medium) => (
+                &[RoundTower, OctoCourt, VantageTower],
+                0.5,
+                &[Pillbox, OctoHut, Watchtower, RoundTower, OctoCourt],
+                (1, 2),
+            ),
+            (_, ArenaSize::Large) => (
+                &[VantageTower, Rotunda, OctoCourt],
+                0.6,
+                &[Watchtower, RoundTower, OctoCourt, Rotunda, VantageTower],
+                (1, 2),
+            ),
+        };
+    let centre = (!centre.is_empty() && rng.random_bool(chance)).then(|| pick(rng, centre));
+    let n =
+        rng.random_range(count.0..=count.1) - usize::from(centre.is_some() && count.0 < count.1);
+    let set = pairs;
+    let mut pairs: Vec<StructKind> = (0..n).map(|_| pick(rng, set)).collect();
+    // The biggest first, while there's the most room.
+    pairs.sort_by_key(|k| std::cmp::Reverse(k.class() as u8));
+    // (A pair more if the one for the centre doesn't fit.)
+    let spare = pick(rng, set);
+    (centre, pairs, spare)
+}
+
+/// Stands the arena's structures (`plan_structures`) on the grid: marks their cells
+/// `Ground::Struct`, keeps their cells and the cells outside their doorways clear, and links
+/// the two (`StructPlace::ports`). Returns the columns of the one in the centre, if any.
+fn place_structures(
+    g: &mut Grid,
+    res: &mut Reserve,
+    rng: &mut ChaCha8Rng,
+    size: ArenaSize,
+    mode: GameMode,
+    attempt: u64,
+    targets: &[usize],
+) -> Option<(usize, usize)> {
+    let dm = g.dims;
+    // Kept clear for the upper floor's walkway from a target to the bridge (step 3): the
+    // columns beside the targets, from the centre line to them.
+    let lane =
+        |x: usize, z: usize| z < dm.target_row() && targets.iter().any(|&c| x.abs_diff(c) <= 1);
+    let (centre, mut pairs, spare) = plan_structures(rng, size, mode);
+    // Fewer as the attempts go on (none at the very end).
+    let centre = centre.filter(|_| attempt < 250);
+    pairs.truncate(match attempt {
+        0..150 => pairs.len(),
+        150..350 => 1,
+        _ => 0,
+    });
+    let free = |g: &Grid, res: &Reserve, x: usize, z: usize| {
+        !res.has(x, z) && g.ground[dm.idx(x, z)] == Ground::Open
+    };
+    let commit = |g: &mut Grid, res: &mut Reserve, p: &StructPlace| {
+        for &(x, z) in &p.cells {
+            g.set_ground(x, z, Ground::Struct);
+            res.cell(x, z);
+        }
+        for &(_, (x, z)) in &p.ports {
+            res.cell(x, z);
+        }
+    };
+    let mut cols = None;
+    if let Some(kind) = centre {
+        let mut p = StructPlace {
+            kind,
+            pos: Vec3::ZERO,
+            // Doorways towards the teams.
+            rot: 2 * rng.random_range(0..2),
+            cells: Vec::new(),
+            ports: Vec::new(),
+        };
+        if let Some(cells) = footprint(dm, &p) {
+            // (With its mirror image: the same cells but for rounding.)
+            let mut all = cells.clone();
+            for &(x, z) in &cells {
+                let m = dm.mirror_cell(x, z);
+                if !all.contains(&m) {
+                    all.push(m);
+                }
+            }
+            p.cells = all;
+            if p.cells.iter().all(|&(x, z)| free(g, res, x, z)) {
+                p.ports = find_ports(dm, &p, |x, z| free(g, res, x, z));
+                if p.ports.len() >= 2 * p.design().min_ports {
+                    let x0 = p.cells.iter().map(|c| c.0).min().unwrap();
+                    let x1 = p.cells.iter().map(|c| c.0).max().unwrap();
+                    commit(g, res, &p);
+                    g.structures.push(p);
+                    cols = Some((x0, x1));
+                }
+            }
+        }
+    }
+    if centre.is_some() && cols.is_none() && pairs.is_empty() && attempt < 350 {
+        pairs.push(spare);
+    }
+    let first = match mode.layout() {
+        GameMode::Megatarget => mega_row(dm) + 6,
+        // Clear of the centre line's rows, where the bridge starts.
+        _ => dm.half() + 2,
+    };
+    for kind in pairs {
+        for _ in 0..40 {
+            let (ix, iz) = (rng.random_range(0..dm.w), rng.random_range(first..dm.h));
+            let corner = rng.random_bool(0.5);
+            let pos = dm.cell_centre(ix, iz)
+                + if corner {
+                    Vec3::new(CELL / 2.0, 0.0, CELL / 2.0)
+                } else {
+                    Vec3::ZERO
+                };
+            let mut p = StructPlace {
+                kind,
+                pos,
+                rot: rng.random_range(0..4),
+                cells: Vec::new(),
+                ports: Vec::new(),
+            };
+            let Some(cells) = footprint(dm, &p) else {
+                continue;
+            };
+            if !cells.iter().all(|&(x, z)| {
+                z >= first && z + 2 < dm.base_row() && !lane(x, z) && free(g, res, x, z)
+            }) {
+                continue;
+            }
+            p.cells = cells;
+            p.ports = find_ports(dm, &p, |x, z| z >= dm.half() && free(g, res, x, z));
+            if p.ports.len() < p.design().min_ports {
+                continue;
+            }
+            commit(g, res, &p);
+            let m = p.mirrored(dm);
+            g.structures.push(p);
+            g.structures.push(m);
+            break;
+        }
+    }
+    cols
 }
 
 /// Fills the narrow gaps in Red's upper floor (and their mirror images): open cells with
@@ -2351,6 +2788,28 @@ fn build_nav(g: &Grid) -> Nav {
             }
         }
     }
+    // The structures' own nodes, linked to the cells outside their doorways.
+    for p in &g.structures {
+        let d = p.design();
+        let base = nav.pos.len();
+        for n in &d.nodes {
+            nav.pos.push(p.to_world(*n));
+            nav.valid.push(true);
+            nav.links.push(Vec::new());
+        }
+        for &(a, b) in &d.links {
+            let (a, b) = (base + a as usize, base + b as usize);
+            nav.links[a].push(b as u32);
+            nav.links[b].push(a as u32);
+        }
+        for &(n, (x, z)) in &p.ports {
+            let (a, b) = (base + n as usize, dm.ground_node(x, z));
+            if nav.valid[b] {
+                nav.links[a].push(b as u32);
+                nav.links[b].push(a as u32);
+            }
+        }
+    }
     nav
 }
 
@@ -2405,17 +2864,34 @@ fn validate(g: &Grid, nav: &Nav, mode: GameMode) -> bool {
         GameMode::Megatarget => {
             // Into both pockets, and up to both doorways of the room.
             let z0 = mega_row(dm);
-            let cx = dm.w / 2;
-            let (ox, oz) = (cx - 1, z0 + 4);
-            let (mx, mz) = dm.mirror_cell(ox, oz);
             let (px, pz) = dm.mirror_cell(0, z0 + 1);
-            if ![(0, z0 + 1), (px, pz), (ox, oz), (mx, mz)]
+            if ![(0, z0 + 1), (px, pz)]
                 .iter()
                 .all(|&(x, z)| seen[dm.ground_node(x, z)])
             {
                 return false;
             }
+            let Some(room) = g.mega_room else {
+                return false;
+            };
+            let m = Mega::layout(dm, room);
+            if !m
+                .shields
+                .iter()
+                .all(|s| nav.node_at(s.outside).is_some_and(|n| seen[n]))
+            {
+                return false;
+            }
         }
+    }
+    // Every structure's ways in (but the Megatarget room's, behind forcefields).
+    if g.structures
+        .iter()
+        .filter(|p| Some(p.kind) != g.mega_room)
+        .flat_map(|p| &p.ports)
+        .any(|&(_, (x, z))| !seen[dm.ground_node(x, z)])
+    {
+        return false;
     }
     let total = nav.valid.iter().filter(|v| **v).count();
     let reached = nav
@@ -2688,6 +3164,9 @@ fn place_gates(
                 if !rows.contains(&nz) || !open(ix, iz) || !open(nx, nz) {
                     continue;
                 }
+                if g.near_struct(ix, iz) || g.near_struct(nx, nz) {
+                    continue;
+                }
                 if on_track(movers, dm, ix, iz) || on_track(movers, dm, nx, nz) {
                     continue;
                 }
@@ -2935,7 +3414,12 @@ fn place_pads(level: &Level, mode: GameMode, rng: &mut ChaCha8Rng) -> Vec<JumpPa
     for iz in rows {
         for ix in 0..dm.w {
             let i = dm.idx(ix, iz);
-            if g.ground[i] != Ground::Open || g.upper[i] || level.on_track(ix, iz) || busy(ix, iz) {
+            if g.ground[i] != Ground::Open
+                || g.upper[i]
+                || level.on_track(ix, iz)
+                || busy(ix, iz)
+                || g.near_struct(ix, iz)
+            {
                 continue;
             }
             let from = dm.ground_node(ix, iz);
@@ -3024,6 +3508,7 @@ fn build_level(seed: u64, g: Grid, nav: Nav, movers: Vec<Mover>, mode: GameMode)
                     spawns[team.index()].push(Spawn { pos: c, yaw });
                 }
                 Ground::Reload => reloads.push(c),
+                Ground::Struct => {}
                 Ground::Pillar => pieces.push(PieceInstance {
                     kind: PieceKind::Pillar,
                     pos: c,
@@ -3188,20 +3673,11 @@ fn build_level(seed: u64, g: Grid, nav: Nav, movers: Vec<Mover>, mode: GameMode)
         t.id = i as u8;
     }
 
-    let mega = (mode == GameMode::Megatarget).then(|| Mega::layout(dm));
-    if mega.is_some() {
-        // The room's roof.
-        let (z0, cx) = (mega_row(dm), dm.w / 2);
-        for iz in z0..z0 + 4 {
-            for ix in cx - 2..cx + 2 {
-                pieces.push(PieceInstance {
-                    kind: PieceKind::UpperTile,
-                    pos: dm.cell_centre(ix, iz) + up * 2.0,
-                    rot: 0,
-                });
-            }
-        }
-    }
+    let mega = if mode == GameMode::Megatarget {
+        g.mega_room.map(|room| Mega::layout(dm, room))
+    } else {
+        None
+    };
 
     let mut colliders = vec![Collider::Box {
         min: Vec3::new(-dm.half_width() - 4.0, -1.0, -dm.half_length() - 4.0),
@@ -3220,6 +3696,9 @@ fn build_level(seed: u64, g: Grid, nav: Nav, movers: Vec<Mover>, mode: GameMode)
     }
     if let Some(m) = &mega {
         colliders.extend(m.colliders());
+    }
+    for p in &g.structures {
+        colliders.extend(p.colliders());
     }
     Level {
         seed,
@@ -3277,6 +3756,7 @@ pub fn ascii(level: &Level) -> String {
                 Ground::Ramp { dir, .. } => ['^', '>', 'v', '<'][dir as usize],
                 Ground::Alcove { .. } => 'T',
                 Ground::Reload => 'R',
+                Ground::Struct => 'X',
             });
         }
         s.push_str("   ");
@@ -3668,7 +4148,13 @@ mod tests {
                 7,
                 ArenaSize::ALL.into_iter().find(|a| a.dims() == d).unwrap(),
             );
-            assert_eq!(level.nav.pos.len(), 2 * d.cells());
+            let extra: usize = level
+                .grid
+                .structures
+                .iter()
+                .map(|p| p.design().nodes.len())
+                .sum();
+            assert_eq!(level.nav.pos.len(), 2 * d.cells() + extra);
             assert!(
                 level
                     .pieces
@@ -3676,6 +4162,77 @@ mod tests {
                     .all(|p| p.pos.x.abs() <= d.half_width() + 1.0
                         && p.pos.z.abs() <= d.half_length() + 1.0)
             );
+        }
+    }
+
+    #[test]
+    fn structures_stand_in_arenas() {
+        let mut kinds = std::collections::HashMap::new();
+        let mut with = 0;
+        let mut total = 0;
+        for mode in [GameMode::Classic, GameMode::Megatarget] {
+            for size in ArenaSize::ALL {
+                for seed in 0..12 {
+                    let level = Level::generate_for(seed, size, mode);
+                    let dm = level.dims();
+                    let g = &level.grid;
+                    total += 1;
+                    let own: Vec<&StructPlace> = g
+                        .structures
+                        .iter()
+                        .filter(|p| p.kind.class() != crate::structures::Class::Mega)
+                        .collect();
+                    if !own.is_empty() {
+                        with += 1;
+                    }
+                    if mode == GameMode::Megatarget {
+                        let room = g.mega_room.expect("a room");
+                        assert!(
+                            g.structures
+                                .iter()
+                                .any(|p| p.kind == room && p.pos == Vec3::ZERO)
+                        );
+                    }
+                    let start = spawn_node(&level, Team::Red);
+                    let seen = level.nav.reach(start);
+                    for p in &g.structures {
+                        *kinds.entry(p.kind).or_insert(0) += 1;
+                        for &(x, z) in &p.cells {
+                            assert_eq!(g.ground[dm.idx(x, z)], Ground::Struct, "{seed} {p:?}");
+                        }
+                        // Every structure but the Megatarget room is walked into from the bases.
+                        if p.kind.class() != crate::structures::Class::Mega {
+                            assert!(p.ports.len() >= p.design().min_ports);
+                            for &(_, (x, z)) in &p.ports {
+                                assert!(seen[dm.ground_node(x, z)], "{seed} {p:?}: port cut off");
+                            }
+                        }
+                        // In the centre, or with its mirror image.
+                        let m = p.mirrored(dm);
+                        assert!(
+                            p.pos == Vec3::ZERO
+                                || g.structures.iter().any(|q| q.kind == m.kind
+                                    && q.pos.distance(m.pos) < 1e-4
+                                    && q.rot == m.rot),
+                            "{seed} {p:?} has no mirror image"
+                        );
+                    }
+                    // Its colliders are in the arena's.
+                    let world = level.world();
+                    for p in &g.structures {
+                        let c = p.to_world(Vec3::ZERO);
+                        let _ = world.ground(c.x, c.z, 50.0);
+                    }
+                }
+            }
+        }
+        println!("structures in {with} of {total} arenas: {kinds:?}");
+        assert!(
+            with * 10 >= total * 8,
+            "only {with} of {total} arenas have structures"
+        );
+        for k in StructKind::ALL {
+            assert!(kinds.contains_key(&k), "{k:?} never stands in an arena");
         }
     }
 

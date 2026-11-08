@@ -5632,8 +5632,21 @@ mod tests {
         let mate = sim.add_player("m", Some(Team::Red), false).unwrap();
         let base = sim.level.base_centre(Team::Red);
         sim.players[0].feet = base + Vec3::new(0.0, 0.0, 30.0); // out of the way
-        // Off the spawn pads (which would heal the hit).
-        sim.players[1].feet = Vec3::new(0.0, 0.0, 6.0);
+        // Off the spawn pads (which would heal the hit), in the open near the middle.
+        let world = sim.level.world();
+        let open = |p: Vec3| {
+            let eye = p + Vec3::Y * EYE;
+            sim.level.spawn_at(p).is_none() && world.clear(eye, eye + Vec3::X * 2.5)
+        };
+        sim.players[1].feet = (0..sim.level.dims().cells())
+            .filter(|&n| sim.level.nav.valid[n])
+            .map(|n| sim.level.nav.pos[n])
+            .filter(|p| open(*p))
+            .min_by(|a, b| {
+                a.distance(Vec3::Z * 6.0)
+                    .total_cmp(&b.distance(Vec3::Z * 6.0))
+            })
+            .unwrap();
         let mi = 1;
         // A bolt from a grenade straight at the team mate.
         let eye = sim.players[mi].eye();
