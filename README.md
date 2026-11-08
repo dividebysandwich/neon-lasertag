@@ -32,10 +32,10 @@ Matches last 10 minutes. Score points for your team:
 | Action | Points |
 |---|---|
 | Tag out an enemy (3 hits) | 100 |
-| Hit the enemy team's target | 100 |
+| Hit the enemy team's target (Classic) or a secondary target (Megatarget) | 100 |
 | Assist (your hit, a team mate's tag-out within 10 s) | 50 |
 | Defend (tag-out near your own targets) | +25 |
-| Megatarget | 1000 |
+| Megatarget, or carrying the enemy's prism home | 1000 |
 
 In the last minute every point counts double.
 
@@ -43,28 +43,33 @@ In the last minute every point counts double.
   you fire or the protection runs out.
 - Your own spawn pads heal you and refill your blaster; the white reload stations in the
   middle refill it too.
-- The enemy targets hang under a roof deep in their half and can only be hit from behind or
-  from the level around them.
 
-### Megatarget mode
+### Game modes
 
-The default mode (`--mode classic` for plain target play). The megatarget sits in a sealed
-room in the middle, behind forcefields that tag out anyone who walks in. Hit both secondary
-targets at the arena's edges to pass the forcefields for 60 s, then hit the megatarget. The
-secondary targets are guarded by turrets; shoot the yellow target above a turret to switch it
-off for 15 s.
+Pick the mode in the Botmatch or host menu, or with `--mode`.
 
-### Capture the Prism
+| Mode | Goal |
+|---|---|
+| **Megatarget** (default) | Open the sealed room in the middle and hit the megatarget. |
+| **Classic** (`classic`) | Hit the enemy team's targets. |
+| **Capture the Prism** (`prism`) | Steal the enemy's prism and carry it home. |
+| **Infection** (`infection`) | Phantoms against survivors: survive, or infect everyone. |
 
-`--mode prism`: the classic arena without targets. Each team's prism hovers on the ground under
-its first target's alcove. Touch the enemy's prism to take it and carry it to your own prism's
-spot while yours is there: 1000 points. You can't fire while carrying it, but you can throw it
-(the grenade input) for a team mate to catch. Tagged out, you drop it; it goes home when its own
-team touches it or after 20 s on the floor.
+**Megatarget.** The megatarget sits in a sealed room in the middle, behind forcefields that tag
+out anyone who walks in. Hit both secondary targets at the arena's edges to pass the
+forcefields for 60 s, then hit the megatarget. The secondary targets are guarded by turrets;
+shoot the yellow target above a turret to switch it off for 15 s.
 
-### Infection
+**Classic.** Each team's targets hang under a roof deep in its half and can only be hit from
+behind or from the level around them.
 
-`--mode infection`: the classic arena without targets. A quarter of the players start as Red
+**Capture the Prism.** The classic arena without targets. Each team's prism hovers on the
+ground under its first target's alcove. Touch the enemy's prism to take it and carry it to your
+own prism's spot while yours is there: 1000 points. You can't fire while carrying it, but you
+can throw it (the grenade input) for a team mate to catch. Tagged out, you drop it; it goes home
+when its own team touches it or after 20 s on the floor.
+
+**Infection.** The classic arena without targets. A quarter of the players start as Red
 phantoms: always cloaked, they can't take pickups, and their bolts fly only 14 m but tag out at
 once. Every Blue survivor they tag out comes back as a phantom. Survivors score 25 every 10 s
 they're in the game; infecting everyone ends the match and gives the phantoms 1000.
@@ -74,34 +79,61 @@ they're in the game; infecting everyone ends the match and gives the phantoms 10
 - **Mirrors** bounce a bolt once, so you can bank shots around corners.
 - **Jump pads** throw you up to the upper level.
 - **Laser gates** switch on and off; walking through one while it's on counts as a hit.
-- **Arena events** strike every few minutes, never the same twice in a row: a **Blackout**
-  turns out the lights for 20 s, an **Overdrive** respawns every missing pickup at once, and a
-  **Mirror Storm** makes every wall bounce bolts back (once) for 20 s, and **Low Gravity** lets
-  everyone jump about three times as high for 20 s. A **Bounty** marks the top scorer for
-  everyone for 30 s: tagging them out is worth 300, and lasting it out pays them 300.
+
+### Arena events
+
+The first event strikes 2-3 minutes into a match, then another every 2-3 minutes, never the same
+twice in a row and none in the last 75 s.
+
+| Event | Effect |
+|---|---|
+| Blackout | The lights go out for 20 s; bolts, players, pickups and targets still glow, and bots see less far. |
+| Overdrive | Every missing pickup comes back at once. |
+| Mirror Storm | For 20 s every wall bounces bolts back (once). |
+| Low Gravity | For 20 s everyone falls slower and jumps about three times as high. |
+| Bounty | The top scorer is marked for everyone for 30 s: tagging them out is worth 300, and lasting it out pays them 300. |
 
 ### Pickups
 
-Walk over a pickup to take it. You lose powerups when you're tagged out. Each powerup spot rolls
-a weapon, a gadget or a power each time it comes back. You hold one special weapon and carry one
-gadget at a time; a new one replaces the old.
+Walk over a pickup to take it. Laser grenades have their own spots; every other spot rolls a
+weapon, a gadget or a power each time it comes back. You hold one special weapon and carry one
+gadget at a time, and a new one replaces the old. You lose everything you picked up when you're
+tagged out.
 
-| Pickup | Effect |
+**Laser grenade:** throw it; after 3 s it spins and fires bolts in all directions, hitting
+everyone (including you).
+
+#### Weapons
+
+Each replaces your blaster until you're tagged out, and taking one fills it up.
+
+| Weapon | Effect |
 |---|---|
-| Laser grenade | Throw it; after 3 s it spins and fires bolts in all directions, hitting everyone (including you). |
-| Rapid fire | The blaster fires twice as fast. |
-| Shield | Activate to become immune to bolts for 10 s. |
-| Shotgun | Replaces your blaster: 10 short-range bolts per shot. |
-| Charge gun | Replaces your blaster: hold the trigger to charge a beam that pierces players and deals two hits. |
-| Ricochet rifle | Replaces your blaster: slower-firing bolts that bounce off every wall up to 3 times (but not off targets). |
-| Prism lance | Replaces your blaster: a slow marksman rifle whose shot hits instantly; a head hit counts as two. Zoom with Z / mouse button 5 (VR: a laser sight). |
-| Dual pistols | Replaces your blaster: a pistol in each hand, sharing the shots. Flat screen: clicks fire them in turn. VR: grip the second with your free hand; while you hold both, the shield is on the left stick's click, the gadget on holding B / Y, a quick double jump dashes, and there are no grenades. |
-| Cloak | Nearly invisible for 100 s; you flicker into view when you fire or are hit. |
+| Shotgun | 10 short-range bolts per shot. |
+| Charge gun | Tap to fire a bolt; hold the trigger to charge a beam that pierces players and deals two hits. |
+| Ricochet rifle | Slower-firing bolts that bounce off every wall up to 3 times (but not off targets). |
+| Prism lance | A slow marksman rifle whose shot hits instantly; a head hit counts as two. Zoom with Z or the mouse wheel (VR: a laser sight). |
+| Dual pistols | A pistol in each hand, sharing the shots. Flat screen: clicks fire them in turn. VR: grip the second with your free hand; while you hold both, the shield is on the left stick's click, the gadget on holding B / Y, a quick double jump dashes, and there are no grenades. |
+
+#### Gadgets
+
+Carried until you use it (the gadget input) or are tagged out.
+
+| Gadget | Effect |
+|---|---|
 | Barrier | Put up a wall of light for 8 s that blocks enemy bolts but lets your team's through. |
 | Mirror | Put up a mirror for 15 s that turns back every bolt, anyone's. |
 | Pulse sensor | Throw it; it sticks where it lands and for 20 s marks every enemy within 10 m for your team, through walls and cloaks. |
 | Decoy | Send a copy of yourself running ahead for 6 s; bots take it for you, and a bolt pops it. |
 | Med beam | Hold the gadget input on a team mate within 8 m: it heals a hit every 2.5 s and refills their blaster (12 s of beam). |
+
+#### Powers
+
+| Power | Effect |
+|---|---|
+| Rapid fire | The blaster fires twice as fast. |
+| Shield | Activate it (the shield input) to become immune to bolts for 10 s. |
+| Cloak | Nearly invisible for 100 s; you flicker into view when you fire or are hit. |
 | Speed boost | Run 50% faster for 15 s. |
 
 ### Controls
