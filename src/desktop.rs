@@ -14,7 +14,7 @@ use lt_sim::{Hand, Pose, SimEvent, Weapon};
 
 use crate::assets::Models;
 use crate::game::{Game, GameEvent, InputSet, LocalCmd, Mover, PredictSet, alpha};
-use crate::settings::{Action, Inputs, Settings};
+use crate::settings::{Action, Inputs, Settings, WheelState};
 
 #[derive(Component)]
 pub struct MainCamera;
@@ -32,6 +32,8 @@ pub struct Look {
     pub crouch_on: bool,
     /// Zooming in with the prism lance: 0 not at all, 1 all the way (eased).
     pub zoom: f32,
+    /// The mouse wheel held as a button (rolled up, not down since: `WheelState`).
+    pub wheel: bool,
     /// Dual pistols: the left one's turn to fire (they take turns, a click each).
     pub left_turn: bool,
 }
@@ -236,6 +238,7 @@ fn read_input(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
+    scroll: Res<bevy::input::mouse::AccumulatedMouseScroll>,
     cursor: Query<&CursorOptions, With<PrimaryWindow>>,
     models: Res<Models>,
     time: Res<Time<Fixed>>,
@@ -251,17 +254,23 @@ fn read_input(
         && cursor
             .single()
             .is_ok_and(|c| c.grab_mode != CursorGrabMode::None);
-    let input = Inputs {
-        keys: &keys,
-        mouse: &mouse,
-    };
-    let on = |a: Action| settings.pressed(a, &input);
-    let dt = real.delta_secs().clamp(1e-4, 0.05);
-    let mut turned = Vec2::ZERO;
     let lance = game
         .me
         .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
         .is_some_and(|p| p.weapon == Weapon::Lance && p.respawn.is_none());
+    // (A wheel held lets go with the lance, or out of the game: no zoom held over.)
+    if !grabbed || !lance {
+        look.wheel = false;
+    }
+    let dy = if grabbed { scroll.delta.y } else { 0.0 };
+    let input = Inputs {
+        keys: &keys,
+        mouse: &mouse,
+        wheel: WheelState::roll(&mut look.wheel, dy),
+    };
+    let on = |a: Action| settings.pressed(a, &input);
+    let dt = real.delta_secs().clamp(1e-4, 0.05);
+    let mut turned = Vec2::ZERO;
     let zoom = if grabbed && lance && on(Action::Zoom) {
         1.0
     } else {

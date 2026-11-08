@@ -272,6 +272,7 @@ fn capture(
     mut capture: ResMut<Capture>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
+    scroll: Res<bevy::input::mouse::AccumulatedMouseScroll>,
     mut settings: ResMut<Settings>,
     frames: Res<bevy::diagnostic::FrameCount>,
 ) {
@@ -295,6 +296,9 @@ fn capture(
         && let Some(b) = mouse.get_just_pressed().next()
     {
         chosen = Some(Some(Binding::Mouse(*b)));
+    }
+    if frames.0 > since && scroll.delta.y != 0.0 {
+        chosen = Some(Some(Binding::Wheel));
     }
     if let Some(b) = chosen {
         settings.set(action, slot, b);

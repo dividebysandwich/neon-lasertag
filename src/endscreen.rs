@@ -506,6 +506,7 @@ fn scoreboard(
         &crate::settings::Inputs {
             keys: &keys,
             mouse: &mouse,
+            wheel: default(),
         },
     ) || std::env::var("LT_SCORES").is_ok_and(|v| v == "1");
     let want = held && !overlays.end && !overlays.menu && !overlays.options;

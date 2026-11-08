@@ -111,17 +111,17 @@ summary of the rules.
 
 | | VR | Flat screen |
 |---|---|---|
-| Move | Left stick, or walk in your room | WASD (Shift: walk) |
+| Move | Left stick, or walk in your room | WASD (Left Alt: walk) |
 | Turn / look | Right stick, your head | Mouse |
 | Jump | A or X | Space |
-| Dash | Click the left stick | Left Alt or mouse button 4 |
+| Dash | Click the left stick | Left Shift or mouse button 4 |
 | Crouch | Crouch, or pull the right stick down | Left Ctrl or C |
 | Draw blaster | Grip at the holster on your hip | Always in hand |
 | Fire | Trigger | Left mouse button |
 | Grenade | Hold B / Y, throw, let go | Hold G or right mouse button, let go |
 | Shield | Trigger of the free hand | Q |
 | Gadget (barrier ...) | Grip of the free hand | E |
-| Zoom (prism lance) | - | Z or mouse button 5 |
+| Zoom (prism lance) | - | Hold Z, or roll the mouse wheel up (down to stop) |
 | Scores | In-game menu, or look at your wrist | Hold Tab |
 | Menu | Menu button, or hold B / Y | Esc |
 

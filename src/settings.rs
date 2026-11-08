@@ -84,21 +84,24 @@ impl Action {
     }
 
     fn defaults(self) -> [Option<Binding>; 2] {
-        use Binding::{Key, Mouse};
+        use Binding::{Key, Mouse, Wheel};
         match self {
             Action::Forward => [Some(Key(KeyCode::KeyW)), Some(Key(KeyCode::ArrowUp))],
             Action::Back => [Some(Key(KeyCode::KeyS)), Some(Key(KeyCode::ArrowDown))],
             Action::Left => [Some(Key(KeyCode::KeyA)), Some(Key(KeyCode::ArrowLeft))],
             Action::Right => [Some(Key(KeyCode::KeyD)), Some(Key(KeyCode::ArrowRight))],
-            Action::Walk => [Some(Key(KeyCode::ShiftLeft)), None],
+            Action::Walk => [Some(Key(KeyCode::AltLeft)), None],
             Action::Crouch => [Some(Key(KeyCode::ControlLeft)), Some(Key(KeyCode::KeyC))],
             Action::Jump => [Some(Key(KeyCode::Space)), None],
-            Action::Dash => [Some(Key(KeyCode::AltLeft)), Some(Mouse(MouseButton::Back))],
+            Action::Dash => [
+                Some(Key(KeyCode::ShiftLeft)),
+                Some(Mouse(MouseButton::Back)),
+            ],
             Action::Fire => [Some(Mouse(MouseButton::Left)), None],
             Action::Grenade => [Some(Key(KeyCode::KeyG)), Some(Mouse(MouseButton::Right))],
             Action::Shield => [Some(Key(KeyCode::KeyQ)), None],
             Action::Gadget => [Some(Key(KeyCode::KeyE)), None],
-            Action::Zoom => [Some(Key(KeyCode::KeyZ)), Some(Mouse(MouseButton::Forward))],
+            Action::Zoom => [Some(Key(KeyCode::KeyZ)), Some(Wheel)],
             Action::Scores => [Some(Key(KeyCode::Tab)), None],
         }
     }
@@ -108,7 +111,12 @@ impl Action {
 pub enum Binding {
     Key(KeyCode),
     Mouse(MouseButton),
+    /// The mouse wheel: rolled up, it holds the action until rolled down again.
+    Wheel,
 }
+
+/// The name the mouse wheel is shown and saved by.
+const WHEEL: &str = "Mouse Wheel";
 
 /// Keys that can be bound, with the names shown and saved.
 const KEYS: &[(KeyCode, &str)] = {
@@ -224,6 +232,7 @@ impl Binding {
                 .iter()
                 .find(|(c, _)| *c == b)
                 .map_or_else(|| format!("{b:?}"), |(_, n)| n.to_string()),
+            Binding::Wheel => WHEEL.to_string(),
         }
     }
 
@@ -237,6 +246,7 @@ impl Binding {
                     .find(|(_, n)| *n == s)
                     .map(|(b, _)| Binding::Mouse(*b))
             })
+            .or_else(|| (s == WHEEL).then_some(Binding::Wheel))
     }
 
     /// Whether this key can be bound (Esc and the like are the game's own).
@@ -333,6 +343,33 @@ impl Default for Settings {
 pub struct Inputs<'a> {
     pub keys: &'a ButtonInput<KeyCode>,
     pub mouse: &'a ButtonInput<MouseButton>,
+    pub wheel: WheelState,
+}
+
+/// The mouse wheel as a button: `held` from rolling it up until rolling it down (kept by
+/// whoever reads the input), `up` and `down` this frame's rolls.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct WheelState {
+    pub held: bool,
+    pub up: bool,
+    pub down: bool,
+}
+
+impl WheelState {
+    /// This frame's wheel, rolled `dy` (up positive), latching `held`.
+    pub fn roll(held: &mut bool, dy: f32) -> WheelState {
+        let (up, down) = (dy > 0.0, dy < 0.0);
+        if up {
+            *held = true;
+        } else if down {
+            *held = false;
+        }
+        WheelState {
+            held: *held,
+            up,
+            down,
+        }
+    }
 }
 
 impl Settings {
@@ -399,6 +436,7 @@ impl Settings {
         self.any(a, |b| match b {
             Binding::Key(k) => i.keys.pressed(k),
             Binding::Mouse(m) => i.mouse.pressed(m),
+            Binding::Wheel => i.wheel.held,
         })
     }
 
@@ -406,6 +444,7 @@ impl Settings {
         self.any(a, |b| match b {
             Binding::Key(k) => i.keys.just_pressed(k),
             Binding::Mouse(m) => i.mouse.just_pressed(m),
+            Binding::Wheel => i.wheel.up,
         })
     }
 
@@ -413,6 +452,7 @@ impl Settings {
         self.any(a, |b| match b {
             Binding::Key(k) => i.keys.just_released(k),
             Binding::Mouse(m) => i.mouse.just_released(m),
+            Binding::Wheel => i.wheel.down,
         })
     }
 
@@ -582,6 +622,7 @@ mod tests {
         for (b, n) in BUTTONS {
             assert_eq!(Binding::parse(n), Some(Binding::Mouse(*b)));
         }
+        assert_eq!(Binding::parse(WHEEL), Some(Binding::Wheel));
     }
 
     #[test]
