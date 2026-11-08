@@ -17,7 +17,7 @@ use std::ffi::c_void;
 const LIT_SHADER: &str = include_str!("../../assets/shaders/gl/lit.glsl");
 const NEON_SHADER: &str = include_str!("../../assets/shaders/gl/neon.glsl");
 const LENS_SHADER: &str = include_str!("../../assets/shaders/gl/lens.glsl");
-/// Near plane (m), as bevy_mod_xr's XR cameras.
+/// Near plane (m), as `--vr`'s eye cameras (src/xr.rs).
 pub const NEAR: f32 = 0.05;
 /// The scope's view (src/scope.rs): its size (pixels, square) and mip levels.
 const SCOPE_SIZE: i32 = 512;

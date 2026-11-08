@@ -6,6 +6,8 @@
 //!
 //! The lens is no mesh of its own. [`ScopeLens`] on an entity tells the renderer where to draw
 //! it and where the scope's camera is. The tube and its rings are ordinary meshes, its children.
+//! For `--vr`, [`BevyScopePlugin`] adds the camera (drawing into an image) and the lens's meshes:
+//! the view, and a reticle over it.
 
 use bevy::prelude::*;
 use lt_sim::{Team, Weapon};
@@ -44,7 +46,7 @@ pub struct ScopeLens {
 pub struct Scope {
     pub lens: Entity,
     rings: [Entity; 2],
-    team: Option<Team>,
+    pub team: Option<Team>,
 }
 
 pub fn spawn_scope(
@@ -159,4 +161,242 @@ pub fn place_scope(
 /// Whether the scope is held up to an eye (the laser sight's beam would block its view).
 pub fn scope_on(scope: Option<&Scope>, lenses: &Query<&ScopeLens>) -> bool {
     scope.is_some_and(|s| lenses.get(s.lens).is_ok_and(|l| l.on))
+}
+
+/// `--vr`: the scope's view drawn by Bevy (into `VIEW_SIZE`² pixels).
+pub struct BevyScopePlugin;
+
+const VIEW_SIZE: u32 = 384;
+
+impl Plugin for BevyScopePlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Update,
+            (
+                spawn_view.run_if(resource_exists::<Scope>.and_then(not(resource_exists::<View>))),
+                update_view.after(crate::vr::PoseSet),
+            ),
+        );
+    }
+}
+
+/// The scope's camera, its lens's mesh and materials (its view, dark glass), and the reticle's
+/// material.
+#[derive(Resource)]
+struct View {
+    camera: Entity,
+    lens: Entity,
+    on: Handle<StandardMaterial>,
+    off: Handle<StandardMaterial>,
+    reticle: Handle<StandardMaterial>,
+    team: Option<Option<Team>>,
+}
+
+fn spawn_view(
+    mut commands: Commands,
+    scope: Res<Scope>,
+    mut images: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    lenses: Query<&ScopeLens>,
+) {
+    use bevy::camera::{Hdr, RenderTarget};
+    use bevy::core_pipeline::tonemapping::Tonemapping;
+    use bevy::render::render_resource::TextureFormat;
+    let Ok(lens) = lenses.get(scope.lens) else {
+        return;
+    };
+    // HDR and not tone mapped: the eyes' cameras do that (and the bloom) to the lens too.
+    let image = images.add(Image::new_target_texture(
+        VIEW_SIZE,
+        VIEW_SIZE,
+        TextureFormat::Rgba16Float,
+        None,
+    ));
+    let camera = commands
+        .spawn((
+            Name::new("scope camera"),
+            Camera3d::default(),
+            Camera {
+                order: -1,
+                is_active: false,
+                ..default()
+            },
+            RenderTarget::Image(image.clone().into()),
+            Hdr,
+            Tonemapping::None,
+            Msaa::Sample4,
+            Projection::Perspective(PerspectiveProjection {
+                fov: 2.0 * lens.tan.atan(),
+                aspect_ratio: 1.0,
+                near: 0.03,
+                ..default()
+            }),
+        ))
+        .id();
+    let on = materials.add(StandardMaterial {
+        base_color_texture: Some(image),
+        unlit: true,
+        ..default()
+    });
+    let off = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.01, 0.012, 0.02),
+        perceptual_roughness: 0.15,
+        reflectance: 0.6,
+        ..default()
+    });
+    let disc = meshes.add(disc(lens.radius));
+
+    let lens_mesh = commands
+        .spawn((
+            Mesh3d(disc.clone()),
+            MeshMaterial3d(off.clone()),
+            Transform::from_xyz(0.0, 0.0, 0.0005),
+            ChildOf(scope.lens),
+        ))
+        .id();
+    let reticle = materials.add(StandardMaterial {
+        base_color_texture: Some(images.add(reticle_image())),
+        unlit: true,
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+    commands.spawn((
+        Mesh3d(disc),
+        MeshMaterial3d(reticle.clone()),
+        Transform::from_xyz(0.0, 0.0, 0.001),
+        Visibility::Hidden,
+        ScopeReticle,
+        ChildOf(scope.lens),
+    ));
+    commands.insert_resource(View {
+        camera,
+        lens: lens_mesh,
+        on,
+        off,
+        reticle,
+        team: None,
+    });
+}
+
+/// The reticle over the lens: shown with the view.
+#[derive(Component)]
+struct ScopeReticle;
+
+/// The camera follows the scope and draws only while it is held up to an eye; the lens shows
+/// its view then, else dark glass.
+#[allow(clippy::too_many_arguments)]
+fn update_view(
+    mut commands: Commands,
+    view: Option<ResMut<View>>,
+    scope: Option<Res<Scope>>,
+    lenses: Query<&ScopeLens>,
+    mut cams: Query<(&mut Camera, &mut Transform)>,
+    mut reticles: Query<&mut Visibility, With<ScopeReticle>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let (Some(mut view), Some(scope)) = (view, scope) else {
+        return;
+    };
+
+    let Ok(lens) = lenses.get(scope.lens) else {
+        return;
+    };
+    if let Ok((mut cam, mut t)) = cams.get_mut(view.camera) {
+        if cam.is_active != lens.on {
+            cam.is_active = lens.on;
+            let m = if lens.on { &view.on } else { &view.off };
+            commands.entity(view.lens).insert(MeshMaterial3d(m.clone()));
+        }
+        *t = lens.camera;
+    }
+    for mut v in &mut reticles {
+        let want = if lens.on {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *v != want {
+            *v = want;
+        }
+    }
+    if view.team != Some(scope.team) {
+        view.team = Some(scope.team);
+        let c = match scope.team {
+            Some(Team::Red) => crate::materials::RED,
+            Some(Team::Blue) => crate::materials::BLUE,
+            None => Vec3::ONE,
+        };
+        if let Some(mut m) = materials.get_mut(&view.reticle) {
+            m.base_color = Color::linear_rgb(c.x, c.y, c.z);
+        }
+    }
+}
+
+/// A disc of `radius` facing +Z, its UVs across it as an image's (u right, v down).
+/// (Bevy's own `Circle` mesh didn't show in the headset.)
+fn disc(radius: f32) -> Mesh {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::mesh::{Indices, PrimitiveTopology};
+    const N: u32 = 40;
+    let mut positions = vec![[0.0, 0.0, 0.0]];
+    let mut uvs = vec![[0.5, 0.5]];
+    for i in 0..N {
+        let (y, x) = (i as f32 / N as f32 * std::f32::consts::TAU).sin_cos();
+        positions.push([x * radius, y * radius, 0.0]);
+        uvs.push([0.5 + 0.5 * x, 0.5 - 0.5 * y]);
+    }
+    let indices = (0..N).flat_map(|i| [0, 1 + i, 1 + (i + 1) % N]).collect();
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::RENDER_WORLD,
+    )
+    .with_inserted_attribute(
+        Mesh::ATTRIBUTE_NORMAL,
+        vec![[0.0, 0.0, 1.0]; N as usize + 1],
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+    .with_inserted_indices(Indices::U32(indices))
+}
+
+/// The reticle (as lens.glsl's): a fine white cross with a gap in the middle and a dot, and the
+/// rim darkened as through a tube; clear elsewhere.
+fn reticle_image() -> Image {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    const N: usize = 256;
+    let mut data = vec![0u8; N * N * 4];
+    for y in 0..N {
+        for x in 0..N {
+            let p = Vec2::new(x as f32 + 0.5, y as f32 + 0.5) / N as f32 * 2.0 - Vec2::ONE;
+            let r = p.length();
+            let aa = 2.0 / N as f32;
+            let w = 0.012;
+            let line = (1.0 - ((p.x.abs() - w) / aa).clamp(0.0, 1.0))
+                .max(1.0 - ((p.y.abs() - w) / aa).clamp(0.0, 1.0))
+                * ((r - 0.1) / 0.02).clamp(0.0, 1.0)
+                * (1.0 - ((r - 0.6) / 0.1).clamp(0.0, 1.0));
+            let dot = 1.0 - ((r - 0.025) / aa).clamp(0.0, 1.0);
+            let mark = line.max(dot) * 0.9;
+            let rim = ((r - 0.75) / 0.25).clamp(0.0, 1.0) * 0.85;
+            // Over: the mark white, the rim black.
+            let alpha = mark + rim * (1.0 - mark);
+            let white = if alpha > 0.0 { mark / alpha } else { 0.0 };
+            let v = (white * 255.0) as u8;
+            let i = (y * N + x) * 4;
+            data[i..i + 4].copy_from_slice(&[v, v, v, (alpha * 255.0) as u8]);
+        }
+    }
+    Image::new(
+        Extent3d {
+            width: N as u32,
+            height: N as u32,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    )
 }

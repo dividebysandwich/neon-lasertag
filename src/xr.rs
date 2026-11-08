@@ -72,7 +72,7 @@ pub fn add_plugins(app: &mut App, asset_root: &str) -> bool {
         )
         .set(init),
     )
-    .add_plugins((OxrInputPlugin, VrPlugin));
+    .add_plugins((OxrInputPlugin, VrPlugin, crate::scope::BevyScopePlugin));
     true
 }
 
@@ -421,14 +421,24 @@ fn find_rig(
     }
 }
 
-/// The eye cameras: HDR with bloom (`LT_XR_BLOOM=0` turns it off); one of them listens.
+/// The eye cameras' near plane (m): bevy_mod_xr's 0.1 cut away the scope's lens held up to
+/// the eye (src/scope.rs). As `--gl-vr`'s (src/glvr/render.rs).
+const EYE_NEAR: f32 = 0.05;
+
+/// The eye cameras: HDR with bloom (`LT_XR_BLOOM=0` turns it off), the near plane at
+/// `EYE_NEAR`; one of them listens.
 fn setup_cameras(
     mut commands: Commands,
-    cams: Query<Entity, Added<XrCamera>>,
+    mut cams: Query<(Entity, &mut Projection), Added<XrCamera>>,
     mut first: Local<bool>,
 ) {
     let bloom = std::env::var("LT_XR_BLOOM").map_or(true, |v| v != "0");
-    for e in &cams {
+    for (e, mut projection) in &mut cams {
+        if let Projection::Custom(custom) = &mut *projection
+            && let Some(p) = custom.get_mut::<bevy_mod_xr::camera::XrProjection>()
+        {
+            p.near = EYE_NEAR;
+        }
         let mut c = commands.entity(e);
         if bloom {
             c.insert((
