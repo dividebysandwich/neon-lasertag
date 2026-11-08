@@ -27,6 +27,9 @@ pub const MAX_PLAYERS: usize = 32;
 pub const PICKUP_REACH: f32 = 0.9;
 /// Pickups hover this high above the floor.
 pub const PICKUP_HEIGHT: f32 = 0.6;
+/// The least speed (m/s) coming down that counts as landing (`SimEvent::Landed`): about a
+/// jump's.
+pub const LAND_SPEED: f32 = 3.0;
 /// Default standing eye height.
 pub const EYE: f32 = 1.65;
 /// Seconds a turret waits before its first shot at a player it has just found, or after it
@@ -1523,8 +1526,16 @@ impl Sim {
                 continue;
             }
             let p = &mut self.players[i];
+            let fall = -p.vy;
             p.feet = feet;
             p.vy = vy;
+            if vy == 0.0 && fall > LAND_SPEED {
+                self.events.push(SimEvent::Landed {
+                    player: p.id,
+                    pos: feet,
+                    speed: fall,
+                });
+            }
             // Jump pads: down again, and thrown up.
             if let Some((vy, air)) = pad_step(&self.level, feet, vy, &mut p.air) {
                 p.vy = vy;
@@ -3918,6 +3929,7 @@ mod tests {
         };
         jump(&mut sim, 0);
         sim.step();
+        sim.drain_events();
         jump(&mut sim, 1);
         let mut top = ground;
         for _ in 0..120 {
@@ -3929,6 +3941,16 @@ mod tests {
         let p = sim.player(a).unwrap();
         assert_eq!(p.feet.y, ground);
         assert_eq!(p.vy, 0.0);
+        let landed: Vec<f32> = sim
+            .drain_events()
+            .iter()
+            .filter_map(|e| match *e {
+                SimEvent::Landed { player, speed, .. } if player == a => Some(speed),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(landed.len(), 1, "landed once: {landed:?}");
+        assert!(landed[0] > LAND_SPEED && landed[0] < 4.5, "{landed:?}");
     }
 
     #[test]

@@ -566,6 +566,12 @@ pub enum SimEvent {
     SpeedDown {
         player: PlayerId,
     },
+    /// A player came down from a fall or jump at `speed` (m/s, more than `LAND_SPEED`).
+    Landed {
+        player: PlayerId,
+        pos: Vec3,
+        speed: f32,
+    },
     /// A bolt hit a shielded player (and did nothing).
     Blocked {
         player: PlayerId,

@@ -581,6 +581,20 @@ fn play_events(
                     0.7,
                 )
             }
+            // A thud, lower and louder the harder the landing.
+            SimEvent::Landed { player, pos, speed } => {
+                let mine = Some(player) == me;
+                let k = ((speed - lt_sim::sim::LAND_SPEED) / 6.0).clamp(0.0, 1.0);
+                play_capped(
+                    &mut commands,
+                    gain,
+                    &sounds.steps[player as usize % 3],
+                    (!mine).then_some(pos),
+                    (if mine { 0.5 } else { 1.0 }) * (0.6 + 0.6 * k),
+                    0.8 - 0.2 * k,
+                    Mix::Steps,
+                )
+            }
             SimEvent::Jumped { player, pos } => {
                 let mine = Some(player) == me;
                 play(

@@ -126,9 +126,9 @@ impl Punch {
         spring(&mut self.dip, &mut self.dip_vel, DIP_SPRING, dt);
         self.trauma = (self.trauma - dt / SHAKE_TIME).max(0.0);
         if grounded {
-            // A dip as deep as the fall was fast (at most 8 cm), from 3 m/s.
+            // A dip as deep as the fall was fast (at most 8 cm), from `LAND_SPEED`.
             if let Some(v) = self.fall.take()
-                && v > 3.0
+                && v > lt_sim::sim::LAND_SPEED
             {
                 let depth = (v * 0.012).min(0.08);
                 self.dip_vel += depth * DIP_SPRING * std::f32::consts::E;
