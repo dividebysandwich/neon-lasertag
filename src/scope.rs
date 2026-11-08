@@ -8,6 +8,10 @@
 //! it and where the scope's camera is. The tube and its rings are ordinary meshes, its children.
 //! For `--vr`, [`BevyScopePlugin`] adds the camera (drawing into an image) and the lens's meshes:
 //! the view, and a reticle over it.
+//!
+//! Magnified, a hand's tremor shakes the view, so the scope looks along a steadied aim
+//! ([`Steady`]): small, quick wobbles smoothed away, deliberate swings followed at once. While
+//! it is at an eye the lance fires along that aim too, where the reticle shows.
 
 use bevy::prelude::*;
 use lt_sim::{Team, Weapon};
@@ -30,6 +34,40 @@ const EYE_RELIEF: f32 = 0.1;
 /// The lens comes alive within this distance of an eye (m), facing it.
 const ACTIVE_DIST: f32 = 0.3;
 
+/// The steadied aim: a one-euro filter on the gun's rotation. Turning slowly, it follows at
+/// `MIN_CUTOFF` Hz (smoothing a tremor away); faster, `BETA` Hz more per radian a second
+/// (keeping up with a swing). Its speed is smoothed at `SPEED_CUTOFF` Hz.
+const MIN_CUTOFF: f32 = 1.2;
+const BETA: f32 = 3.0;
+const SPEED_CUTOFF: f32 = 2.0;
+
+/// The gun's steadied rotation (`MIN_CUTOFF`) and how fast it turns (rad/s, smoothed).
+#[derive(Clone, Copy, Debug)]
+pub struct Steady {
+    pub rot: Quat,
+    speed: f32,
+}
+
+impl Steady {
+    pub fn new(rot: Quat) -> Self {
+        Steady { rot, speed: 0.0 }
+    }
+
+    /// Follows `rot` over `dt` seconds.
+    pub fn follow(&mut self, rot: Quat, dt: f32) {
+        if dt <= 0.0 {
+            return;
+        }
+        let k = |hz: f32| 1.0 - (-std::f32::consts::TAU * hz * dt).exp();
+        let speed = self.rot.angle_between(rot) / dt;
+        self.speed += (speed - self.speed) * k(SPEED_CUTOFF);
+        self.rot = self
+            .rot
+            .slerp(rot, k(MIN_CUTOFF + BETA * self.speed))
+            .normalize();
+    }
+}
+
 /// Where to draw the scope's lens (this entity's `GlobalTransform`: its centre, facing +Z
 /// towards the player, `radius` big) and what it shows. With `on`, the view from `camera`
 /// (world, looking along -Z) at half field of view `atan(tan)`; without, dark glass.
@@ -47,6 +85,8 @@ pub struct Scope {
     pub lens: Entity,
     rings: [Entity; 2],
     pub team: Option<Team>,
+    /// The gun's steadied aim (none while the lance isn't held).
+    pub steady: Option<Steady>,
 }
 
 pub fn spawn_scope(
@@ -103,17 +143,20 @@ pub fn spawn_scope(
         lens,
         rings,
         team: None,
+        steady: None,
     });
 }
 
-/// On the blaster while the prism lance is held, alive when held up to an eye.
+/// On the blaster while the prism lance is held, alive when held up to an eye; then the lance
+/// fires along the steadied aim the scope looks along.
 #[allow(clippy::too_many_arguments)]
 pub fn place_scope(
     mut commands: Commands,
     scope: Option<ResMut<Scope>>,
     vr: Res<VrState>,
     game: Res<Game>,
-    local: Res<LocalCmd>,
+    mut local: ResMut<LocalCmd>,
+    time: Res<Time>,
     mover: Res<Mover>,
     models: Res<crate::assets::Models>,
     palette: Res<Palette>,
@@ -141,6 +184,7 @@ pub fn place_scope(
     let Some(hand) = gun else {
         *vis = Visibility::Hidden;
         lens.on = false;
+        scope.steady = None;
         return;
     };
     *vis = Visibility::Inherited;
@@ -148,14 +192,21 @@ pub fn place_scope(
     let g = local.cmd.hands[hand.index()];
     let gun = Transform::from_translation(mover.feet + g.pos).with_rotation(g.rot);
     *t = Transform::from_translation(gun.transform_point(LENS_AT)).with_rotation(g.rot);
-    // From the muzzle along the barrel: the middle of the view is where the shot goes.
+    // From the muzzle along the barrel, steadied: the middle of the view is where the shot
+    // goes.
+    let steady = scope.steady.get_or_insert(Steady::new(g.rot));
+    steady.follow(g.rot, time.delta_secs());
+    let aim = steady.rot;
     lens.camera =
-        Transform::from_translation(gun.transform_point(models.muzzle)).with_rotation(g.rot);
+        Transform::from_translation(gun.transform_point(models.muzzle)).with_rotation(aim);
     // Up to an eye, and looked into from behind.
     let eye = mover.feet + local.cmd.head.pos;
     let back = g.rot * Vec3::Z;
     let to_eye = eye - t.translation;
     lens.on = to_eye.length() < ACTIVE_DIST && to_eye.normalize_or_zero().dot(back) > 0.7;
+    if lens.on {
+        local.cmd.muzzle.rot = lt_sim::sim::look_rot(aim * Vec3::NEG_Z);
+    }
 }
 
 /// Whether the scope is held up to an eye (the laser sight's beam would block its view).
@@ -399,4 +450,39 @@ fn reticle_image() -> Image {
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::RENDER_WORLD,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn steady_smooths_a_tremor_and_follows_a_swing() {
+        let dt = 1.0 / 90.0;
+        // A 10 Hz tremor of half a degree about a fixed aim: the steadied aim wobbles far less.
+        let mut s = Steady::new(Quat::IDENTITY);
+        let mut worst = 0.0f32;
+        for i in 0..270 {
+            let t = i as f32 * dt;
+            let wobble = 0.5f32.to_radians() * (std::f32::consts::TAU * 10.0 * t).sin();
+            s.follow(Quat::from_rotation_y(wobble), dt);
+            if i > 90 {
+                worst = worst.max(s.rot.angle_between(Quat::IDENTITY));
+            }
+        }
+        assert!(worst < 0.2f32.to_radians(), "{}", worst.to_degrees());
+        // A quick 60 degree swing: within half a degree a tenth of a second after it stops.
+        let to = Quat::from_rotation_y(60f32.to_radians());
+        for i in 0..=18 {
+            s.follow(Quat::IDENTITY.slerp(to, (i as f32 / 18.0).min(1.0)), dt);
+        }
+        for _ in 0..9 {
+            s.follow(to, dt);
+        }
+        assert!(
+            s.rot.angle_between(to) < 0.5f32.to_radians(),
+            "lag {}",
+            s.rot.angle_between(to).to_degrees()
+        );
+    }
 }
