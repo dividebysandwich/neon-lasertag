@@ -738,7 +738,7 @@ fn lobby_choices(b: &mut Builder, buttons: &mut Vec<Button>, m: &MenuModel, mut 
         .map(|&g| item(g.name(), MenuAct::Mode(g)))
         .map(|(n, a, on)| (n, menu(a), Hue::Cyan, on))
         .collect();
-    button_row(b, buttons, modes, y - 0.07, 0.42, 0.09);
+    button_row(b, buttons, modes, y - 0.07, 0.24, 0.09);
     y - 0.16
 }
 
