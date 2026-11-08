@@ -560,8 +560,11 @@ fn sync_players(
     xr: Option<Res<crate::vr::XrInput>>,
     meshes: Res<ActorMeshes>,
     mut glows: ResMut<Assets<GlowMaterial>>,
+    free: Option<Res<crate::freecam::FreeCam>>,
 ) {
     let vr = xr.is_some();
+    // (The free camera sees one's own avatar from outside too.)
+    let outside = crate::scenery::chase().is_some() || free.is_some_and(|f| f.on);
     let a = alpha(&time);
     let views = &mut *views;
     // A new arena: start over.
@@ -608,7 +611,7 @@ fn sync_players(
         let feet = prev.map_or(p.feet, |q| q.feet.lerp(p.feet, a));
         let yaw = prev.map_or(p.yaw, |q| lerp_angle(q.yaw, p.yaw, a));
         // (Seen from outside when debugging with LT_CHASE.)
-        let me = Some(p.id) == game.me && crate::scenery::chase().is_none();
+        let me = Some(p.id) == game.me && !outside;
         let alive = p.respawn.is_none();
         let set_vis = |vis: &mut Query<&mut Visibility>, e: Entity, on: bool| {
             if let Ok(mut v) = vis.get_mut(e) {

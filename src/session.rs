@@ -15,7 +15,8 @@
 //! room (`warp-room`), in front of the first turret (`warp-turret`) or into the first pocket
 //! (`warp-pocket`); in front of the nearest mirror (`warp-mirror`) jump pad (`warp-pad`) or laser gate (`warp-gate`); turning the flat screen's view (`yaw=90`, `pitch=-20`, in degrees); holding the trigger
 //! down for S seconds (`fire=S`); putting up a carried barrier (`barrier`); arena events (`blackout`, `overdrive`) and the last
-//! minute's double points (`double`); freezing the game (`freeze`).
+//! minute's double points (`double`); freezing the game (`freeze`), the free camera
+//! (`freecam`), its view's width (`fov=DEG`) and aperture (`dof=N`).
 
 use bevy::prelude::*;
 use lt_sim::bots::Difficulty;
@@ -578,12 +579,32 @@ fn dev_script(
                 }
             });
         }
-        // Freezing an offline game (as F11; the script waits while frozen).
+        // Freezing an offline game (as F11; the script waits while frozen), and the free camera
+        // (as F12), its view's width (`fov=DEG`) and aperture (`dof=N`, a step of the wheel each).
         "freeze" => commands.queue(|w: &mut World| {
             if let Some(mut f) = w.get_resource_mut::<crate::freeze::Frozen>() {
                 f.1 = true;
             }
         }),
+        "freecam" => commands.queue(|w: &mut World| {
+            if let Some(mut f) = w.get_resource_mut::<crate::freecam::FreeCam>() {
+                f.request = true;
+            }
+        }),
+        a if a.starts_with("fov=") || a.starts_with("dof=") => {
+            let (key, v) = a.split_once('=').unwrap_or_default();
+            let Ok(n) = v.parse::<f32>() else { return };
+            let fov = key == "fov";
+            commands.queue(move |w: &mut World| {
+                if let Some(mut f) = w.get_resource_mut::<crate::freecam::FreeCam>() {
+                    if fov {
+                        f.set_fov(n);
+                    } else {
+                        f.set_stop(n as usize);
+                    }
+                }
+            });
+        }
         a if a.starts_with("play") => {
             let d = a
                 .strip_prefix("play-")

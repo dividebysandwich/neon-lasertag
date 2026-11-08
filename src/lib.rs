@@ -26,6 +26,7 @@ pub mod desktop;
 pub mod endscreen;
 pub mod eyes;
 pub mod features;
+pub mod freecam;
 pub mod freeze;
 pub mod game;
 #[cfg(all(feature = "glvr", target_os = "linux"))]
@@ -344,6 +345,7 @@ pub fn run() {
                 reflections::ReflectionsPlugin,
                 endscreen::EndScreenPlugin,
                 freeze::FreezePlugin,
+                freecam::FreeCamPlugin,
             ));
         }
     }

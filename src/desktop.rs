@@ -1,7 +1,8 @@
 //! Playing on a flat screen: mouse look, WASD, Ctrl crouches, left button fires, right button (or G) holds a
 //! grenade and throws it when let go. Esc opens the in-game menu (src/pause.rs); while it or
 //! the end of match screen (src/endscreen.rs) is up, the mouse is free and the game ignores
-//! the input; so does it while frozen (F11, src/freeze.rs).
+//! the input; so does it while frozen (F11, src/freeze.rs) or flying the free camera (F12,
+//! src/freecam.rs).
 
 use bevy::camera::Hdr;
 use bevy::core_pipeline::tonemapping::Tonemapping;
@@ -258,7 +259,12 @@ fn apply_fov(
     mover: Res<Mover>,
     time: Res<Time>,
     mut cams: Query<&mut Projection, With<MainCamera>>,
+    free: Res<crate::freecam::FreeCam>,
 ) {
+    // (The free camera has its own.)
+    if free.on {
+        return;
+    }
     let dashing = mover.valid && mover.moves.dash_left > 0.0 && settings.head_bob;
     let k = 1.0 - (-time.delta_secs() / DASH_FOV_TIME).exp();
     look.dash += (if dashing { 1.0 } else { 0.0 } - look.dash) * k;
@@ -347,15 +353,20 @@ fn read_input(
     models: Res<Models>,
     time: Res<Time<Fixed>>,
     mover: Res<Mover>,
-    (overlays, frozen): (Res<Overlays>, Res<crate::freeze::Frozen>),
+    (overlays, free, frozen): (
+        Res<Overlays>,
+        Res<crate::freecam::FreeCam>,
+        Res<crate::freeze::Frozen>,
+    ),
     settings: Res<Settings>,
     mut sway: ResMut<Sway>,
     real: Res<Time>,
     mut arc: ResMut<ThrowArc>,
 ) {
     let Some(game) = game else { return };
-    // (Frozen: the player stands as they were.)
+    // (Flying the free camera, or frozen: the player stands as they were.)
     let grabbed = !overlays.any()
+        && !free.on
         && !frozen.0
         && cursor
             .single()
@@ -785,7 +796,12 @@ fn place_camera(
     mover: Res<Mover>,
     real: Res<Time<Real>>,
     mut cam: Query<&mut Transform, With<MainCamera>>,
+    free: Res<crate::freecam::FreeCam>,
 ) {
+    // (Flown by src/freecam.rs.)
+    if free.on {
+        return;
+    }
     let Ok(mut t) = cam.single_mut() else { return };
     let Some(game) = game else {
         // The start menu's scene (src/lobby.rs): from the middle of the empty arena, turning
