@@ -100,6 +100,9 @@ struct Flash {
     light: Option<f32>,
 }
 
+/// How long a muzzle flash lasts (s).
+const MUZZLE_FLASH: f32 = 0.06;
+
 /// A charge gun beam's streak: thins out over its life.
 #[derive(Component)]
 struct Tracer {
@@ -1526,6 +1529,26 @@ fn effects(
                     0.025,
                     seed,
                 );
+            }
+            // A muzzle flash: a small glow swelling and gone at once (the light is
+            // `shot_lights`'), bigger for the shotgun.
+            SimEvent::Fired { player, pos, .. } => {
+                let shotgun = game
+                    .snap
+                    .players
+                    .iter()
+                    .any(|p| p.id == player && p.weapon == Weapon::Shotgun);
+                commands.spawn((
+                    Flash {
+                        life: MUZZLE_FLASH,
+                        max: MUZZLE_FLASH,
+                        size: if shotgun { 0.16 } else { 0.09 },
+                        light: None,
+                    },
+                    Mesh3d(meshes.halo.clone()),
+                    MeshMaterial3d(palette.glow_for(team_of(player))),
+                    Transform::from_translation(pos).with_scale(Vec3::splat(0.01)),
+                ));
             }
             // A charge gun's beam: a streak of light along its way, fading.
             SimEvent::BeamFired { player, pos, dir } => {
