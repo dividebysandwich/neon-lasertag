@@ -8,7 +8,7 @@
 //! [`segment`] turns and stretches one between two joints.
 
 use bevy::prelude::*;
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 /// The neck, from the head's pivot down into the vest's collar (its mesh's length).
 pub const NECK: f32 = 0.2;
@@ -137,6 +137,8 @@ pub struct Gait {
     air: f32,
     air_hold: f32,
     hip_yaw: f32,
+    /// Moving backwards (with hysteresis, so strafing doesn't flip the hips back and forth).
+    backward: bool,
     phase: f32,
     /// The hips' standing height above the feet (tall VR players have longer legs).
     stand: f32,
@@ -183,10 +185,28 @@ impl Gait {
         let air_want = if self.air_hold > 0.0 { 1.0 } else { 0.0 };
         self.air += (air_want - self.air) * (1.0 - (-dt * 12.0).exp());
 
-        // The hips follow the chest's facing, lagging (faster when moving), never far.
-        self.hip_yaw += wrap(chest_yaw - self.hip_yaw) * (1.0 - (-dt * (2.0 + 6.0 * moving)).exp());
+        // The hips follow the chest's facing, lagging (faster when moving), never far; moving,
+        // they turn halfway into the travel (or away from it, backpedalling), so a strafe runs
+        // half forward and the chest keeps aiming.
+        let dir = self.vel.normalize_or_zero();
+        let travel = wrap((-dir.x).atan2(-dir.z) - chest_yaw);
+        if moving > 0.0 {
+            let hyst = if self.backward { -0.25 } else { 0.25 };
+            self.backward = travel.abs() > FRAC_PI_2 + hyst;
+        }
+        let along = if self.backward {
+            wrap(travel + PI)
+        } else {
+            travel
+        };
+        let hip_want = chest_yaw + (0.5 * along * moving).clamp(-MAX_TWIST, MAX_TWIST);
+        self.hip_yaw += wrap(hip_want - self.hip_yaw) * (1.0 - (-dt * (2.0 + 6.0 * moving)).exp());
         self.hip_yaw = chest_yaw + wrap(self.hip_yaw - chest_yaw).clamp(-MAX_TWIST, MAX_TWIST);
         let hips = Quat::from_rotation_y(self.hip_yaw);
+        // The travel in the hips' frame: forward (negative backwards) and to the right.
+        let local = hips.inverse() * dir;
+        let (fwd, lat) = (-local.z, local.x);
+        let back_k = if self.backward { moving } else { 0.0 };
 
         // How high the hips would hang from the chest, and how tall this player stands.
         let want = chest_top.y - PELVIS_DROP + HIP.y;
@@ -200,30 +220,32 @@ impl Gait {
         // Below a deep squat the pelvis rides up into the vest instead.
         let hip_y = want.max(ANKLE + 0.42 * leg).min(want + 0.36);
 
-        // Stride: cadence and length grow with speed; a run lifts the knees higher.
+        // Stride: cadence and length grow with speed; a run lifts the knees higher. Sideways
+        // and backwards the steps are quicker and shorter.
+        let cadence = (0.9 + 0.22 * speed).min(3.2) * (1.0 + 0.6 * lat.abs() + 0.25 * back_k);
         if moving > 0.0 {
-            let cadence = (0.9 + 0.22 * speed).min(3.2);
             self.phase = (self.phase + TAU * cadence * dt).rem_euclid(TAU);
         }
-        let cadence = (0.9 + 0.22 * speed).min(3.2);
         let amp = (speed / (TAU * cadence)).min(0.42 * scale);
-        let run = smoothstep(5.0, 7.0, speed);
-        let lift = (0.09 + 0.12 * run) * scale;
-        let dir = self.vel.normalize_or_zero();
+        let run = smoothstep(5.0, 7.0, speed) * (1.0 - back_k);
+        let lift = (0.09 + 0.12 * run) * scale * (1.0 - 0.3 * back_k);
 
         let back = 0.12 * crouch;
         let bob = 0.02 * moving * (2.0 * self.phase).cos();
+        // (Leaning back a little, backpedalling.)
         let pelvis = Transform {
             translation: Vec3::new(chest_top.x, hip_y - HIP.y + bob, chest_top.z)
                 + hips * Vec3::new(0.0, 0.0, back),
-            rotation: hips * Quat::from_rotation_x(-0.3 * crouch),
+            rotation: hips * Quat::from_rotation_x(-0.3 * crouch + 0.1 * back_k),
             scale: Vec3::ONE,
         };
         let mut legs = Legs {
             pelvis,
             ..default()
         };
-        let width = STANCE + 0.06 * crouch;
+        // Side-stepping, the feet stand wider so the trailing one closes up to the leading one
+        // rather than crossing through it.
+        let width = (STANCE + 0.06 * crouch).max(lat.abs() * amp * moving + 0.06);
         let ground = root.y + ANKLE;
         let rest: [Vec3; 2] = [-1.0, 1.0].map(|side| {
             let p = root + chest_top + hips * Vec3::new(side * width, 0.0, -0.02);
@@ -266,8 +288,9 @@ impl Gait {
                 f.at.y = ground;
             }
             let phi = self.phase + i as f32 * PI;
+            let swing = amp * phi.sin();
             let stride = rest[i]
-                + dir * amp * phi.sin()
+                + hips * Vec3::new(lat * swing, 0.0, -fwd * swing)
                 + Vec3::Y * lift * phi.cos().max(0.0) * moving.min(speed / 1.5);
             let mut at = f.at.lerp(stride, moving);
             // In the air: feet drawn up under the hips, one ahead of the other.
@@ -282,10 +305,16 @@ impl Gait {
             legs.thigh[i] = segment(hip - root, knee - root, THIGH_MESH, right);
             legs.shin[i] = segment(knee - root, ankle - root, SHIN_MESH, right);
             let yaw = f.yaw + wrap(self.hip_yaw - f.yaw) * moving;
-            let pitch = 0.3 * moving * phi.sin() * (amp / 0.3).min(1.0) - 0.5 * self.air;
+            // Heel strike toe up and push-off toe down along the stride (toe first stepping
+            // back), rolling onto the outer edge stepping sideways.
+            let rock = moving * phi.sin() * (amp / 0.3).min(1.0);
+            let pitch = 0.3 * fwd * rock - 0.5 * self.air;
+            let roll = -0.15 * lat * rock;
             legs.boot[i] = Transform {
                 translation: ankle - root,
-                rotation: Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch),
+                rotation: Quat::from_rotation_y(yaw)
+                    * Quat::from_rotation_x(pitch)
+                    * Quat::from_rotation_z(roll),
                 scale: Vec3::ONE,
             };
         }
@@ -419,6 +448,55 @@ mod tests {
                 "foot turned with the hips"
             );
         }
+    }
+
+    /// Walks at `vel` for 2 s facing -Z; returns the gait and the closest the feet came to
+    /// each other across the hips (their gap along the hips' X axis: negative when crossed).
+    fn walk(vel: Vec3) -> (Gait, f32) {
+        let mut g = Gait::default();
+        run(&mut g, Vec3::ZERO, Vec3::ZERO, lt_sim::sim::EYE, 0.3);
+        let mut root = Vec3::ZERO;
+        let mut gap = f32::MAX;
+        for _ in 0..180 {
+            root += vel / 90.0;
+            let legs = g.update(1.0 / 90.0, root, chest(lt_sim::sim::EYE), 0.0);
+            let x = Quat::from_rotation_y(g.hip_yaw) * Vec3::X;
+            gap = gap.min((legs.boot[1].translation - legs.boot[0].translation).dot(x));
+        }
+        (g, gap)
+    }
+
+    #[test]
+    fn strafing_turns_the_hips_and_never_crosses_the_feet() {
+        for speed in [2.0, 4.0, 8.0] {
+            for vel in [Vec3::new(speed, 0.0, 0.0), Vec3::new(-speed, 0.0, 0.0)] {
+                let (g, gap) = walk(vel);
+                assert!(gap > 0.08, "feet {gap} apart strafing at {vel}");
+                // Turned halfway into the travel.
+                let want = if vel.x > 0.0 { -PI / 4.0 } else { PI / 4.0 };
+                assert!(
+                    (g.hip_yaw - want).abs() < 0.1,
+                    "hips {} at {vel}",
+                    g.hip_yaw
+                );
+            }
+        }
+        // Diagonally: the hips turn halfway to the travel.
+        let (g, gap) = walk(Vec3::new(2.8, 0.0, -2.8));
+        assert!(gap > 0.08);
+        assert!((g.hip_yaw + PI / 8.0).abs() < 0.1, "hips {}", g.hip_yaw);
+    }
+
+    #[test]
+    fn backpedalling_keeps_the_hips_forward() {
+        let (g, gap) = walk(Vec3::new(0.0, 0.0, 4.0));
+        assert!(g.backward);
+        assert!(g.hip_yaw.abs() < 0.1);
+        assert!(gap > 0.08);
+        // Backwards and to the side: hips turned away from the travel, not round to it.
+        let (g, _) = walk(Vec3::new(2.8, 0.0, 2.8));
+        assert!(g.backward);
+        assert!((g.hip_yaw - PI / 8.0).abs() < 0.1, "hips {}", g.hip_yaw);
     }
 
     #[test]
