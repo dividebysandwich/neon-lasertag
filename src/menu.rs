@@ -1100,8 +1100,10 @@ fn tips(
     mut shown: Local<Option<&'static str>>,
 ) {
     let Ok(root) = root.single() else { return };
+    // (A button not laid out yet has no place to hang the tooltip under.)
     let over = hovered
         .iter()
+        .filter(|(_, _, n, _)| n.size != Vec2::ZERO)
         .find(|(i, ..)| matches!(i, Interaction::Hovered | Interaction::Pressed));
     if over.map(|(_, t, ..)| t.0) == *shown {
         return;
