@@ -172,6 +172,7 @@ Debug environment variables:
 | Variable | Effect |
 |---|---|
 | `LT_DEV="6:menu,10:play-hard,14:hit"` | Scripted actions at given times (see `dev_script` in `src/session.rs`) |
+| `LT_CHASE=dist,height,deg` | Follow the local player from outside (angle from behind), showing its avatar |
 | `LT_MENU=top\|botmatch\|multiplayer\|internet\|lan\|host-lan\|host-internet` | Open the start menu at that screen |
 | `LT_MASTER=URL` | Use another master server |
 | `LT_VR_MENU=1\|options` | Open the VR menu / options |

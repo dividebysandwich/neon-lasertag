@@ -566,7 +566,8 @@ fn sync_players(
         let prev = prev_players.iter().find(|q| q.id == p.id);
         let feet = prev.map_or(p.feet, |q| q.feet.lerp(p.feet, a));
         let yaw = prev.map_or(p.yaw, |q| lerp_angle(q.yaw, p.yaw, a));
-        let me = Some(p.id) == game.me;
+        // (Seen from outside when debugging with LT_CHASE.)
+        let me = Some(p.id) == game.me && crate::scenery::chase().is_none();
         let alive = p.respawn.is_none();
         let set_vis = |vis: &mut Query<&mut Visibility>, e: Entity, on: bool| {
             if let Ok(mut v) = vis.get_mut(e) {
