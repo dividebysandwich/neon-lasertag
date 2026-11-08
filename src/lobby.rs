@@ -396,7 +396,7 @@ fn spawn_squad(commands: &mut Commands, models: &Models, palette: &Palette) {
         let left = part(commands, gloves[0]);
         spawn_model(commands, left, &models.hands[0], palette, team);
         let right = part(commands, gloves[1]);
-        spawn_model(commands, right, &models.hands[1], palette, team);
+        spawn_model(commands, right, &models.grips[1], palette, team);
         spawn_model(commands, right, &models.blaster, palette, team);
         // The body between, posed as in a game (src/rig.rs): arms reaching the gloves, and legs
         // standing (the gait settled a moment on the spot).

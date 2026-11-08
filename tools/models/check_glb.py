@@ -221,7 +221,7 @@ def check_avatars(ck):
     segments = [n for n, _ in AVATAR_SEGMENTS]
     nodes = {n.get("name"): n for n in gltf.get("nodes", [])}
     eyeballs = ["eyeball"] + sorted(m for m in meshes if m.startswith("eyeball_"))
-    for name in heads + eyeballs + ["eyelid", "torso", "hand_left", "hand_right"] + segments:
+    for name in heads + eyeballs + ["eyelid", "torso"] + HANDS + segments:
         if name not in meshes:
             ck.err("avatars.glb: no mesh named %r" % name)
             continue
@@ -311,9 +311,12 @@ def check_avatars(ck):
         if k == 0:
             ck.err("avatars.glb: no tail for %s" % animal)
     extra = set(meshes) - set(heads) - set(segments) - set(eyeballs) - set(tails) - {
-        "torso", "hand_left", "hand_right", "eyelid"}
+        "torso", "eyelid"} - set(HANDS)
     if extra:
         ck.err("avatars.glb: unexpected meshes %s" % sorted(extra))
+
+
+HANDS = ["hand_left", "hand_right", "hand_grip_left", "hand_grip_right"]
 
 
 def check_reload(ck):

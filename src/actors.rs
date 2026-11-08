@@ -34,8 +34,9 @@ struct AvatarParts {
     /// The floating chest, below the head, turned with the body.
     body: Entity,
     head: Entity,
-    /// Floating gloves, left and right.
+    /// Floating gloves, left and right, and each one's two looks: open, and gripping a gun.
     hands: [Entity; 2],
+    hand_looks: [[Entity; 2]; 2],
     /// The body between them, posed by `crate::rig`: the neck, the pelvis, each arm's upper
     /// arm and forearm and each leg's thigh, shin and boot (left, right), and the legs' gait.
     neck: Entity,
@@ -378,20 +379,20 @@ fn spawn_avatar(
         p.id as u64,
         Some((&ghost_mat, &mut solid, &mut ghost)),
     );
+    let mut hand_looks = [[Entity::PLACEHOLDER; 2]; 2];
     let hands = [0, 1].map(|i| {
         let h = commands
             .spawn((Transform::IDENTITY, Visibility::default(), ChildOf(root)))
             .id();
-        spawn_dual(
-            commands,
-            h,
-            &models.hands[i],
-            palette,
-            team,
-            &ghost_mat,
-            &mut solid,
-            &mut ghost,
-        );
+        for (k, model) in [&models.hands[i], &models.grips[i]].into_iter().enumerate() {
+            let look = commands
+                .spawn((Transform::IDENTITY, Visibility::default(), ChildOf(h)))
+                .id();
+            spawn_dual(
+                commands, look, model, palette, team, &ghost_mat, &mut solid, &mut ghost,
+            );
+            hand_looks[i][k] = look;
+        }
         h
     });
     let mut part = |model: &Model| {
@@ -515,6 +516,7 @@ fn spawn_avatar(
         body,
         head,
         hands,
+        hand_looks,
         neck,
         pelvis,
         arms,
@@ -728,9 +730,19 @@ fn sync_players(
             t.translation = base + pose.pos;
             t.rotation = pose.rot;
         };
-        // Gloves: everyone's, and one's own in VR (on the flat screen only the blaster shows).
+        // Gloves: everyone's, and one's own in VR (on the flat screen only those holding a
+        // gun). A hand holding a gun grips it.
+        let holds_gun = |i: usize| {
+            alive
+                && [gun_hand, gun2_hand]
+                    .iter()
+                    .any(|h| h.is_some_and(|h| h.index() == i))
+        };
         for (i, &h) in v.hands.iter().enumerate() {
-            set_vis(&mut vis, h, !me || vr);
+            let grips = holds_gun(i);
+            set_vis(&mut vis, h, !me || vr || grips);
+            set_vis(&mut vis, v.hand_looks[i][0], !grips);
+            set_vis(&mut vis, v.hand_looks[i][1], grips);
             if let Ok(mut t) = transforms.get_mut(h) {
                 t.translation = hands[i].pos;
                 t.rotation = hands[i].rot;

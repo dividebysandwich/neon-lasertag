@@ -225,6 +225,9 @@ pub struct Models {
     pub torso: Model,
     /// Left and right gloves (origin at the palm, fingers along -Z).
     pub hands: [Model; 2],
+    /// Left and right gloves wrapped round the guns' grip, in the guns' frame (the hand's): shown
+    /// instead of `hands` on a hand holding a gun.
+    pub grips: [Model; 2],
     /// Rigid body segments posed by `crate::rig`, one mesh for both sides; each hangs from its
     /// joint (the origin) down -Y, front -Z: the neck (from the head's pivot), the pelvis (top
     /// centre, tucked into the chest's hem), upper arm (shoulder), forearm (elbow), thigh
@@ -390,6 +393,11 @@ pub fn load_models(meshes: &mut Assets<Mesh>) -> Models {
                     models.hands[i] = Model::from_glb(&f, Some(n), meshes);
                 }
             }
+            for (i, n) in ["hand_grip_left", "hand_grip_right"].iter().enumerate() {
+                if f.meshes.contains_key(*n) {
+                    models.grips[i] = Model::from_glb(&f, Some(n), meshes);
+                }
+            }
             let b = &mut models.body;
             for (n, m) in [
                 ("neck", &mut b.neck),
@@ -520,6 +528,11 @@ pub fn load_models(meshes: &mut Assets<Mesh>) -> Models {
     for h in &mut models.hands {
         if h.parts.is_empty() {
             h.parts = vec![("body".into(), meshes.add(Cuboid::new(0.08, 0.04, 0.11)))];
+        }
+    }
+    for (g, h) in models.grips.iter_mut().zip(&models.hands) {
+        if g.parts.is_empty() {
+            *g = h.clone();
         }
     }
     if models.blaster.parts.is_empty() {

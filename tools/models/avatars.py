@@ -1119,22 +1119,7 @@ def hand_left():
 
     loft(g, [palm_ring(0.045, 0.01, -0.036, 0.036), palm_ring(0.0, 0.014, -0.046, 0.046),
              palm_ring(-0.045, 0.012, -0.046, 0.042)])
-    # Cuff.
-    cuff = [palm_ring(z, x1, -h, h, 0.01) for z, x1, h in ((0.04, 0.013, 0.04), (0.098, 0.015, 0.043))]
-    cuff = [[(x - 0.004 if x < 0 else x, y, z) for x, y, z in r] for r in cuff]
-    loft(g, cuff)
-    cc = centroid(cuff[0])
-
-    def cuff_at(t, grow):
-        r = [add(a, mul(sub(b, a), t)) for a, b in zip(*cuff)]
-        c = add(cc, mul(sub(centroid(cuff[1]), cc), t))
-        out = []
-        for p in r:
-            d = sub(p, c)
-            d = norm((d[0], d[1], 0.0))
-            out.append(add(p, mul(d, grow)))
-        return out
-    loft(g, [cuff_at(0.5, 0.0018), cuff_at(0.65, 0.0018)], mat="accent", cap0=None, cap1=None)
+    glove_cuff(g)
     # Fingers (index on top), curled towards the palm side.
     for y, l, w in ((0.031, 1.0, 0.0125), (0.0105, 1.06, 0.0127), (-0.0095, 1.0, 0.0122),
                     (-0.029, 0.84, 0.0112)):
@@ -1157,6 +1142,84 @@ def hand_left():
     for y0, y1 in ((0.026, 0.02), (0.0, 0.0), (-0.028, -0.021)):
         ray_strip(g, [solid], [(0.0, y0, 0.066), (0.0, (y0 + y1) / 2, 0.02), (0.0, y1, -0.0325)],
                   lambda p: ((-0.3, p[1], p[2]), X), 0.004, step=0.006, h=0.002, depth=0.003)
+    return g
+
+
+def glove_cuff(g):
+    """The gloves' cuff (shared by the open and gripping gloves: the forearm slides into it),
+    with its accent band."""
+    def ring(z, x1, h):
+        return [(x - 0.004 if x < 0 else x, y, z)
+                for x, y in L.chamfer_rect(-0.017, -h, x1, h, 0.01)]
+    cuff = [ring(0.04, 0.013, 0.04), ring(0.098, 0.015, 0.043)]
+    loft(g, cuff)
+    cc = centroid(cuff[0])
+
+    def cuff_at(t, grow):
+        r = [add(a, mul(sub(b, a), t)) for a, b in zip(*cuff)]
+        c = add(cc, mul(sub(centroid(cuff[1]), cc), t))
+        out = []
+        for p in r:
+            d = sub(p, c)
+            d = norm((d[0], d[1], 0.0))
+            out.append(add(p, mul(d, grow)))
+        return out
+    loft(g, [cuff_at(0.5, 0.0018), cuff_at(0.65, 0.0018)], mat="accent", cap0=None, cap1=None)
+
+
+# The guns' grip (blaster.py, powerups.py's shotgun), in the guns' frame = the hand's frame:
+# tilted back GRIP_TILT, octagonal section 0.03 m wide and 0.044 m deep about the origin.
+GRIP_TILT = math.radians(22)
+GRIP_A = (0.0, math.cos(GRIP_TILT), -math.sin(GRIP_TILT))  # up the grip
+GRIP_D = (0.0, math.sin(GRIP_TILT), math.cos(GRIP_TILT))  # towards its back
+
+
+def grip_pt(t, x, d):
+    """A point t up the grip's axis, x across, d towards its back."""
+    return add(mul(GRIP_A, t), add((x, 0.0, 0.0), mul(GRIP_D, d)))
+
+
+def hand_grip_left():
+    """Left glove wrapped round the guns' grip (shown while it holds one): the palm along the
+    grip's left side, middle, ring and little finger round its front below the trigger guard
+    onto its right side, the index finger on the trigger, the thumb across the back strap under
+    the receiver and along the frame's right side. Same origin and cuff as `hand_left`."""
+    g = L.Geo()
+
+    def slab(t0, t1, xc, d, th, ch=0.007):
+        """A ring across the hand: t0..t1 up the grip, `th` thick about x = xc, at depth d."""
+        return [grip_pt(t, xc + x, d) for x, t in L.chamfer_rect(-th, t0, th, t1, ch)]
+
+    # Palm: from inside the cuff along the grip's left side to the knuckles at its front.
+    back = [(x, y, 0.045) for x, y in L.chamfer_rect(-0.019, -0.036, 0.011, 0.036, 0.007)]
+    loft(g, [back, slab(-0.058, 0.036, -0.027, 0.02, 0.0125),
+             slab(-0.06, 0.04, -0.028, -0.004, 0.013), slab(-0.058, 0.038, -0.026, -0.022, 0.012)])
+    # Middle, ring and little finger round the front onto the right side.
+    for t, w, k in ((-0.012, 0.0125, 1.0), (-0.032, 0.0122, 0.98), (-0.05, 0.011, 0.9)):
+        path = [(-0.026, -0.016), (-0.012, -0.0315), (0.01, -0.0315), (0.0245, -0.014),
+                (0.0245, 0.006 * k)]
+        tube(g, [grip_pt(t, x, d) for x, d in path], [w, w, w * 0.95, w * 0.9, w * 0.85],
+             sides=4, tip=False, up=GRIP_A)
+    # Index finger forward from its knuckle, through the guard and curled round the trigger.
+    tube(g, [grip_pt(0.024, -0.025, -0.018), (-0.019, 0.024, -0.046), (-0.006, 0.022, -0.066),
+             (0.0, 0.017, -0.058)], [0.012, 0.012, 0.011, 0.0105], sides=4, tip=False)
+    # Thumb from the heel across the back strap under the receiver and along its right side.
+    tube(g, [(-0.022, 0.026, 0.03), (-0.008, 0.036, 0.024), (0.012, 0.037, 0.016),
+             (0.026, 0.035, -0.004), (0.029, 0.033, -0.026)],
+         [0.015, 0.014, 0.013, 0.0125, 0.0115], sides=4, tip=False)
+    glove_cuff(g)
+    # Knuckle guard on the back of the hand at the knuckles, and three light lines flowing into
+    # it from the cuff band.
+    kc = grip_pt(-0.01, -0.0385, -0.016)
+    plate(g, kc, NX, [(-0.004, -0.04), (0.004, -0.04), (0.004, 0.034), (-0.004, 0.034)],
+          h=0.002, depth=0.003, uhint=mul(GRIP_D, -1), vhint=GRIP_A)
+    solid = L.Geo()
+    solid.faces = [f for f in g.faces if f[1] == "body"]
+    for y0, t1 in ((0.026, 0.022), (0.0, -0.01), (-0.028, -0.042)):
+        end = grip_pt(t1, 0.0, -0.011)
+        mid = grip_pt((t1 + y0) / 2, 0.0, 0.026)
+        ray_strip(g, [solid], [(0.0, y0, 0.066), (0.0, (y0 + mid[1]) / 2, 0.042), mid, end],
+                  lambda p: ((-0.3, p[1], p[2]), X), 0.004, step=0.01, h=0.002, depth=0.003)
     return g
 
 
@@ -1479,6 +1542,8 @@ def main():
     pieces += [("torso", torso())]
     left = hand_left()
     pieces += [("hand_left", left), ("hand_right", mirrored(left))]
+    grip = hand_grip_left()
+    pieces += [("hand_grip_left", grip), ("hand_grip_right", mirrored(grip))]
     pieces += [(name, build()) for name, build in SEGMENTS]
     for n in HEADS:
         spec = TAILS[n]
