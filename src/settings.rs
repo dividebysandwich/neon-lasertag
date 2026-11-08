@@ -282,6 +282,11 @@ pub struct Settings {
     pub haptics: f32,
     pub steer_hand: bool,
     pub eye_offset: f32,
+    /// VR comfort: the right stick turning in steps of this many degrees (0: smoothly, else
+    /// one of `SNAP_TURNS`), and the view's edges darkening while the stick moves, dashing or
+    /// flying.
+    pub snap_turn: f32,
+    pub vignette: bool,
     /// Volumes, 0..=1 (1 the default): the sound effects and the music.
     pub sound_volume: f32,
     pub music_volume: f32,
@@ -293,6 +298,9 @@ pub struct Settings {
     /// The first-match hints shown already (by id).
     pub hints: Vec<String>,
 }
+
+/// The VR snap turn's steps (degrees).
+pub const SNAP_TURNS: [f32; 2] = [30.0, 45.0];
 
 /// The field of view's range and default (degrees).
 pub const FOV_RANGE: (f32, f32) = (60.0, 110.0);
@@ -334,6 +342,8 @@ impl Default for Settings {
             haptics: 1.0,
             steer_hand: false,
             eye_offset: 0.0,
+            snap_turn: 0.0,
+            vignette: false,
             sound_volume: 1.0,
             music_volume: 1.0,
             bindings: Action::ALL.iter().map(|&a| (a, a.defaults())).collect(),
@@ -503,6 +513,12 @@ impl Settings {
                 s.holster_dy = saved.holster_dy.clamp(HOLSTER_RANGE.0, HOLSTER_RANGE.1);
                 s.haptics = saved.haptics.clamp(0.0, 1.0);
                 s.steer_hand = saved.steer_hand;
+                s.snap_turn = if SNAP_TURNS.contains(&saved.snap_turn) {
+                    saved.snap_turn
+                } else {
+                    0.0
+                };
+                s.vignette = saved.vignette;
                 s.eye_offset = saved
                     .eye_offset
                     .clamp(EYE_OFFSET_RANGE.0, EYE_OFFSET_RANGE.1);
@@ -540,6 +556,8 @@ impl Settings {
             holster_dy: self.holster_dy,
             haptics: self.haptics,
             steer_hand: self.steer_hand,
+            snap_turn: self.snap_turn,
+            vignette: self.vignette,
             eye_offset: self.eye_offset,
             sound_volume: self.sound_volume,
             music_volume: self.music_volume,
@@ -586,6 +604,8 @@ struct Saved {
     haptics: f32,
     steer_hand: bool,
     eye_offset: f32,
+    snap_turn: f32,
+    vignette: bool,
     sound_volume: f32,
     music_volume: f32,
     bindings: Vec<(String, Vec<Option<String>>)>,
@@ -609,6 +629,8 @@ impl Default for Saved {
             haptics: 1.0,
             steer_hand: false,
             eye_offset: 0.0,
+            snap_turn: 0.0,
+            vignette: false,
             sound_volume: 1.0,
             music_volume: 1.0,
             bindings: Vec::new(),

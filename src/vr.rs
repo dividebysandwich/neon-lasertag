@@ -166,7 +166,19 @@ pub struct VrState {
     lobby_rig: Transform,
     /// A VR panel takes the triggers (the blaster doesn't fire).
     pub ui: bool,
+    /// Snap turning: turned this push of the right stick (it has to come back first).
+    snapped: bool,
+    /// The right stick turning smoothly (for the vignette).
+    pub turning: bool,
 }
+
+/// The renderer can't draw the comfort vignette (src/glvr: no blending).
+#[derive(Resource)]
+pub struct NoVignette;
+
+/// The comfort vignette (src/vrui.rs), not drawn by src/glvr.
+#[derive(Component)]
+pub struct Vignette;
 
 /// Vibration patterns being played: (hand, wait, length, amplitude, fading, played).
 #[derive(Resource, Default)]
@@ -499,8 +511,18 @@ fn read_controls(
     local.cmd.walk = Vec2::ZERO;
     // Right stick: turn (about the head: the rig is placed under it again in `place_rig`).
     let t = input.hands[1].stick.x;
-    if t.abs() > 0.2 {
+    vr.turning = false;
+    if settings.snap_turn > 0.0 {
+        // In steps: one a push.
+        if t.abs() > 0.7 && !vr.snapped {
+            vr.yaw -= t.signum() * settings.snap_turn.to_radians();
+            vr.snapped = true;
+        } else if t.abs() < 0.3 {
+            vr.snapped = false;
+        }
+    } else if t.abs() > 0.2 {
         vr.yaw -= t.signum() * (t.abs() - 0.2) / 0.8 * 2.4 * dt;
+        vr.turning = true;
     }
     // Right stick pulled down: crouch, or stand up again (not while turning hard).
     let down = input.hands[1].stick.y < -0.7 && t.abs() < 0.5;

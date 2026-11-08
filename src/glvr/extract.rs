@@ -145,7 +145,10 @@ fn seen(frusta: &Frusta, c: &CommonItem) -> Option<u8> {
 
 /// The queries of the meshes drawn, by material.
 struct Queries {
-    standard: QueryState<(Common, &'static MeshMaterial3d<StandardMaterial>)>,
+    standard: QueryState<
+        (Common, &'static MeshMaterial3d<StandardMaterial>),
+        Without<crate::vr::Vignette>,
+    >,
     accents: QueryState<(Common, &'static MeshMaterial3d<AccentMaterial>)>,
     glows: QueryState<(Common, &'static MeshMaterial3d<GlowMaterial>)>,
     lights: QueryState<(&'static DirectionalLight, &'static GlobalTransform)>,
@@ -220,7 +223,7 @@ impl Extractor {
     /// The draw list of `world`, culled to `eyes` (everything while there are none yet).
     pub fn extract(&mut self, world: &mut World, eyes: Option<&Eyes>) -> DrawList {
         let mut q = self.queries.take().unwrap_or_else(|| Queries {
-            standard: world.query(),
+            standard: world.query_filtered(),
             accents: world.query(),
             glows: world.query(),
             lights: world.query(),

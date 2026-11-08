@@ -61,6 +61,7 @@ impl Plugin for VrUiPlugin {
                     pointer,
                     hit_flash.run_if(resource_exists::<Game>),
                     view_tint.run_if(resource_exists::<Game>),
+                    vignette.run_if(resource_exists::<Game>),
                     event_banner.run_if(resource_exists::<Game>),
                     tag_recap.run_if(resource_exists::<Game>),
                     hit_marks.run_if(resource_exists::<Game>),
@@ -113,6 +114,9 @@ enum VrOpt {
     /// Full, low, off.
     Haptics,
     SteerHand,
+    /// Smooth, then each of `SNAP_TURNS`.
+    SnapTurn,
+    Vignette,
     ObjectiveMarkers,
     /// The tracked height now taken as standing height; back to as tracked.
     Calibrate,
@@ -1271,8 +1275,8 @@ fn build_end(b: &mut Builder, game: &Game) -> (Vec<Button>, Vec3) {
 #[allow(clippy::too_many_arguments)]
 /// The VR options panel (`Settings`): volumes, handedness, the blaster's tilt, the holster's
 /// height, vibration, which way the stick moves, and the height calibration.
-fn build_options(b: &mut Builder, s: &crate::settings::Settings) -> Vec<Button> {
-    let size = Vec2::new(1.1, 1.212);
+fn build_options(b: &mut Builder, s: &crate::settings::Settings, vignette: bool) -> Vec<Button> {
+    let size = Vec2::new(1.1, 1.396);
     b.backing(size, Hue::Violet);
     let top = size.y / 2.0;
     b.title("OPTIONS", 0.058, top - 0.085);
@@ -1397,8 +1401,24 @@ fn build_options(b: &mut Builder, s: &crate::settings::Settings) -> Vec<Button> 
         VrOpt::ObjectiveMarkers,
     );
     // Height: calibrate (stand, or sit, upright and press) or as tracked.
-    label(b, 8, "HEIGHT");
-    let y = row_y(8);
+    let turn = if s.snap_turn > 0.0 {
+        format!("SNAP {:.0}°", s.snap_turn)
+    } else {
+        "SMOOTH".to_string()
+    };
+    toggle(b, &mut buttons, 8, "TURNING", &turn, VrOpt::SnapTurn);
+    if vignette {
+        toggle(
+            b,
+            &mut buttons,
+            9,
+            "COMFORT VIGNETTE",
+            if s.vignette { "ON" } else { "OFF" },
+            VrOpt::Vignette,
+        );
+    }
+    label(b, 10, "HEIGHT");
+    let y = row_y(10);
     buttons.push(b.button(
         "CALIBRATE",
         Act::Opt(VrOpt::Calibrate),
@@ -1423,7 +1443,7 @@ fn build_options(b: &mut Builder, s: &crate::settings::Settings) -> Vec<Button> 
     b.text(
         &note,
         0.016,
-        Vec2::new(0.0, row_y(9) + 0.02),
+        Vec2::new(0.0, row_y(11) + 0.02),
         Align::Center,
         &dim,
         None,
@@ -1431,7 +1451,7 @@ fn build_options(b: &mut Builder, s: &crate::settings::Settings) -> Vec<Button> 
     buttons.push(b.button(
         "BACK",
         Act::Opt(VrOpt::Back),
-        Vec2::new(0.0, top - 1.122),
+        Vec2::new(0.0, top - 1.306),
         Vec2::new(0.46, 0.09),
         Hue::Violet,
         false,
@@ -1465,6 +1485,15 @@ fn apply_option(s: &mut crate::settings::Settings, o: VrOpt, head: Option<f32>) 
             }
         }
         VrOpt::SteerHand => s.steer_hand = !s.steer_hand,
+        VrOpt::SnapTurn => {
+            use crate::settings::SNAP_TURNS;
+            s.snap_turn = match SNAP_TURNS.iter().position(|&a| a == s.snap_turn) {
+                None => SNAP_TURNS[0],
+                Some(k) if k + 1 < SNAP_TURNS.len() => SNAP_TURNS[k + 1],
+                Some(_) => 0.0,
+            }
+        }
+        VrOpt::Vignette => s.vignette = !s.vignette,
         VrOpt::ObjectiveMarkers => s.objective_markers = !s.objective_markers,
         VrOpt::Calibrate => {
             if let Some(y) = head {
@@ -1489,6 +1518,7 @@ fn panels(
     session: Res<Session>,
     mats: Res<UiMats>,
     settings: Res<crate::settings::Settings>,
+    no_vignette: Option<Res<crate::vr::NoVignette>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut transforms: Query<&mut Transform>,
 ) {
@@ -1567,7 +1597,10 @@ fn panels(
                 (Kind::Lobby, _) => (build_lobby(&mut b, &model), Vec3::ZERO),
                 (Kind::Menu, Some(g)) => (build_menu(&mut b, g), Vec3::ZERO),
                 (Kind::End, Some(g)) => build_end(&mut b, g),
-                (Kind::Options, _) => (build_options(&mut b, &settings), Vec3::ZERO),
+                (Kind::Options, _) => (
+                    build_options(&mut b, &settings, no_vignette.is_none()),
+                    Vec3::ZERO,
+                ),
                 _ => (Vec::new(), Vec3::ZERO),
             };
             ui.panel = Some(Panel {
@@ -2535,6 +2568,122 @@ fn hit_flash(
         if let Some(mut g) = glows.get_mut(m) {
             g.neon.color.w = level.min(1.5) * 3.0;
         }
+    }
+}
+
+/// The comfort vignette's opening (its inner radius at `VIGNETTE_Z` m in front of the eyes)
+/// wide open and closed down, and how quickly it closes and opens (time constants, s).
+const VIGNETTE_Z: f32 = 0.12;
+const VIGNETTE_OPEN: f32 = 0.24;
+const VIGNETTE_SHUT: f32 = 0.08;
+const VIGNETTE_IN: f32 = 0.12;
+const VIGNETTE_OUT: f32 = 0.3;
+
+/// A ring of darkness, clear inside radius 1 and black from 1.6 out (to 8).
+fn vignette_mesh() -> Mesh {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::mesh::{Indices, PrimitiveTopology};
+    const N: u32 = 48;
+    let rings = [(1.0, 0.0), (1.25, 0.55), (1.6, 1.0), (8.0, 1.0)];
+    let (mut pos, mut nrm, mut col, mut idx) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for k in 0..N {
+        let a = k as f32 / N as f32 * std::f32::consts::TAU;
+        for (r, alpha) in rings {
+            pos.push([a.cos() * r, a.sin() * r, 0.0]);
+            nrm.push([0.0, 0.0, 1.0]);
+            col.push([1.0, 1.0, 1.0, alpha]);
+        }
+    }
+    let w = rings.len() as u32;
+    for k in 0..N {
+        let (a, b) = (k * w, (k + 1) % N * w);
+        for j in 0..w - 1 {
+            idx.extend([a + j, b + j, b + j + 1, a + j, b + j + 1, a + j + 1]);
+        }
+    }
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, nrm)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, col)
+    .with_inserted_indices(Indices::U32(idx))
+}
+
+/// The comfort vignette (`Settings::vignette`): the view's edges darkening while moving by the
+/// stick, turning smoothly, dashing or flying from a jump pad (not walking in the room).
+#[allow(clippy::too_many_arguments)]
+fn vignette(
+    mut commands: Commands,
+    vr: Res<VrState>,
+    input: Res<XrInput>,
+    settings: Res<crate::settings::Settings>,
+    mover: Res<crate::game::Mover>,
+    local: Res<crate::game::LocalCmd>,
+    time: Res<Time>,
+    no_vignette: Option<Res<crate::vr::NoVignette>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut transforms: Query<&mut Transform>,
+    mut vis: Query<&mut Visibility>,
+    mut state: Local<Option<(Entity, f32)>>,
+) {
+    if no_vignette.is_some() {
+        return;
+    }
+    let (ring, shut) = state.get_or_insert_with(|| {
+        let ring = commands
+            .spawn((
+                Name::new("comfort vignette"),
+                crate::vr::Vignette,
+                Mesh3d(meshes.add(vignette_mesh())),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::BLACK,
+                    unlit: true,
+                    // (Drawn with the solid things, nearest of all, so over the neon's halos;
+                    // see-through ones (blended) don't show in the headset.)
+                    alpha_mode: AlphaMode::AlphaToCoverage,
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::IDENTITY,
+                Visibility::Hidden,
+                bevy::camera::visibility::NoFrustumCulling,
+            ))
+            .id();
+        (ring, 0.0)
+    });
+    let moving = settings.vignette
+        && mover.valid
+        && (local.cmd.stick.length() > 0.1
+            || vr.turning
+            || mover.moves.dash_left > 0.0
+            || mover.air != Vec2::ZERO);
+    let (want, tau) = if moving {
+        (1.0, VIGNETTE_IN)
+    } else {
+        (0.0, VIGNETTE_OUT)
+    };
+    *shut += (want - *shut) * (1.0 - (-time.delta_secs() / tau).exp());
+    let shown = *shut > 0.01;
+    if let Ok(mut v) = vis.get_mut(*ring) {
+        let want = if shown {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *v != want {
+            *v = want;
+        }
+    }
+    if shown && let Ok(mut t) = transforms.get_mut(*ring) {
+        let head = vr.rig
+            * input
+                .head
+                .unwrap_or(Transform::from_xyz(0.0, lt_sim::sim::EYE, 0.0));
+        let r = VIGNETTE_OPEN + (VIGNETTE_SHUT - VIGNETTE_OPEN) * *shut;
+        *t = head * Transform::from_xyz(0.0, 0.0, -VIGNETTE_Z).with_scale(Vec3::splat(r));
     }
 }
 

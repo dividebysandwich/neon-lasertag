@@ -116,6 +116,7 @@ pub fn add_plugins(app: &mut App, asset_root: &str) -> bool {
         return false;
     }
     let fovea = before_start();
+    app.insert_resource(crate::vr::NoVignette);
     // (What the GPU would decode: no textures are drawn here. Said before the image plugins
     // look for it, as RenderPlugin would with a GPU.)
     app.insert_resource(bevy::image::CompressedImageFormatSupport(
