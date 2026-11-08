@@ -108,6 +108,18 @@ struct Tracer {
     width: f32,
 }
 
+/// A glint of a prism lance's streak: a speck drifting off the beam's line, twinkling as it
+/// fades (flashing bright `rate` times a second from `phase`).
+#[derive(Component)]
+struct Glitter {
+    vel: Vec3,
+    life: f32,
+    max: f32,
+    size: f32,
+    phase: f32,
+    rate: f32,
+}
+
 #[derive(Component)]
 struct Ring {
     life: f32,
@@ -134,6 +146,7 @@ impl Plugin for ActorsPlugin {
                     sync_pickups,
                     effects,
                     animate_sparks,
+                    animate_glitter,
                 )
                     .in_set(DrawSet)
                     .run_if(resource_exists::<Game>),
@@ -1274,6 +1287,60 @@ fn burst(
     }
 }
 
+/// Glints all along a prism lance's streak from `from` to `to`: specks of its colour (and a
+/// few white) drifting off the line and twinkling out over a second or so.
+#[allow(clippy::too_many_arguments)]
+fn glitter(
+    commands: &mut Commands,
+    meshes: &ActorMeshes,
+    mat: Handle<AccentMaterial>,
+    white: Handle<AccentMaterial>,
+    from: Vec3,
+    to: Vec3,
+    seed: u32,
+) {
+    let mut s = seed.wrapping_mul(3266489917).max(1);
+    let mut rnd = move || {
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        s as f32 / u32::MAX as f32
+    };
+    // So many a metre, the first metre (at the muzzle, in one's face) left out.
+    let len = from.distance(to);
+    let n = ((len - 1.0) * 5.0).clamp(0.0, 200.0) as usize;
+    for _ in 0..n {
+        let at = from.lerp(to, (1.0 + (len - 1.0) * rnd()) / len);
+        let off = Vec3::new(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5);
+        let life = 0.5 + 0.9 * rnd();
+        let size = 0.012 + 0.012 * rnd();
+        commands.spawn((
+            Glitter {
+                vel: off * 0.35 + Vec3::NEG_Y * 0.05,
+                life,
+                max: life,
+                size,
+                phase: rnd() * std::f32::consts::TAU,
+                rate: 6.0 + 10.0 * rnd(),
+            },
+            Mesh3d(meshes.spark.clone()),
+            MeshMaterial3d(if rnd() < 0.3 {
+                white.clone()
+            } else {
+                mat.clone()
+            }),
+            Transform::from_translation(at + off * 0.04)
+                .with_rotation(Quat::from_euler(
+                    EulerRot::XYZ,
+                    rnd() * 6.3,
+                    rnd() * 6.3,
+                    0.0,
+                ))
+                .with_scale(Vec3::ZERO),
+        ));
+    }
+}
+
 /// Shards of light over a body from `feet` to `eye`, flying away from `hit` and tumbling.
 fn shatter(
     commands: &mut Commands,
@@ -1498,6 +1565,15 @@ fn effects(
                             .with_rotation(Quat::from_rotation_arc(Vec3::Z, dir))
                             .with_scale(Vec3::new(0.025, 0.025, len)),
                     ));
+                    glitter(
+                        &mut commands,
+                        &meshes,
+                        palette.bolt_for(team_of(player)),
+                        palette.bolt_for(None),
+                        from,
+                        to,
+                        seed,
+                    );
                 }
             }
             SimEvent::Headshot { pos, .. } => {
@@ -1772,6 +1848,29 @@ fn effects(
 }
 
 #[allow(clippy::type_complexity)]
+fn animate_glitter(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut glints: Query<(Entity, &mut Glitter, &mut Transform)>,
+) {
+    let dt = time.delta_secs();
+    for (e, mut g, mut t) in &mut glints {
+        g.life -= dt;
+        if g.life <= 0.0 {
+            commands.entity(e).despawn();
+            continue;
+        }
+        g.vel *= 1.0 - 1.5 * dt;
+        t.translation += g.vel * dt;
+        // Sharp flashes over a faint glow, all of it dying away.
+        let age = g.max - g.life;
+        let flash = (g.phase + age * g.rate).sin().max(0.0).powi(6);
+        let k = g.life / g.max;
+        t.scale = Vec3::splat(g.size * k * (0.35 + 1.4 * flash));
+        t.rotate_local_y(dt * 4.0);
+    }
+}
+
 fn animate_sparks(
     mut commands: Commands,
     time: Res<Time>,
