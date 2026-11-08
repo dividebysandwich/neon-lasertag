@@ -38,7 +38,7 @@ pub const TEAM_BLUE: &str = "blue";
 pub struct ServerReport {
     /// The network protocol (a game joins only its own).
     pub protocol: u16,
-    /// The game's version ("0.2.0").
+    /// The game's version ("0.3.0").
     pub game_version: String,
     pub name: String,
     /// UDP port the players join on.
