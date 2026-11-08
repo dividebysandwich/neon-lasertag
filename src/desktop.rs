@@ -62,6 +62,98 @@ pub struct Sway {
     turn: Vec2,
     /// The camera's offset in view space.
     pub camera: Vec3,
+    /// Firing's kick, being hit's shake and landing's dip.
+    punch: Punch,
+}
+
+/// The camera's jolts (flat screen): a kick when firing, a shake when hit and a dip on landing.
+/// Only the view moves; the aim stays on the crosshair.
+#[derive(Default)]
+struct Punch {
+    /// The view's kick (rad: pitch up, yaw) and its rate, springing back.
+    kick: Vec2,
+    kick_vel: Vec2,
+    /// The blaster pushed back towards the eye (m), and its rate.
+    gun: f32,
+    gun_vel: f32,
+    /// The eyes' dip (m, down), and its rate.
+    dip: f32,
+    dip_vel: f32,
+    /// How shaken (0 to 1), wearing off.
+    trauma: f32,
+    time: f32,
+    /// Airborne last frame, and how fast falling (for the landing).
+    fall: Option<f32>,
+}
+
+/// How stiff the kick's, the blaster's and the dip's springs are (rad/s; critically damped,
+/// so they peak after 1/this s and are settled after about five times that).
+const KICK_SPRING: f32 = 40.0;
+const DIP_SPRING: f32 = 22.0;
+/// The most a shake turns the view (rad), and how long a full one lasts (s).
+const SHAKE: f32 = 0.025;
+const SHAKE_TIME: f32 = 0.45;
+
+/// A critically damped spring's step (exact, at any `dt`).
+fn spring(x: &mut f32, v: &mut f32, w: f32, dt: f32) {
+    let (e, c) = ((-w * dt).exp(), *v + w * *x);
+    *x = (*x + c * dt) * e;
+    *v = (*v - w * c * dt) * e;
+}
+
+impl Punch {
+    /// Kicks the view up by about `deg` at its peak (and a little sideways), and the blaster
+    /// back.
+    fn fire(&mut self, deg: f32) {
+        let peak = deg.to_radians();
+        // (Peaking at `impulse / (w e)`.)
+        let impulse = peak * KICK_SPRING * std::f32::consts::E;
+        let side = (self.time * 91.7).sin() * 0.35;
+        self.kick_vel += Vec2::new(impulse, impulse * side);
+        self.gun_vel += deg * 0.02 * KICK_SPRING * std::f32::consts::E;
+    }
+
+    fn shake(&mut self, amount: f32) {
+        self.trauma = (self.trauma + amount).min(1.0);
+    }
+
+    /// Springs back, and notices a landing (`vy`: the prediction's, `grounded` then).
+    fn step(&mut self, dt: f32, vy: f32, grounded: bool) {
+        self.time += dt;
+        spring(&mut self.kick.x, &mut self.kick_vel.x, KICK_SPRING, dt);
+        spring(&mut self.kick.y, &mut self.kick_vel.y, KICK_SPRING, dt);
+        spring(&mut self.gun, &mut self.gun_vel, KICK_SPRING, dt);
+        spring(&mut self.dip, &mut self.dip_vel, DIP_SPRING, dt);
+        self.trauma = (self.trauma - dt / SHAKE_TIME).max(0.0);
+        if grounded {
+            // A dip as deep as the fall was fast (at most 8 cm), from 3 m/s.
+            if let Some(v) = self.fall.take()
+                && v > 3.0
+            {
+                let depth = (v * 0.012).min(0.08);
+                self.dip_vel += depth * DIP_SPRING * std::f32::consts::E;
+            }
+        } else {
+            self.fall = Some(-vy);
+        }
+    }
+
+    /// The view's turn from it all (in view space).
+    fn view(&self) -> Quat {
+        let s = self.trauma * self.trauma * SHAKE;
+        let t = self.time;
+        let shake = Vec3::new(
+            (t * 41.0).sin() + 0.5 * (t * 97.0 + 1.3).sin(),
+            (t * 37.0 + 2.1).sin() + 0.5 * (t * 83.0).sin(),
+            (t * 29.0 + 0.7).sin(),
+        ) * s;
+        Quat::from_euler(
+            EulerRot::YXZ,
+            self.kick.y + shake.y,
+            self.kick.x + shake.x,
+            shake.z,
+        )
+    }
 }
 
 /// While a grenade is held: where it would be thrown from (world) and with what velocity (and
@@ -291,6 +383,10 @@ fn read_input(
         look.pitch = pitch;
     }
     let (mut gun_offset, mut gun_rot) = sway.update(dt, turned, &mover, game.rules.move_speed);
+    // (Kicked back and up a little by the last shot.)
+    let kick = sway.punch.gun;
+    gun_offset += Vec3::new(0.0, kick * 0.25, kick);
+    gun_rot *= Quat::from_rotation_x(kick * 2.0);
     if !settings.head_bob {
         sway.camera = Vec3::ZERO;
         (gun_offset, gun_rot) = (Vec3::ZERO, Quat::IDENTITY);
@@ -591,6 +687,7 @@ fn on_events(
     mut events: MessageReader<GameEvent>,
     game: Option<Res<Game>>,
     mut look: ResMut<Look>,
+    mut sway: ResMut<Sway>,
     mut faced: Local<Option<u64>>,
     recap: Res<crate::game::Recap>,
     time: Res<Time>,
@@ -629,15 +726,30 @@ fn on_events(
         look.yaw = spawn_yaw(&game, p.feet);
         look.pitch = 0.0;
     }
+    let weapon = me.map(|p| p.weapon);
+    let punch = &mut sway.punch;
     for GameEvent(e) in events.read() {
-        if let SimEvent::Respawned { player, pos } = e
-            && Some(*player) == game.me
-        {
-            // (Moved off the spawn pads for testing: the warp turned the view itself.)
-            if game.level.spawn_at(*pos).is_some() {
-                look.yaw = spawn_yaw(&game, *pos);
-                look.pitch = 0.0;
+        match *e {
+            SimEvent::Respawned { player, pos } if Some(player) == game.me => {
+                // (Moved off the spawn pads for testing: the warp turned the view itself.)
+                if game.level.spawn_at(pos).is_some() {
+                    look.yaw = spawn_yaw(&game, pos);
+                    look.pitch = 0.0;
+                }
             }
+            // The kick, as heavy as the gun.
+            SimEvent::Fired { player, .. } if Some(player) == game.me => punch.fire(match weapon {
+                Some(Weapon::Shotgun) => 1.2,
+                Some(Weapon::Lance) => 1.5,
+                Some(Weapon::Ricochet) => 0.6,
+                Some(Weapon::Dual) => 0.3,
+                _ => 0.4,
+            }),
+            // (As well as its `Fired`.)
+            SimEvent::BeamFired { player, .. } if Some(player) == game.me => punch.fire(1.6),
+            SimEvent::Hit { player, .. } if Some(player) == game.me => punch.shake(0.55),
+            SimEvent::TaggedOut { player, .. } if Some(player) == game.me => punch.shake(1.0),
+            _ => {}
         }
     }
 }
@@ -649,10 +761,12 @@ const FACE_KILLER: f32 = 0.25;
 const LOBBY_TURN: f32 = 0.05;
 const LOBBY_PITCH: f32 = 0.3;
 
+#[allow(clippy::too_many_arguments)]
 fn place_camera(
     game: Option<Res<Game>>,
     look: Res<Look>,
-    sway: Res<Sway>,
+    mut sway: ResMut<Sway>,
+    settings: Res<Settings>,
     time: Res<Time<Fixed>>,
     mover: Res<Mover>,
     real: Res<Time<Real>>,
@@ -691,9 +805,19 @@ fn place_camera(
     } else {
         (look.yaw, look.pitch)
     };
+    let dt = real.delta_secs().min(0.05);
+    let grounded = !mover.valid || mover.vy == 0.0 && mover.air == Vec2::ZERO;
+    let punch = &mut sway.punch;
+    punch.step(dt, mover.vy, grounded || !alive);
+    // (Off with the head bob: `Settings::head_bob`.)
+    let jolt = settings.head_bob && !look.follow_sim;
     t.rotation = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
+    if jolt {
+        t.rotation *= punch.view();
+    }
     let bob = if alive && !look.follow_sim {
-        Quat::from_rotation_y(yaw) * sway.camera
+        let dip = if jolt { sway.punch.dip } else { 0.0 };
+        Quat::from_rotation_y(yaw) * (sway.camera - Vec3::Y * dip)
     } else {
         Vec3::ZERO
     };
@@ -708,6 +832,49 @@ fn place_camera(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_shot_kicks_the_view_and_it_springs_back() {
+        let mut p = Punch::default();
+        p.fire(1.0);
+        let mut peak: f32 = 0.0;
+        for _ in 0..12 {
+            p.step(1.0 / 120.0, 0.0, true);
+            peak = peak.max(p.kick.x);
+        }
+        assert!(
+            (peak.to_degrees() - 1.0).abs() < 0.15,
+            "about a degree up: {}",
+            peak.to_degrees()
+        );
+        for _ in 0..30 {
+            p.step(1.0 / 120.0, 0.0, true);
+        }
+        assert!(
+            p.kick.x.to_degrees().abs() < 0.05,
+            "back in a quarter second"
+        );
+        // (A long frame doesn't make it blow up.)
+        p.fire(1.5);
+        p.step(0.05, 0.0, true);
+        assert!(p.kick.x.is_finite() && p.kick.x.to_degrees() < 2.0);
+    }
+
+    #[test]
+    fn landing_hard_dips_the_eyes_once() {
+        let mut p = Punch::default();
+        p.step(1.0 / 60.0, -2.0, false);
+        p.step(1.0 / 60.0, 0.0, true);
+        assert_eq!(p.dip_vel, 0.0, "a soft landing: no dip");
+        p.step(1.0 / 60.0, -6.0, false);
+        let mut deepest: f32 = 0.0;
+        for _ in 0..30 {
+            p.step(1.0 / 60.0, 0.0, true);
+            deepest = deepest.max(p.dip);
+        }
+        assert!(deepest > 0.05 && deepest < 0.09, "{deepest}");
+        assert!(p.dip.abs() < 0.01, "back up");
+    }
 
     #[test]
     fn walking_bobs_and_turning_sways() {
