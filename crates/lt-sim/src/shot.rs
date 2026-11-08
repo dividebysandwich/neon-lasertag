@@ -43,7 +43,12 @@ pub struct Gun {
     pub weapon: Weapon,
     /// The lockout after a hit.
     pub cooldown: f32,
+    /// Pulled a moment too early (within `FIRE_BUFFER` of being ready): fires once ready.
+    pub queued: bool,
 }
+
+/// How early (s) a trigger pull may come before the gun is ready and still fire once it is.
+pub const FIRE_BUFFER: f32 = 0.1;
 
 /// What the trigger did this tick.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,25 +86,35 @@ impl Gun {
     }
 
     /// One shot per trigger pull; the charge gun fires on letting go (a beam once held for
-    /// `Rules::charge_time`), and a hit or holstering stops its charging. `armed`: a gun is in
-    /// hand. A `Fire` is paid for with `fired`.
+    /// `Rules::charge_time`), and a hit or holstering stops its charging. A pull just before
+    /// the gun is ready fires once it is (`FIRE_BUFFER`). `armed`: a gun is in hand. A `Fire`
+    /// is paid for with `fired`.
     pub fn trigger(&mut self, fire: bool, armed: bool, rules: &Rules) -> Option<Trigger> {
-        let pull = fire && !self.prev_fire;
+        let mut pull = fire && !self.prev_fire;
         self.prev_fire = fire;
         if !armed || self.cooldown > 0.0 {
             self.charging = None;
+            self.queued = false;
+        }
+        if self.queued && self.fire_cd <= 0.0 {
+            self.queued = false;
+            pull = true;
         }
         let mut out = None;
         if pull && armed {
             if self.cooldown > 0.0 {
                 return Some(Trigger::Denied);
             } else if self.fire_cd > 0.0 {
-                // Faster than the blaster's rate: ignored.
+                // Faster than the gun's rate: kept for when it's ready if that's soon, else
+                // ignored.
+                self.queued = self.fire_cd <= FIRE_BUFFER;
             } else if self.ammo == 0 {
                 self.fire_cd = self.interval(rules);
                 return Some(Trigger::Empty);
             } else {
                 match self.weapon {
+                    // (A queued pull let go of already: a tap.)
+                    Weapon::Charge if !fire => return Some(Trigger::Fire(Shot::Bolt)),
                     Weapon::Charge => self.charging = Some(0.0),
                     Weapon::Shotgun => return Some(Trigger::Fire(Shot::Spread)),
                     Weapon::Blaster => return Some(Trigger::Fire(Shot::Bolt)),
@@ -461,4 +476,73 @@ pub struct HitClaim {
     /// It met their head.
     #[serde(default)]
     pub head: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ready(rules: &Rules) -> Gun {
+        Gun {
+            ammo: rules.ammo,
+            ..Default::default()
+        }
+    }
+
+    /// Ticks (fire held, then let go) until a shot, at most `n`: the tick it fired on.
+    fn ticks_to_fire(g: &mut Gun, rules: &Rules, n: usize) -> Option<usize> {
+        for k in 1..=n {
+            g.tick();
+            if let Some(Trigger::Fire(s)) = g.trigger(k == 1, true, rules) {
+                g.fired(s, rules);
+                return Some(k);
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn a_pull_just_too_early_fires_once_ready() {
+        let rules = Rules::default();
+        let mut g = ready(&rules);
+        assert_eq!(
+            g.trigger(true, true, &rules),
+            Some(Trigger::Fire(Shot::Bolt))
+        );
+        g.fired(Shot::Bolt, &rules);
+        g.trigger(false, true, &rules);
+        // Up to 3 ticks short of ready: fires on the tick it's ready.
+        let left = (rules.fire_cooldown / TICK).round() as usize;
+        for _ in 0..left - 3 - 1 {
+            g.tick();
+            g.trigger(false, true, &rules);
+        }
+        assert_eq!(ticks_to_fire(&mut g, &rules, 10), Some(4));
+    }
+
+    #[test]
+    fn a_pull_well_too_early_is_ignored() {
+        let rules = Rules::default();
+        let mut g = ready(&rules);
+        g.trigger(true, true, &rules);
+        g.fired(Shot::Bolt, &rules);
+        g.trigger(false, true, &rules);
+        assert_eq!(ticks_to_fire(&mut g, &rules, 60), None);
+    }
+
+    #[test]
+    fn a_hit_drops_a_waiting_pull() {
+        let rules = Rules::default();
+        let mut g = ready(&rules);
+        g.trigger(true, true, &rules);
+        g.fired(Shot::Bolt, &rules);
+        g.trigger(false, true, &rules);
+        g.fire_cd = 0.05;
+        g.trigger(true, true, &rules);
+        assert!(g.queued);
+        g.cooldown = 3.0;
+        g.tick();
+        assert_eq!(g.trigger(true, true, &rules), None);
+        assert!(!g.queued);
+    }
 }

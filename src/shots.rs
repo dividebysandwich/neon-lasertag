@@ -78,6 +78,7 @@ impl Shots {
         cmd.shot = self.seq;
         let Some(me) = me else {
             self.gun.prev_fire = cmd.fire;
+            self.gun.queued = false;
             return;
         };
         // The server's word on the gun, with the shots it hasn't seen yet taken off.
@@ -99,7 +100,9 @@ impl Shots {
         if me.respawn.is_some() {
             self.gun.prev_fire = cmd.fire;
             self.gun.charging = None;
+            self.gun.queued = false;
             self.gun2.prev_fire = cmd.fire2;
+            self.gun2.queued = false;
             return;
         }
         let player = id;
@@ -110,6 +113,7 @@ impl Shots {
             let t = if second {
                 if me.weapon != lt_sim::Weapon::Dual {
                     self.gun2.prev_fire = cmd.fire2;
+                    self.gun2.queued = false;
                     continue;
                 }
                 self.gun2.ammo = self.gun.ammo;

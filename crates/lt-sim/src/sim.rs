@@ -67,9 +67,12 @@ pub struct Player {
     pub moves: Moves,
     pub cmd: PlayerCmd,
     prev_fire: bool,
-    /// Dual pistols: the second's trigger and time to its next shot.
+    /// A trigger pull waiting for the gun to be ready (`Gun::queued`).
+    queued: bool,
+    /// Dual pistols: the second's trigger, time to its next shot and pull waiting.
     prev_fire2: bool,
     fire_cd2: f32,
+    queued2: bool,
     /// Hits taken since the last respawn.
     pub hits: u8,
     /// Time left of the blaster's lockout after a hit (no hits taken meanwhile either).
@@ -196,6 +199,7 @@ impl Player {
             rapid: self.rapid,
             weapon: self.weapon,
             cooldown: self.cooldown,
+            queued: self.queued,
         }
     }
 
@@ -204,6 +208,7 @@ impl Player {
         Gun {
             prev_fire: self.prev_fire2,
             fire_cd: self.fire_cd2,
+            queued: self.queued2,
             charging: None,
             ..self.gun()
         }
@@ -212,12 +217,14 @@ impl Player {
     fn set_gun2(&mut self, g: Gun) {
         self.prev_fire2 = g.prev_fire;
         self.fire_cd2 = g.fire_cd;
+        self.queued2 = g.queued;
         self.ammo = g.ammo;
     }
 
     fn set_gun(&mut self, g: Gun) {
         self.prev_fire = g.prev_fire;
         self.fire_cd = g.fire_cd;
+        self.queued = g.queued;
         self.charging = g.charging;
         self.ammo = g.ammo;
     }
@@ -892,8 +899,10 @@ impl Sim {
             moves: Moves::default(),
             cmd: PlayerCmd::default(),
             prev_fire: false,
+            queued: false,
             prev_fire2: false,
             fire_cd2: 0.0,
+            queued2: false,
             hits: 0,
             cooldown: 0.0,
             protect: 0.0,
@@ -1429,6 +1438,8 @@ impl Sim {
                 p.cmd.throw = None;
                 p.prev_fire = p.cmd.fire;
                 p.prev_fire2 = p.cmd.fire2;
+                p.queued = false;
+                p.queued2 = false;
                 continue;
             }
 
@@ -1687,9 +1698,11 @@ impl Sim {
                 }
                 let t2 = gun2.trigger(p.cmd.fire2, p.cmd.gun2_hand.is_some() && !carrying, &rules);
                 p.prev_fire2 = gun2.prev_fire;
+                p.queued2 = gun2.queued;
                 triggers.push((t2, true));
             } else {
                 p.prev_fire2 = p.cmd.fire2;
+                p.queued2 = false;
             }
             let player = p.id;
             let shots = triggers
