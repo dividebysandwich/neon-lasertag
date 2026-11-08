@@ -33,6 +33,11 @@ pub const ANKLE: f32 = 0.08;
 pub const STRETCH: f32 = 1.1;
 /// The hips' height above the feet of a player standing straight with eyes at `EYE`.
 pub const STAND_HIP: f32 = lt_sim::sim::EYE - lt_sim::hitbox::CHEST_DROP - PELVIS_DROP + HIP.y;
+/// The shortest a player is taken to stand (hips above the feet); lower than that is a crouch.
+/// There is no tallest: the legs grow with the standing height so the boots always rest on the
+/// floor, and a tall VR player (or one with the height setting up) gets longer legs rather
+/// than hanging in the air.
+const MIN_STAND: f32 = STAND_HIP * 0.85;
 /// Half the distance between the feet, standing.
 const STANCE: f32 = 0.11;
 /// How far the hips may turn from the chest.
@@ -140,7 +145,8 @@ pub struct Gait {
     /// Moving backwards (with hysteresis, so strafing doesn't flip the hips back and forth).
     backward: bool,
     phase: f32,
-    /// The hips' standing height above the feet (tall VR players have longer legs).
+    /// The hips' standing height above the feet (tall VR players have longer legs, so that
+    /// everyone's feet reach the floor).
     stand: f32,
     feet: [Foot; 2],
 }
@@ -208,12 +214,12 @@ impl Gait {
         let (fwd, lat) = (-local.z, local.x);
         let back_k = if self.backward { moving } else { 0.0 };
 
-        // How high the hips would hang from the chest, and how tall this player stands.
+        // How high the hips would hang from the chest, and how tall this player stands. The
+        // legs are as long as it takes to reach the floor from there standing straight (with
+        // the same soft knee as at the default height), whatever the headset reports.
         let want = chest_top.y - PELVIS_DROP + HIP.y;
-        self.stand = (self.stand - 0.01 * dt)
-            .max(want)
-            .clamp(STAND_HIP * 0.85, STAND_HIP * 1.25);
-        let scale = self.stand / STAND_HIP;
+        self.stand = (self.stand - 0.01 * dt).max(want).max(MIN_STAND);
+        let scale = (self.stand - ANKLE) / (STAND_HIP - ANKLE);
         let (thigh, shin) = (THIGH * scale, SHIN * scale);
         let leg = thigh + shin;
         let crouch = ((self.stand - want) / (0.5 * scale)).clamp(0.0, 1.0);
@@ -388,6 +394,35 @@ mod tests {
             let d = (ankle - hip).normalize();
             let off = (knee - hip) - d * (knee - hip).dot(d);
             assert!(off.length() < 0.1, "knee {off:?} off the line");
+        }
+    }
+
+    #[test]
+    fn tall_players_legs_reach_the_floor() {
+        // A tall headset (or the height setting up): longer legs, boots on the floor, knees
+        // about as soft as at the default height, never hanging.
+        for eye in [1.9, 2.2, 2.6] {
+            let mut g = Gait::default();
+            let legs = run(&mut g, Vec3::ZERO, Vec3::ZERO, eye, 1.0);
+            for i in 0..2 {
+                let hip = legs.thigh[i].translation;
+                let knee = legs.shin[i].translation;
+                let ankle = legs.boot[i].translation;
+                assert!(
+                    (ankle.y - ANKLE).abs() < 0.01,
+                    "eye {eye}: boot at {}",
+                    ankle.y
+                );
+                // (The soft knee grows with the leg: judged against its length.)
+                let d = ankle - hip;
+                let n = d.normalize();
+                let off = (knee - hip) - n * (knee - hip).dot(n);
+                assert!(
+                    off.length() < 0.15 * d.length(),
+                    "eye {eye}: knee {off:?} off the line"
+                );
+                assert!(hip.y > STAND_HIP + 0.1, "eye {eye}: hips {} up", hip.y);
+            }
         }
     }
 
