@@ -53,6 +53,17 @@ struct Idler {
     phase: f32,
 }
 
+/// One's tail (its pieces, its animal in `Models::heads`), swung by `crate::tail` from the
+/// pelvis (in the player's frame) turning lazily to and fro.
+#[derive(Component)]
+struct SquadTail {
+    pieces: Vec<Entity>,
+    animal: usize,
+    pelvis: Transform,
+    swing: crate::tail::Tail,
+    phase: f32,
+}
+
 /// Where the chest's top is in a squad player's frame.
 const CHEST: Vec3 = Vec3::new(0.0, EYE - CHEST_DROP, 0.0);
 
@@ -110,7 +121,7 @@ impl Plugin for LobbyPlugin {
             Update,
             (
                 make.run_if(not(resource_exists::<Fireworks>)),
-                (show, fireworks, idle)
+                (show, fireworks, idle, sway)
                     .chain()
                     .run_if(resource_exists::<Fireworks>),
             ),
@@ -413,21 +424,62 @@ fn spawn_squad(commands: &mut Commands, models: &Models, palette: &Palette) {
             segment(commands, &b.shin, legs.shin[i]);
             segment(commands, &b.boot, legs.boot[i]);
         }
-        // The tail at rest.
-        if let Some(tail) = models
-            .heads
-            .get(animal_of(i, models.heads.len()))
-            .and_then(|h| h.tail.as_ref())
-        {
-            for (piece, joint) in tail.pieces.iter().zip(tail.rest()) {
-                segment(commands, piece, legs.pelvis * joint);
-            }
+        // The tail, at rest until it sways.
+        let animal = animal_of(i, models.heads.len());
+        if let Some(tail) = models.heads.get(animal).and_then(|h| h.tail.as_ref()) {
+            let pieces = tail
+                .pieces
+                .iter()
+                .zip(tail.rest())
+                .map(|(piece, joint)| segment(commands, piece, legs.pelvis * joint))
+                .collect();
+            commands.entity(root).insert(SquadTail {
+                pieces,
+                animal,
+                pelvis: legs.pelvis,
+                swing: default(),
+                phase: i as f32 * 1.7,
+            });
         }
         commands.entity(root).insert(Idler {
             head,
             neck,
             phase: i as f32 * 2.3,
         });
+    }
+}
+
+/// Their tails sway lazily: the root turning slowly to and fro (and rolling a little), the rest
+/// following on a moment late.
+fn sway(
+    time: Res<Time>,
+    models: Res<Models>,
+    mut tails: Query<(&Transform, &mut SquadTail)>,
+    mut transforms: Query<&mut Transform, Without<SquadTail>>,
+) {
+    let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    if dt <= 0.0 {
+        return;
+    }
+    for (root, mut s) in &mut tails {
+        let Some(model) = models.heads.get(s.animal).and_then(|h| h.tail.as_ref()) else {
+            continue;
+        };
+        let p = s.phase;
+        let yaw = 0.32 * (t * 1.9 + p).sin() + 0.1 * (t * 3.1 + 2.0 * p).sin();
+        let roll = 0.1 * (t * 1.3 + 1.6 * p).sin();
+        let pelvis = Transform {
+            rotation: s.pelvis.rotation * Quat::from_rotation_y(yaw) * Quat::from_rotation_z(roll),
+            ..s.pelvis
+        };
+        let poses = s.swing.update(model, dt, &(*root * pelvis));
+        let back = root.rotation.inverse();
+        for (&e, pose) in s.pieces.iter().zip(&poses) {
+            if let Ok(mut tr) = transforms.get_mut(e) {
+                tr.translation = back * (pose.translation - root.translation);
+                tr.rotation = back * pose.rotation;
+            }
+        }
     }
 }
 
