@@ -3302,8 +3302,11 @@ mod tests {
 
     #[test]
     fn bots_take_and_capture_prisms() {
+        // Captures are rare (about one a match), and the matches play out differently where the
+        // floating point maths differs (macOS's libm): enough of them that a dry one or two
+        // don't fail it.
         let mut n = [0usize; 3];
-        for seed in [3u64, 8] {
+        for seed in [3u64, 8, 11, 16] {
             let mut sim = Sim::new(
                 seed,
                 Rules {
