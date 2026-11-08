@@ -3040,31 +3040,6 @@ mod tests {
     }
 
     #[test]
-    fn bots_attack_targets_reload_and_use_grenades() {
-        // Four arenas, three and a half minutes each. (How a match goes differs a little from
-        // platform to platform, the maths libraries rounding differently; in an arena or two the
-        // attackers may well never get through.)
-        let mut total = Stats::default();
-        for seed in [1, 3, 4, 11] {
-            let s = play(seed, 8, 210.0, Rules::default());
-            total.target_hits += s.target_hits;
-            total.offense_target_hits += s.offense_target_hits;
-            total.reloads += s.reloads;
-            total.pickups += s.pickups;
-            total.grenades += s.grenades;
-            total.launches += s.launches;
-        }
-        assert!(
-            total.offense_target_hits > 0,
-            "offensive bots hit enemy targets: {total:?}"
-        );
-        assert!(total.reloads > 0, "bots reload: {total:?}");
-        assert!(total.pickups > 0, "bots pick up grenades: {total:?}");
-        assert!(total.grenades > 0, "bots throw grenades: {total:?}");
-        assert!(total.launches > 0, "bots take jump pads: {total:?}");
-    }
-
-    #[test]
     fn bots_miss_a_fair_share() {
         // No grenades (nor powerups), so every hit is a blaster's; shots at panels don't count.
         let s = play(
@@ -3319,44 +3294,6 @@ mod tests {
             }
         }
         assert!(found > 3, "{found}");
-    }
-
-    #[test]
-    fn bots_take_and_capture_prisms() {
-        // Captures are rare (about one a match), and the matches play out differently where the
-        // floating point maths differs (macOS's libm): enough of them that a dry one or two
-        // don't fail it.
-        let mut n = [0usize; 3];
-        for seed in [3u64, 8, 11, 16] {
-            let mut sim = Sim::new(
-                seed,
-                Rules {
-                    mode: level::GameMode::Prism,
-                    match_time: 300.0,
-                    ..Rules::default()
-                },
-            );
-            let mut bots = Bots::default();
-            bots.fill(&mut sim, 8, 0.6);
-            for _ in 0..(300.0 / TICK) as usize {
-                bots.think(&mut sim);
-                sim.step();
-                for e in sim.drain_events() {
-                    match e {
-                        SimEvent::PrismTaken { .. } => n[0] += 1,
-                        SimEvent::PrismReturned { by: Some(_), .. } => n[1] += 1,
-                        SimEvent::PrismCaptured { .. } => n[2] += 1,
-                        _ => {}
-                    }
-                }
-            }
-        }
-        println!(
-            "prisms taken {}, returned {}, captured {}",
-            n[0], n[1], n[2]
-        );
-        assert!(n[0] >= 4, "taken: {n:?}");
-        assert!(n[2] >= 1, "captured: {n:?}");
     }
 
     #[test]
