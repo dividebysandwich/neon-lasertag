@@ -83,7 +83,8 @@ they're in the game; infecting everyone ends the match and gives the phantoms 10
 - **Mirrors** bounce a bolt once, so you can bank shots around corners.
 - **Jump pads** throw you up to the upper level.
 - **Laser gates** switch on and off; walking through one while it's on counts as a hit.
-- **Turret boxes** stand in pairs, one in each half. A turret is folded up inside each one,
+- **Turret boxes** stand in each half: one in a small arena, two in a medium one, three in a
+  large one. A turret is folded up inside each one,
   working for nobody (the box glows white). Solve the sliding puzzle on the box's side to make
   the turret work for your team: it rises out and shoots your enemies within reach, twice a
   second. Shoot it to switch it off for 10 s (not in its first 3 s out). The other team takes

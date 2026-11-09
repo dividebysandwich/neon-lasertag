@@ -93,6 +93,7 @@ impl BoxState {
     pub fn snap(&self) -> BoxSnap {
         BoxSnap {
             owner: self.owner,
+            next: self.next,
             phase: self.phase,
             t: self.t,
             seed: self.seed,
@@ -113,6 +114,9 @@ impl BoxState {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BoxSnap {
     pub owner: Option<Team>,
+    /// The team taking it over (while it folds away).
+    #[serde(default)]
+    pub next: Option<Team>,
     pub phase: BoxPhase,
     pub t: f32,
     pub seed: u32,

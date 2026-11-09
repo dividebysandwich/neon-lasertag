@@ -14,7 +14,10 @@
 //! (`power`), and going to Red's doorway into the megatarget's room (`warp-door`), into the
 //! room (`warp-room`), in front of the first turret (`warp-turret`) or into the first pocket
 //! (`warp-pocket`); in front of the nearest mirror (`warp-mirror`) jump pad (`warp-pad`) or laser gate (`warp-gate`); turning the flat screen's view (`yaw=90`, `pitch=-20`, in degrees); holding the trigger
-//! down for S seconds (`fire=S`); putting up a carried barrier (`barrier`); arena events (`blackout`, `overdrive`) and the last
+//! down for S seconds (`fire=S`); putting up a carried barrier (`barrier`); turret boxes: in
+//! front of the nearest one (`warp-box`, `warp-box=M`), every player but the bots at the first
+//! one (`warp-box-all`, hosting), clicking its puzzle (`box-hint=N`, `box-poke=J`, and
+//! `box-click`, which works in a remote game too) or solving it at once (`solve-box`); arena events (`blackout`, `overdrive`) and the last
 //! minute's double points (`double`); freezing the game (`freeze`), the free camera
 //! (`freecam`), its view's width (`fov=DEG`) and aperture (`dof=N`).
 
@@ -306,7 +309,8 @@ fn dev_script(
         // `warp-box=M` metres from it), facing it; clicking the piece its puzzle's hint says
         // (`box-hint`, or `box-hint=N` N times), or a given piece (`box-poke=J`); solving it at
         // once (`solve-box`).
-        a if a.starts_with("warp-box")
+        a if a == "warp-box"
+            || a.starts_with("warp-box=")
             || a.starts_with("box-hint")
             || a.starts_with("box-poke=")
             || a == "solve-box" =>
@@ -355,6 +359,92 @@ fn dev_script(
                         sim.teleport(me, feet, yaw);
                         yaw
                     };
+                face(w, yaw);
+            });
+        }
+        // Any game (a remote one too): one click on the nearest turret box's puzzle, on the
+        // piece its hint says, sent as a player's click is (`box-click`); nothing once the box
+        // is the player's team's.
+        "box-click" => {
+            commands.queue(|w: &mut World| {
+                let Some(game) = w.get_resource::<Game>() else {
+                    return;
+                };
+                let Some(me) = game
+                    .me
+                    .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
+                else {
+                    return;
+                };
+                let Some((k, s)) = game
+                    .level
+                    .boxes
+                    .iter()
+                    .zip(&game.snap.boxes)
+                    .enumerate()
+                    .min_by(|a, b| {
+                        let d = |b: &lt_sim::level::TurretBox| b.pos.distance(me.feet);
+                        d(a.1.0).total_cmp(&d(b.1.0))
+                    })
+                    .map(|(k, (_, s))| (k, s))
+                else {
+                    return;
+                };
+                let ours = if s.phase == lt_sim::sim::BoxPhase::Closing {
+                    s.next == Some(me.team)
+                } else {
+                    s.owner == Some(me.team)
+                };
+                if ours {
+                    return;
+                }
+                let Some(j) = lt_sim::puzzle::Puzzle::generate(s.seed).hint(&s.pieces) else {
+                    return;
+                };
+                info!(
+                    "dev: clicking piece {j} of turret box {k} from {:.1}",
+                    me.feet
+                );
+                if let Some(mut local) = w.get_resource_mut::<LocalCmd>() {
+                    local.cmd.pokes = local.cmd.pokes.wrapping_add(1);
+                    local.cmd.poke = (k as u8, j as u8);
+                }
+            });
+        }
+        // Hosting: every player who isn't a bot to the first turret box, Red in front of its
+        // +z side and Blue of its -z side, facing it (`warp-box-all`).
+        "warp-box-all" => {
+            commands.queue(|w: &mut World| {
+                let yaw = {
+                    let Some(mut game) = w.get_resource_mut::<Game>() else {
+                        return;
+                    };
+                    let me = game.me;
+                    let Source::Local { sim, .. } = &mut game.source else {
+                        return;
+                    };
+                    let Some(b) = sim.level.boxes.first().copied() else {
+                        return;
+                    };
+                    let people: Vec<(lt_sim::PlayerId, lt_sim::Team)> = sim
+                        .players
+                        .iter()
+                        .filter(|p| !p.bot)
+                        .map(|p| (p.id, p.team))
+                        .collect();
+                    let mut mine = 0.0;
+                    for (id, team) in people {
+                        let n = if team == lt_sim::Team::Red { 1.0 } else { -1.0 };
+                        let feet = b.pos + Vec3::Z * n * (lt_sim::level::BOX_HALF + 1.0);
+                        let yaw = if n > 0.0 { 0.0 } else { std::f32::consts::PI };
+                        info!("dev: player {id} ({team:?}) to {feet:.1}, at turret box 0");
+                        sim.teleport(id, feet, yaw);
+                        if Some(id) == me {
+                            mine = yaw;
+                        }
+                    }
+                    mine
+                };
                 face(w, yaw);
             });
         }
