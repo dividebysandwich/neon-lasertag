@@ -884,9 +884,28 @@ enum Plan {
 /// Something to do before going on with the plan.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Errand {
-    Reload { node: usize, pos: Vec3 },
-    Pickup { id: u32, node: usize, pos: Vec3 },
+    Reload {
+        node: usize,
+        pos: Vec3,
+    },
+    Pickup {
+        id: u32,
+        node: usize,
+        pos: Vec3,
+    },
+    /// Solving turret box `k`'s puzzle (standing at `pos`, in front of one side) to have its
+    /// turret for the team.
+    Puzzle {
+        k: usize,
+        node: usize,
+        pos: Vec3,
+    },
 }
+
+/// How near a turret box (m) a bot with nothing better to do goes to solve its puzzle, and
+/// the time it gives it.
+const PUZZLE_SIGHT: f32 = 14.0;
+const PUZZLE_TIME: f32 = 30.0;
 
 /// An enemy seen or heard.
 #[derive(Clone, Copy, Debug)]
@@ -978,6 +997,11 @@ pub struct Bot {
     jumps: u32,
     dashes: u32,
     dodge_seen: Option<u32>,
+    /// Turret box puzzle clicks made (`PlayerCmd::pokes`, the last in `poke`), and the time to
+    /// the next.
+    pokes: u32,
+    poke: (u8, u8),
+    poke_t: f32,
 }
 
 /// How likely a bot of skill 1 dashes out of a bolt's way (falling off with the skill squared),
@@ -1058,6 +1082,9 @@ impl Bot {
             jumps: 0,
             dashes: 0,
             dodge_seen: None,
+            pokes: 0,
+            poke: (0, 0),
+            poke_t: 1.0,
             strafe: 1.0,
             peek: None,
             peek_t: 3.0,
@@ -1586,6 +1613,9 @@ impl Bot {
                     .any(|k| k.id == id && p.wants(k.kind, &sim.rules))
                     || self.errand_time > 15.0
             }
+            Some(Errand::Puzzle { k, .. }) => {
+                !Self::wants_box(sim, p, k) || self.errand_time > PUZZLE_TIME
+            }
             None => false,
         };
         if done {
@@ -1635,8 +1665,58 @@ impl Bot {
                 .min_by(|a, b| a.0.total_cmp(&b.0));
             if let Some((_, id, node, pos)) = best {
                 self.set_errand(Errand::Pickup { id, node, pos });
+            } else if self.enemy.is_none() && p.power.is_none() && !sim.carrying(p.id) {
+                // A turret box near that doesn't work for the team, with no team mate on it
+                // already: its puzzle, from the side towards the bot.
+                let mates: Vec<Vec3> = sim
+                    .players
+                    .iter()
+                    .filter(|o| o.id != p.id && o.team == p.team && o.alive())
+                    .map(|o| o.feet)
+                    .collect();
+                let best = sim
+                    .level
+                    .boxes
+                    .iter()
+                    .enumerate()
+                    .filter(|&(k, b)| {
+                        Self::wants_box(sim, p, k)
+                            && b.pos.distance(p.feet) < PUZZLE_SIGHT
+                            // (Attackers on their way leave their own half's to the others.)
+                            && (self.role != Role::Offense || Team::of_z(b.pos.z) != p.team)
+                            && !mates.iter().any(|m| m.distance(b.pos) < 2.5)
+                    })
+                    .filter_map(|(k, b)| {
+                        let n = if p.feet.z >= b.pos.z { 1.0 } else { -1.0 };
+                        let pos = b.pos + Vec3::Z * n * (crate::level::BOX_HALF + 0.55);
+                        let node = sim.level.nav.node_at(pos)?;
+                        g.connected(here, node)
+                            .then_some((b.pos.distance(p.feet), k, node, pos))
+                    })
+                    .min_by(|a, b| a.0.total_cmp(&b.0));
+                if let Some((_, k, node, pos)) = best {
+                    self.set_errand(Errand::Puzzle { k, node, pos });
+                    self.poke_t = 1.0;
+                }
             }
         }
+    }
+
+    /// Whether box `k`'s puzzle is worth solving for `p`: its turret doesn't work (nor is about
+    /// to) for `p`'s team, and its pieces can be clicked now.
+    fn wants_box(sim: &Sim, p: &Player, k: usize) -> bool {
+        sim.boxes.get(k).is_some_and(|s| {
+            let ours = if s.phase == crate::sim::BoxPhase::Closing {
+                s.next == Some(p.team)
+            } else {
+                s.owner == Some(p.team)
+            };
+            !ours
+                && matches!(
+                    s.phase,
+                    crate::sim::BoxPhase::Closed | crate::sim::BoxPhase::Up
+                )
+        })
     }
 
     fn set_errand(&mut self, e: Errand) {
@@ -1812,7 +1892,9 @@ impl Bot {
     fn destination(&mut self, sim: &Sim, g: &BotGraph, p: &Player) -> Option<(usize, Vec3)> {
         if let Some(e) = self.errand {
             return Some(match e {
-                Errand::Reload { node, pos } | Errand::Pickup { node, pos, .. } => (node, pos),
+                Errand::Reload { node, pos }
+                | Errand::Pickup { node, pos, .. }
+                | Errand::Puzzle { node, pos, .. } => (node, pos),
             });
         }
         match self.plan {
@@ -2205,6 +2287,28 @@ impl Bot {
     /// The middle of an enemy target this bot can hit from where it stands (Megatarget mode:
     /// one of the targets that counts for it, or a turret's switch on its way).
     fn panel_in_reach(&self, sim: &Sim, p: &Player, eye: Vec3, muzzle: Vec3) -> Option<Vec3> {
+        // A turret box's turret working for the enemy, out and in sight: it's shooting.
+        if let Some(h) = sim
+            .level
+            .boxes
+            .iter()
+            .zip(&sim.boxes)
+            .filter(|(_, s)| {
+                s.phase == crate::sim::BoxPhase::Up
+                    && s.off <= 0.0
+                    && s.guard <= 0.0
+                    && s.owner.is_some_and(|t| t != p.team)
+            })
+            .map(|(b, _)| b.head(1.0))
+            .filter(|h| {
+                h.distance(eye) < sim.rules.turret_range + 2.0
+                    && sim.world.clear(eye, *h)
+                    && sim.world.clear(muzzle, *h)
+            })
+            .min_by(|a, b| a.distance(eye).total_cmp(&b.distance(eye)))
+        {
+            return Some(h);
+        }
         if let Some(m) = &sim.level.mega {
             let seen = |min: Vec3, max: Vec3| {
                 hits_box(&sim.world, eye, min, max) && hits_box(&sim.world, muzzle, min, max)
@@ -2242,6 +2346,12 @@ impl Bot {
     /// Where to look with nothing to shoot.
     fn look_dir(&self, sim: &Sim, p: &Player, move_dir: Vec2, now: f64) -> Vec3 {
         let eye = p.eye();
+        if let Some(Errand::Puzzle { k, pos, .. }) = self.errand
+            && Vec2::new(pos.x - p.feet.x, pos.z - p.feet.z).length() < 1.0
+            && let Some(b) = sim.level.boxes.get(k)
+        {
+            return (b.panel(if pos.z > b.pos.z { 0 } else { 1 }).0 - eye).normalize_or(self.aim);
+        }
         if let Some((pt, _)) = self.alert {
             return (pt - eye).normalize_or(self.aim);
         }
@@ -2671,6 +2781,24 @@ impl Controller for Bot {
             Some(Gadget::Sensor) => target.is_none() && self.rng.random::<f32>() < TICK / 4.0,
             None => false,
         };
+        // At a turret box with nobody to shoot: clicking its pieces, about a click a second (a
+        // little quicker the better it is).
+        if let Some(Errand::Puzzle { k, pos, .. }) = self.errand
+            && target.is_none()
+            && Vec2::new(pos.x - feet.x, pos.z - feet.z).length() < 1.0
+        {
+            move_dir = Vec2::ZERO;
+            self.poke_t -= TICK;
+            if self.poke_t <= 0.0 {
+                self.poke_t = self.rng.random_range(0.6..1.2) * (1.4 - 0.6 * self.skill);
+                if let Some(s) = sim.boxes.get(k)
+                    && let Some(j) = s.puzzle.hint(&s.pieces)
+                {
+                    self.pokes = self.pokes.wrapping_add(1);
+                    self.poke = (k as u8, j as u8);
+                }
+            }
+        }
         self.pose(PlayerCmd {
             stick: move_dir.clamp_length_max(1.0),
             fire,
@@ -2688,6 +2816,8 @@ impl Bot {
     fn pose(&self, mut cmd: PlayerCmd) -> PlayerCmd {
         cmd.jumps = self.jumps;
         cmd.dashes = self.dashes;
+        cmd.pokes = self.pokes;
+        cmd.poke = self.poke;
         let yaw = yaw_of(Vec3::new(self.aim.x, 0.0, self.aim.z));
         let body = Quat::from_rotation_y(yaw);
         let look = look_rot(self.aim);
@@ -3294,6 +3424,35 @@ mod tests {
             }
         }
         assert!(found > 3, "{found}");
+    }
+
+    #[test]
+    fn bots_solve_turret_box_puzzles_and_switch_turrets_off() {
+        let (mut solved, mut off, mut turret_tags) = (0, 0, 0);
+        for seed in 1..=3 {
+            let mut sim = Sim::new(seed, Rules::default());
+            assert!(!sim.level.boxes.is_empty(), "seed {seed}: no turret boxes");
+            let mut bots = Bots::default();
+            bots.fill(&mut sim, 8, 0.6);
+            for _ in 0..(180.0 / TICK) as usize {
+                bots.think(&mut sim);
+                sim.step();
+                for e in sim.drain_events() {
+                    match e {
+                        SimEvent::PuzzleSolved { .. } => solved += 1,
+                        SimEvent::BoxOff { .. } => off += 1,
+                        SimEvent::TaggedOut {
+                            how: crate::types::TagHow::Turret,
+                            ..
+                        } => turret_tags += 1,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        println!("solved {solved}, turrets off {off}, tagged out by turrets {turret_tags}");
+        assert!(solved >= 3, "solved {solved}");
+        assert!(off >= 1, "turrets off {off}");
     }
 
     #[test]
