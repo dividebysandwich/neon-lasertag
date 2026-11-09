@@ -167,21 +167,25 @@ pub(super) fn contours(p: &mut Parts, rng: &mut StdRng) {
             }
         }
     }
-    // Shapes resting on the hills.
+    // Spheres floating high over the hills (seen over the border walls), then shapes resting
+    // on them.
     let mut placed: Vec<(Vec2, f32)> = Vec::new();
-    let want = rng.random_range(10..20);
+    let floating = rng.random_range(5..10);
+    let want = floating + rng.random_range(8..16);
     for _ in 0..3000 {
         if placed.len() >= want {
             break;
         }
+        let float = placed.len() < floating;
         let q = Vec2::new(
             rng.random_range(-260.0..260.0),
             rng.random_range(-260.0..260.0),
         );
         let d = arena_distance(p.half, q);
         let k = (d / 220.0).clamp(0.0, 1.0);
-        let r = lerp(5.0, 16.0, k) * rng.random_range(0.6..2.0);
-        if d - r < 20.0 || d > 250.0 {
+        let r = lerp(5.0, 16.0, k) * rng.random_range(0.6..2.0) * if float { 1.6 } else { 1.0 };
+        let near = if float { 45.0 } else { 20.0 };
+        if d - r < near || d > 250.0 {
             continue;
         }
         if placed
@@ -191,7 +195,9 @@ pub(super) fn contours(p: &mut Parts, rng: &mut StdRng) {
             continue;
         }
         placed.push((q, r));
-        shape(p, rng, &terrain, q, r);
+        // Floating: 8 to 30 degrees up, seen from the arena.
+        let lift = float.then(|| q.length() * rng.random_range(8f32..30.0).to_radians().tan());
+        shape(p, rng, &terrain, q, r, lift);
     }
     info!(
         "scenery: contours, {segments} line segments, {} shapes",
@@ -224,19 +230,33 @@ fn segment(p: &mut Parts, a: Vec3, b: Vec3, col: usize) {
     }
 }
 
-/// A sphere, cone or dome at q, about r across, ringed with lines.
-fn shape(p: &mut Parts, rng: &mut StdRng, terrain: &Terrain, q: Vec2, r: f32) {
+/// A sphere, cone or dome at q, about r across, ringed with lines; with a `lift`, a sphere
+/// floating that high.
+fn shape(p: &mut Parts, rng: &mut StdRng, terrain: &Terrain, q: Vec2, r: f32, lift: Option<f32>) {
     let ground = terrain.height(q);
     let dist = q.length();
     let (w, halo, off) = widths(dist);
     let col = [C_PINK, C_PINK, C_RED, ORANGE, PURPLE, CYAN][rng.random_range(0..6)];
-    let kind = rng.random_range(0..100);
+    let kind = if lift.is_some() {
+        0
+    } else {
+        rng.random_range(0..100)
+    };
     // Rings this far apart (m, along the surface).
     let spacing = (r / rng.random_range(5.0..9.0)).max(0.8);
     let (lathe, rings): (Lathe, Vec<usize>) = if kind < 65 {
         // A sphere, sunk into the hill, its rings round an axis mostly facing the arena.
-        let c = Vec3::new(q.x, ground + r * rng.random_range(0.35..0.85), q.y);
-        let axis = match rng.random_range(0..4) {
+        let y = match lift {
+            Some(h) => ground.max(0.0) + r + h,
+            None => ground + r * rng.random_range(0.35..0.85),
+        };
+        let c = Vec3::new(q.x, y, q.y);
+        let facing = if lift.is_some() {
+            rng.random_range(1..5)
+        } else {
+            rng.random_range(0..4)
+        };
+        let axis = match facing {
             0 => Vec3::Y,
             1 => Vec3::new(
                 rng.random_range(-1.0..1.0),
@@ -245,8 +265,9 @@ fn shape(p: &mut Parts, rng: &mut StdRng, terrain: &Terrain, q: Vec2, r: f32) {
             )
             .normalize_or(Vec3::Y),
             _ => {
-                let to = -Vec3::new(q.x, 0.0, q.y).normalize_or(Vec3::Z);
-                let side = Vec3::Y.cross(to);
+                // Towards the arena (down at it from up high).
+                let to = (Vec3::Y * 2.0 - c).normalize();
+                let side = Vec3::Y.cross(to).normalize_or(Vec3::X);
                 (to + side * rng.random_range(-0.5..0.5) + Vec3::Y * rng.random_range(-0.3..0.4))
                     .normalize()
             }
