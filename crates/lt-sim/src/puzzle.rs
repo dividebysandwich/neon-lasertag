@@ -11,7 +11,8 @@
 //! that moved last can always slide back out (`something_can_always_slide_out` tests it).
 //! The puzzle is solved when every piece is all the way in. Some pieces have to go in before
 //! others: a piece whose way in crosses another piece's cells can't get past that piece once
-//! it's in.
+//! it's in. Every puzzle has at least one such key piece (two in most), so there's always a
+//! blockage to work out.
 //!
 //! Everything follows from a seed (`Puzzle::generate`), so the sim only sends the seed and how
 //! far out each piece is. Cells are (column, row): column 0 at the left (-x in the box's
@@ -113,8 +114,13 @@ impl Puzzle {
             let Some(p) = Self::carve(&mut rng) else {
                 continue;
             };
-            // Not too easy, not too hard: five to seven pieces, a few that have to wait for
-            // others, most of them bigger than a cell, from three sides or more.
+            // Not too easy, not too hard: five to seven pieces, most of them bigger than a cell,
+            // from three sides or more, a few that have to wait for others, and always a key
+            // piece (two if it can be): one that blocks another's way in if it goes in first.
+            let keys = p.keys().len() as i32;
+            if keys == 0 {
+                continue;
+            }
             let n = p.pieces.len() as i32;
             let deps = p.dependencies() as i32;
             let singles = p.pieces.iter().filter(|q| q.cells.len() == 1).count() as i32;
@@ -126,6 +132,7 @@ impl Puzzle {
             let miss = (5 - n).max(0) * 3
                 + (n - 7).max(0) * 3
                 + (2 - deps).max(0) * 4
+                + (2 - keys).max(0) * 4
                 + (deps - 4).max(0) * 2
                 + singles.saturating_sub(1) * 2
                 + (3 - sides).max(0) * 2;
@@ -136,7 +143,7 @@ impl Puzzle {
                 best = Some((miss, p));
             }
         }
-        best.map(|b| b.1).unwrap_or_else(Puzzle::fallback)
+        best.map(|b| b.1).unwrap_or_else(|| Self::fallback(seed))
     }
 
     /// One try at carving the square into pieces (`None`: a cell was left that no piece can
@@ -230,14 +237,30 @@ impl Puzzle {
         }
     }
 
-    /// A plain puzzle (never needed in practice: carving nearly always works first time).
-    fn fallback() -> Puzzle {
-        let mut pieces = Vec::new();
-        for r in 0..N as i8 {
-            pieces.push(Self::piece(LEFT, vec![(0, r), (1, r)]));
-            pieces.push(Self::piece(RIGHT, vec![(2, r), (3, r)]));
-        }
-        Puzzle { pieces }
+    /// Any puzzle with a key piece (never needed in practice: one of the first tries has
+    /// one).
+    fn fallback(seed: u32) -> Puzzle {
+        (1u64..)
+            .find_map(|k| {
+                let mut rng = ChaCha8Rng::seed_from_u64(seed as u64 ^ k.rotate_left(32));
+                Self::carve(&mut rng).filter(|p| !p.keys().is_empty())
+            })
+            .expect("a puzzle with a key piece")
+    }
+
+    /// The key pieces: each one in another piece's way in, so that piece gets stuck if the key
+    /// goes in first.
+    pub fn keys(&self) -> Vec<usize> {
+        (0..self.pieces.len())
+            .filter(|&j| {
+                self.pieces.iter().enumerate().any(|(i, a)| {
+                    i != j
+                        && (1..=a.out)
+                            .flat_map(|k| a.cells_at(k))
+                            .any(|c| inside(c.0, c.1) && self.pieces[j].cells.contains(&c))
+                })
+            })
+            .collect()
     }
 
     /// How many (piece, piece) pairs have to go in in a given order: one's cells on the
@@ -426,6 +449,27 @@ mod tests {
             }
             assert!(p.solved(&at), "seed {seed}: hints didn't solve it");
         }
+    }
+
+    #[test]
+    fn every_puzzle_has_a_key_piece_that_blocks_another() {
+        let mut two = 0;
+        for seed in 0..500u32 {
+            let p = Puzzle::generate(seed);
+            let keys = p.keys();
+            assert!(!keys.is_empty(), "seed {seed}: no key piece");
+            two += (keys.len() >= 2) as usize;
+            // In first, a key leaves some other piece stuck or blocked.
+            for &key in &keys {
+                let blocked = (0..p.pieces.len()).filter(|&j| j != key).any(|j| {
+                    let mut at = p.start();
+                    assert_eq!(p.poke(&mut at, key), Slide::In, "seed {seed}");
+                    matches!(p.poke(&mut at, j), Slide::Stuck | Slide::Blocked)
+                });
+                assert!(blocked, "seed {seed}: key {key} blocks nothing");
+            }
+        }
+        assert!(two > 400, "two key pieces in {two} of 500");
     }
 
     #[test]
