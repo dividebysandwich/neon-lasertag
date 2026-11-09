@@ -1665,7 +1665,13 @@ impl Bot {
                 .min_by(|a, b| a.0.total_cmp(&b.0));
             if let Some((_, id, node, pos)) = best {
                 self.set_errand(Errand::Pickup { id, node, pos });
-            } else if self.enemy.is_none() && p.power.is_none() && !sim.carrying(p.id) {
+            } else if self.enemy.is_none()
+                && p.power.is_none()
+                && !sim.carrying(p.id)
+                // (Not in Infection: the phantoms hunt, and survivors holed up at the boxes would
+                // hold out too long.)
+                && !sim.infection()
+            {
                 // A turret box near that doesn't work for the team, with no team mate on it
                 // already: its puzzle, from the side towards the bot.
                 let mates: Vec<Vec3> = sim
@@ -3179,7 +3185,7 @@ mod tests {
             Rules {
                 pickup_pairs: 0,
                 powerup_pairs: 0,
-                ..Rules::default()
+                ..crate::Rules::default()
             },
         );
         let at_players = s.fired.saturating_sub(s.panel_shots).max(1);
@@ -3194,7 +3200,7 @@ mod tests {
         // (No powerups to fetch on the way.)
         let rules = Rules {
             powerup_pairs: 0,
-            ..Rules::default()
+            ..crate::Rules::default()
         };
         let mut sim = Sim::new(seed, rules);
         let mut bots = Bots::default();
@@ -3462,7 +3468,7 @@ mod tests {
             Rules {
                 mode: level::GameMode::Infection,
                 match_time: 240.0,
-                ..Rules::default()
+                ..crate::Rules::default()
             },
         );
         let mut bots = Bots::default();
@@ -3500,7 +3506,7 @@ mod tests {
                 Rules {
                     mode: level::GameMode::Infection,
                     match_time: 180.0,
-                    ..Rules::default()
+                    ..crate::Rules::default()
                 },
             );
             let mut bots = Bots::default();
@@ -3620,7 +3626,7 @@ mod tests {
             5,
             Rules {
                 mode: level::GameMode::Infection,
-                ..Rules::default()
+                ..crate::Rules::default()
             },
         );
         let me = inf.add_player("me", Some(Team::Red), false).unwrap();
@@ -3636,7 +3642,7 @@ mod tests {
                 Rules {
                     mode: level::GameMode::Megatarget,
                     match_time: 300.0,
-                    ..Rules::default()
+                    ..crate::Rules::default()
                 },
             );
             let mut bots = Bots::default();
