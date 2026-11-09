@@ -1,7 +1,8 @@
 //! Procedural arenas: a 2 m grid, at most two floors, generated for Red's half (+z) and
 //! turned half way round the centre for Blue's (cell (x, z) becomes (w-1-x, h-1-z)), so the two
 //! bases are in opposite corners. Arenas come in three sizes (`ArenaSize`); in bigger ones
-//! the generator places more of everything, in proportion to the floor.
+//! the generator places more of everything, in proportion to the floor, except cover (walls,
+//! pillars, blocks on either floor), which grows more slowly: bigger arenas play more open.
 //!
 //! Each team's half has: its base (a small corner of spawn pads, walled with a gate on each
 //! open side), one or two team targets in the rear quarter (each hanging from a roof over the
@@ -257,6 +258,18 @@ impl Dims {
     /// `n` scaled by the arena's floor (at least `n` itself).
     fn scaled(self, n: usize) -> usize {
         ((n as f32 * self.area_scale()).round() as usize).max(n)
+    }
+
+    /// `n` (cover: walls, pillars, blocks, for a small arena) scaled by the square root of the
+    /// arena's floor (at least `n` itself): bigger arenas get more of it, but less per cell,
+    /// so the larger the arena the more open it plays (and the less there is to draw).
+    fn sparse(self, n: usize) -> usize {
+        ((n as f32 * self.area_scale().sqrt()).round() as usize).max(n)
+    }
+
+    /// The longest open ground lane allowed (cells): longer in bigger arenas.
+    fn lane_max(self) -> usize {
+        (9.0 * self.area_scale().sqrt()).round() as usize
     }
 
     /// `n` (columns, for a small arena) scaled by the arena's width.
@@ -2135,7 +2148,7 @@ fn try_grid(
             }
         }
     }
-    for _ in 0..rng.random_range(dm.scaled(7)..=dm.scaled(10)) {
+    for _ in 0..rng.random_range(dm.sparse(7)..=dm.sparse(10)) {
         if upper_edges.is_empty() {
             break;
         }
@@ -2166,7 +2179,7 @@ fn try_grid(
             }
         }
     }
-    for _ in 0..rng.random_range(1..=dm.scaled(2)) {
+    for _ in 0..rng.random_range(1..=dm.sparse(2)) {
         let ix = rng.random_range(0..dm.w);
         let iz = rng.random_range(dm.half() + 1..=dm.upper_max());
         if g.upper[dm.idx(ix, iz)]
@@ -2210,7 +2223,7 @@ fn try_grid(
             !res.has(x, z) && g.ground[dm.idx(x, z)] == Ground::Open
         }) && g.edge_wall(0, e) == Wall::None
     };
-    for _ in 0..rng.random_range(dm.scaled(10)..=dm.scaled(14)) {
+    for _ in 0..rng.random_range(dm.sparse(10)..=dm.sparse(14)) {
         let horizontal = rng.random_bool(0.5);
         let len = rng.random_range(1..=3usize);
         let wall = match rng.random_range(0..10) {
@@ -2264,9 +2277,9 @@ fn try_grid(
     for (kind, n) in [
         (
             Ground::Pillar,
-            rng.random_range(dm.scaled(3)..=dm.scaled(5)),
+            rng.random_range(dm.sparse(3)..=dm.sparse(5)),
         ),
-        (Ground::Block, rng.random_range(dm.scaled(4)..=dm.scaled(7))),
+        (Ground::Block, rng.random_range(dm.sparse(4)..=dm.sparse(7))),
     ] {
         for _ in 0..n {
             let cells = open_cells(&g, &res);
@@ -2782,7 +2795,7 @@ fn long_lane(g: &Grid, res: &Reserve) -> Option<(usize, usize)> {
                 start = iz;
             }
             run += 1;
-            if run > 9 {
+            if run > dm.lane_max() {
                 // Try cells around the middle of the run, nearest first.
                 let mid = start + run / 2;
                 for k in 0..run as i32 {
@@ -2819,7 +2832,7 @@ fn long_lane(g: &Grid, res: &Reserve) -> Option<(usize, usize)> {
                 start = ix;
             }
             run += 1;
-            if run > 9 {
+            if run > dm.lane_max() {
                 for x in start..start + run {
                     let x = (x + run / 3) % dm.w;
                     if g.ground[dm.idx(x, iz)] == Ground::Open && !res.has(x, iz) {
