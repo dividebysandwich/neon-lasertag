@@ -1,9 +1,17 @@
 //! Atmosphere around the arena, all built from the three materials every renderer draws (dark
 //! StandardMaterial bodies, `AccentMaterial` neon, additive `GlowMaterial` halos):
 //!
-//! - a city of procedural towers from ~25 m to ~200 m out (boxes, setbacks, prisms, tapered and
-//!   twin towers, spires), with rows of little lit windows, neon bands, edge lines and crowns
-//!   with their halos;
+//! - one of three sceneries, picked from the seed (`LT_SCENERY=city|spires|contours` forces
+//!   one):
+//!   - a city of procedural towers from ~25 m to ~200 m out (boxes, setbacks, prisms, tapered
+//!     and twin towers, spires), with rows of little lit windows, neon bands, edge lines and
+//!     crowns with their halos, searchlights on the roofs;
+//!   - spires: towers on flared and conical bases ribbed with neon, hoops of light floating
+//!     round their tops (src/scenery/spires.rs);
+//!   - contours: hills with glowing contour lines, and ringed spheres, cones and domes on them
+//!     (src/scenery/contours.rs);
+//! - the sky: black or a gradient glowing at the horizon, fading to black higher up
+//!   (src/scenery/sky.rs);
 //! - a big spectrum display above each rear border wall (6 stacks of segments, low to high
 //!   frequencies from the viewer's left, with falling peaks), driven by `MusicSpectrum`, with the
 //!   score board on top;
@@ -26,9 +34,14 @@ use crate::game::Game;
 use crate::materials::{AccentMaterial, BLUE, GlowMaterial, NeonUniform, RED, ZONE_COLORS};
 use crate::music::{BANDS, MusicSpectrum};
 
+mod contours;
+mod shapes;
+mod sky;
+mod spires;
+
 const PINK: Vec3 = Vec3::new(1.0, 0.12, 0.6);
-/// Scenery neon: the zone colours, then red and blue.
-const NEON: [Vec3; 7] = [
+/// Scenery neon: the zone colours, then red, blue, pink and a warm white.
+const NEON: [Vec3; 9] = [
     ZONE_COLORS[0],
     ZONE_COLORS[1],
     ZONE_COLORS[2],
@@ -36,12 +49,17 @@ const NEON: [Vec3; 7] = [
     ZONE_COLORS[4],
     RED,
     BLUE,
+    PINK,
+    Vec3::new(1.0, 0.86, 0.7),
 ];
+const N_NEON: usize = NEON.len();
 const PURPLE: usize = 0;
 const CYAN: usize = 3;
 const ORANGE: usize = 4;
 const C_RED: usize = 5;
 const C_BLUE: usize = 6;
+const C_PINK: usize = 7;
+const C_WHITE: usize = 8;
 /// The display's stacks, low to high.
 const STACK_COLORS: [Vec3; BANDS] = [
     ZONE_COLORS[0],
@@ -83,6 +101,36 @@ const SIDE_CONE: f32 = 0.45;
 #[derive(Component)]
 pub struct Scenery;
 
+/// The start menu's empty arena (src/lobby.rs): its seed and half its width and length. The
+/// scenery is built round it while there is no game.
+#[derive(Resource)]
+pub struct LobbyScenery {
+    pub seed: u64,
+    pub half: Vec2,
+}
+
+/// The kinds of scenery round the arena.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Kind {
+    City,
+    Spires,
+    Contours,
+}
+
+impl Kind {
+    /// The arena's scenery (the same for a seed on every machine), unless `LT_SCENERY` names one.
+    fn pick(rng: &mut StdRng) -> Kind {
+        let forced = match std::env::var("LT_SCENERY").ok().as_deref() {
+            Some("city") => Some(Kind::City),
+            Some("spires") => Some(Kind::Spires),
+            Some("contours") => Some(Kind::Contours),
+            _ => None,
+        };
+        let pick = [Kind::City, Kind::Spires, Kind::Contours][rng.random_range(0..3)];
+        forced.unwrap_or(pick)
+    }
+}
+
 /// Searchlights turning around the vertical.
 #[derive(Component)]
 struct Sweep {
@@ -94,10 +142,14 @@ struct Sweep {
 #[derive(Resource)]
 struct SceneryMats {
     body: Handle<StandardMaterial>,
+    /// Lighter surfaces (the spires, the hills and the shapes on them).
+    pale: Handle<StandardMaterial>,
+    /// The sky's dome: its vertex colours.
+    sky: Handle<AccentMaterial>,
     warm: Handle<AccentMaterial>,
     cool: Handle<AccentMaterial>,
-    accent: [Handle<AccentMaterial>; 7],
-    glow: [Handle<GlowMaterial>; 7],
+    accent: [Handle<AccentMaterial>; N_NEON],
+    glow: [Handle<GlowMaterial>; N_NEON],
     stack: [Handle<AccentMaterial>; BANDS],
     stack_glow: [Handle<GlowMaterial>; BANDS],
     /// Cones from the arena's corners (red half, blue half) and long walls.
@@ -145,6 +197,16 @@ fn make_materials(
         reflectance: 0.3,
         ..default()
     });
+    let pale = std.add(StandardMaterial {
+        base_color: Color::linear_rgb(0.05, 0.052, 0.065),
+        perceptual_roughness: 0.8,
+        reflectance: 0.3,
+        ..default()
+    });
+    let sky = accents.add(AccentMaterial {
+        overlay: false,
+        neon: NeonUniform::vertex_coloured(1.0),
+    });
     let mut accent = |c: Vec3, i: f32| {
         accents.add(AccentMaterial {
             overlay: false,
@@ -180,6 +242,8 @@ fn make_materials(
     ];
     commands.insert_resource(SceneryMats {
         body,
+        pale,
+        sky,
         warm,
         cool,
         accent: neon_accent,
@@ -450,10 +514,12 @@ struct Parts {
     /// Half the arena's width and length (m).
     half: Vec2,
     body: MeshData,
+    pale: MeshData,
+    sky: MeshData,
     warm: MeshData,
     cool: MeshData,
-    accent: [MeshData; 7],
-    glow: [MeshData; 7],
+    accent: [MeshData; N_NEON],
+    glow: [MeshData; N_NEON],
     corner_cones: [MeshData; 2],
     side_cones: MeshData,
     sky_cones: MeshData,
@@ -1066,18 +1132,30 @@ fn triangles(m: &MeshData) -> usize {
     m.idx.len() / 3
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build(
     mut commands: Commands,
     game: Option<Res<Game>>,
+    lobby: Option<Res<LobbyScenery>>,
     mats: Res<SceneryMats>,
     mut displays_res: ResMut<Displays>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut built: Local<Option<u64>>,
     old: Query<Entity, With<Scenery>>,
 ) {
-    let Some(game) = game else { return };
-    let seed = game.level.seed;
-    if *built == Some(seed) {
+    let (seed, half) = match (game, lobby) {
+        (Some(game), _) => {
+            let dm = game.level.dims();
+            (
+                game.level.seed,
+                Vec2::new(dm.half_width(), dm.half_length()),
+            )
+        }
+        (None, Some(lobby)) => (lobby.seed, lobby.half),
+        (None, None) => return,
+    };
+    // (Again if it was taken down, leaving a game.)
+    if *built == Some(seed) && !old.is_empty() {
         return;
     }
     *built = Some(seed);
@@ -1085,22 +1163,43 @@ fn build(
         commands.entity(e).despawn();
     }
     let mut rng = StdRng::seed_from_u64(seed ^ 0x5CE7_E41A_C17E_5EED);
-    let mut p = Parts::default();
-    let dm = game.level.dims();
-    p.half = Vec2::new(dm.half_width(), dm.half_length());
-    // The ground around the arena.
-    quad(
-        &mut p.body,
-        [
-            Vec3::new(-400.0, -0.05, -400.0),
-            Vec3::new(400.0, -0.05, -400.0),
-            Vec3::new(400.0, -0.05, 400.0),
-            Vec3::new(-400.0, -0.05, 400.0),
-        ],
-        [0.0; 4],
-        Vec3::Y,
+    // (Picked with a generator of their own, so the city stays as it was for its seeds.)
+    let mut pick_rng = StdRng::seed_from_u64(seed ^ 0x0B5E_55ED_5C3E_4E21);
+    let kind = Kind::pick(&mut pick_rng);
+    let sky = sky::pick(&mut pick_rng);
+    info!(
+        "scenery: {kind:?}, sky {}",
+        sky.as_ref().map_or("black", |s| s.name)
     );
-    let roofs = city(&mut p, &mut rng);
+    let mut p = Parts { half, ..default() };
+    if kind != Kind::Contours {
+        // The ground around the arena (the hills are their own).
+        quad(
+            &mut p.body,
+            [
+                Vec3::new(-400.0, -0.05, -400.0),
+                Vec3::new(400.0, -0.05, -400.0),
+                Vec3::new(400.0, -0.05, 400.0),
+                Vec3::new(-400.0, -0.05, 400.0),
+            ],
+            [0.0; 4],
+            Vec3::Y,
+        );
+    }
+    let roofs = match kind {
+        Kind::City => city(&mut p, &mut rng),
+        Kind::Spires => {
+            spires::spires(&mut p, &mut rng);
+            Vec::new()
+        }
+        Kind::Contours => {
+            contours::contours(&mut p, &mut rng);
+            Vec::new()
+        }
+    };
+    if let Some(sky) = &sky {
+        sky.dome(&mut p.sky);
+    }
     let sweeping = cones(&mut p, &mut rng, &roofs);
     let (lit, halo, peak) = displays(&mut p, &mut meshes);
 
@@ -1125,6 +1224,12 @@ fn build(
     };
     spawn(&mut commands, &p.body, "body", &|e| {
         e.insert(MeshMaterial3d(mats.body.clone()));
+    });
+    spawn(&mut commands, &p.pale, "pale", &|e| {
+        e.insert(MeshMaterial3d(mats.pale.clone()));
+    });
+    spawn(&mut commands, &p.sky, "sky", &|e| {
+        e.insert(MeshMaterial3d(mats.sky.clone()));
     });
     spawn(&mut commands, &p.warm, "warm windows", &|e| {
         e.insert(MeshMaterial3d(mats.warm.clone()));

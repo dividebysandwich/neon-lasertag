@@ -1,7 +1,8 @@
 //! The start menu's scene (out of a game; VR's panel, src/vrui.rs, and the flat screen's
 //! menu, src/menu.rs, show over it): an empty arena, just its floor and its rainbow border
 //! walls, with the player in the middle, a circle of red and blue players standing around them
-//! at ease (blasters pointed at the floor), and colourful fireworks going up all around it. The
+//! at ease (blasters pointed at the floor), and colourful fireworks going up all around it,
+//! with a scenery of its own round it (`LobbyScenery`, src/scenery.rs). The
 //! arena's parts are `ArenaPart`s, so starting a game takes them down with everything else; the
 //! players and the fireworks go with them.
 
@@ -196,11 +197,17 @@ fn show(
         }
         let level = Level::empty(rand::random::<u32>() as u64, ArenaSize::Small);
         crate::arena::spawn_arena(&mut commands, &level, &kit, &palette, &mut meshes);
+        let dm = level.dims();
+        commands.insert_resource(crate::scenery::LobbyScenery {
+            seed: level.seed,
+            half: Vec2::new(dm.half_width(), dm.half_length()),
+        });
         if let Some(models) = models {
             spawn_squad(&mut commands, &models, &palette);
         }
         *shown = true;
     } else if !lobby && *shown {
+        commands.remove_resource::<crate::scenery::LobbyScenery>();
         // (The game's own arena is built once it exists: this goes first.)
         if game.is_none() {
             for e in &parts {

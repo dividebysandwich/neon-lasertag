@@ -7,7 +7,7 @@
 // colour run from each base towards the centre, and event pulses (target hits, tag-outs) ripple
 // out from where they happened.
 // Mode 1: a fixed colour (bolts, blasters). Mode 2: a fixed colour with pulses of light
-// flowing along the strip (uv.x: metres along it).
+// flowing along the strip (uv.x: metres along it). Mode 3: the vertex colour (the sky).
 // Halos fade with uv.y (0 at the strip, 1 at the outer edge); volume halos (light cones) also
 // fade where they are seen edge on; forcefields (shape 3) are translucent sheets of their own;
 // cloaks (shape 4) are a faint shimmer, brightest at the silhouette.
@@ -125,11 +125,13 @@ fn neon_color(world: vec3<f32>, uv: vec2<f32>, tint: vec4<f32>) -> vec3<f32> {
         base = base * (1.0 + 3.0 * s) + vec3<f32>(s * 0.35 * level);
     } else if (neon.params.x < 1.5) {
         base = neon.color.rgb;
-    } else {
+    } else if (neon.params.x < 2.5) {
         // Pulses running along the strip, a few per metre.
         let w = fract(uv.x * 2.2 - t * neon.extra.y);
         let pulse = smoothstep(0.0, 0.06, w) * exp(-w * 5.0);
         base = neon.color.rgb * (0.45 + 2.2 * pulse);
+    } else {
+        base = tint.rgb;
     }
     var col = base * neon.color.a;
 #ifndef OVERLAY

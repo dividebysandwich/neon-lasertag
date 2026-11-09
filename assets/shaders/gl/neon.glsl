@@ -9,7 +9,8 @@
 uniform mat4 u_view_proj[2];
 uniform mat4 u_model;
 // The material: rgb fixed colour (modes 1, 2), a intensity; x mode (0 team by position and
-// vertex tint, 1 fixed colour, 2 fixed colour flowing along uv.x), w half length of the arena (m).
+// vertex tint, 1 fixed colour, 2 fixed colour flowing along uv.x, 3 the vertex colour), w half
+// length of the arena (m).
 uniform vec4 u_colour;
 uniform vec4 u_params;
 // The frame: time (s), team colours, event pulses (xyz origin, w start time, negative: unused;
@@ -124,11 +125,13 @@ vec3 neon_colour(vec3 world) {
         base = base * (1.0 + 3.0 * s) + vec3(s * 0.35 * level);
     } else if (u_params.x < 1.5) {
         base = u_colour.rgb;
-    } else {
+    } else if (u_params.x < 2.5) {
         // Pulses running along the strip, a few per metre.
         float w = fract(v_uv.x * 2.2 - t * u_extra.y);
         float pulse = smoothstep(0.0, 0.06, w) * exp(-w * 5.0);
         base = u_colour.rgb * (0.45 + 2.2 * pulse);
+    } else {
+        base = v_tint.rgb;
     }
     vec3 col = base * u_colour.a;
     for (int i = 0; i < 8; i++) {

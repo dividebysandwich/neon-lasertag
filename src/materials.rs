@@ -96,6 +96,11 @@ impl NeonUniform {
         n
     }
 
+    /// The mesh's vertex colours, times `intensity` (the sky).
+    pub fn vertex_coloured(intensity: f32) -> Self {
+        Self::new(Vec3::ONE, intensity, 3.0)
+    }
+
     /// As a halo: a volume (light cones), fading where seen edge on.
     pub fn volume(mut self) -> Self {
         self.extra.x = 1.0;
