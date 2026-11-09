@@ -821,9 +821,18 @@ impl TurretBox {
     }
 }
 
-/// Turns some of the blocks into turret boxes: a mirrored pair (two in bigger arenas), in the
-/// middle rows of the halves, each with open floor in front of its +z and -z sides.
-fn place_boxes(g: &mut Grid, movers: &[Mover], seed: u64) {
+/// Turret boxes per half: one in a small arena, two in a medium one, three in a large one.
+pub fn boxes_per_half(size: ArenaSize) -> usize {
+    match size {
+        ArenaSize::Small => 1,
+        ArenaSize::Medium => 2,
+        ArenaSize::Large => 3,
+    }
+}
+
+/// Turns `n` of the blocks in each half into turret boxes (mirrored pairs), in the middle rows
+/// of the halves, each with open floor in front of its +z and -z sides.
+fn place_boxes(g: &mut Grid, movers: &[Mover], n: usize, seed: u64) {
     let dm = g.dims;
     let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x7B0C_5EED_0000_0001);
     let open = |g: &Grid, ix: usize, iz: usize| {
@@ -840,7 +849,7 @@ fn place_boxes(g: &mut Grid, movers: &[Mover], seed: u64) {
         })
         .collect();
     let mut placed: Vec<(usize, usize)> = Vec::new();
-    for _ in 0..dm.scaled(1) {
+    for _ in 0..n {
         cells.retain(|&(x, z)| {
             placed
                 .iter()
@@ -1354,7 +1363,12 @@ impl Level {
                     // validated arena is the one with every door closed.
                     let movers = place_movers(&mut grid, &nav, &mut rng);
                     // (Their own random numbers: the rest of the arena is as it was without.)
-                    place_boxes(&mut grid, &movers, seed ^ attempt.rotate_left(17));
+                    place_boxes(
+                        &mut grid,
+                        &movers,
+                        boxes_per_half(size),
+                        seed ^ attempt.rotate_left(17),
+                    );
                     let mirrors = place_mirrors(&grid, mode, &mut rng);
                     if mirrors.is_empty() {
                         continue;

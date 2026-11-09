@@ -487,7 +487,6 @@ mod tests {
 
     #[test]
     fn arenas_get_mirrored_turret_boxes_open_in_front() {
-        let mut with = 0;
         for seed in 0..24u64 {
             for (size, mode) in [
                 (ArenaSize::Small, GameMode::Classic),
@@ -496,8 +495,11 @@ mod tests {
             ] {
                 let level = Level::generate_for(seed, size, mode);
                 let dm = level.dims();
-                assert!(level.boxes.len() % 2 == 0, "seed {seed}: in pairs");
-                with += (!level.boxes.is_empty()) as usize;
+                assert_eq!(
+                    level.boxes.len(),
+                    2 * crate::level::boxes_per_half(size),
+                    "seed {seed} {size:?}: one per half in a small arena, two in a medium one, three in a large one"
+                );
                 for b in &level.boxes {
                     assert!(
                         level
@@ -514,7 +516,6 @@ mod tests {
                 }
             }
         }
-        assert!(with >= 60, "{with} of 72 arenas have turret boxes");
     }
 
     /// A sim on an arena with turret boxes, its first box, and a player of each team.
