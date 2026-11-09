@@ -2668,10 +2668,11 @@ impl Sim {
 
     /// Barriers running out.
     /// Pulse sensors: flying until they meet the arena, then pulsing until their time is up
-    /// (each pulse shows the enemies in range, `Player::revealed`).
+    /// (each pulse shows the enemies in range, `Player::revealed`, and strips their cloaks).
     fn step_sensors(&mut self) {
         let gravity = self.gravity();
         let rules = &self.rules;
+        let infection = self.infection();
         let mut i = 0;
         while i < self.sensors.len() {
             let s = &mut self.sensors[i];
@@ -2709,6 +2710,14 @@ impl Sim {
                         {
                             p.revealed = rules.sensor_reveal;
                             seen |= 1u64 << (p.id % 64);
+                            // (A cloak in range is gone for good; not a phantom's, which is
+                            // what it is.)
+                            let phantom = infection && p.team == Team::Red;
+                            if p.cloak > 0.0 && !phantom {
+                                p.cloak = 0.0;
+                                p.decloak = 0.0;
+                                self.events.push(SimEvent::Uncloaked { player: p.id });
+                            }
                         }
                     }
                     self.events.push(SimEvent::Pulse {
@@ -4680,7 +4689,7 @@ mod tests {
     }
 
     #[test]
-    fn pulse_sensors_stick_and_show_enemies_nearby_even_cloaked() {
+    fn pulse_sensors_stick_show_enemies_nearby_and_uncloak_them() {
         let (mut sim, a, b) = duel();
         let c = sim.add_player("c", Some(Team::Blue), false).unwrap();
         sim.give(a, PickupKind::Sensor);
@@ -4720,6 +4729,11 @@ mod tests {
         let (seen, team) = seen.expect("a pulse");
         assert_eq!(team, Team::Red);
         assert!(seen & (1 << b) != 0, "b seen, cloaked as it is");
+        assert_eq!(sim.player(b).unwrap().cloak, 0.0, "b's cloak gone");
+        assert!(
+            ev.iter()
+                .any(|e| matches!(e, SimEvent::Uncloaked { player } if *player == b))
+        );
         assert!(seen & (1 << c) == 0, "c too far");
         assert!(seen & (1 << a) == 0, "not its own team");
         assert!(sim.player(b).unwrap().revealed > 0.0);

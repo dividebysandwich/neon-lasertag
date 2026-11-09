@@ -83,7 +83,7 @@ pub enum PickupKind {
     Mirror,
     /// A gadget: thrown (`PlayerCmd::gadget`), it sticks where it lands and for
     /// `Rules::sensor_time` shows the enemies within `Rules::sensor_range` to its team every
-    /// `Rules::sensor_every` seconds, through walls and cloaks.
+    /// `Rules::sensor_every` seconds, through walls, stripping the cloaks of those it shows.
     Sensor,
     /// A gadget: a copy of its player (`PlayerCmd::gadget`) that runs on ahead for
     /// `Rules::decoy_time`, drawing fire (a bolt pops it).
