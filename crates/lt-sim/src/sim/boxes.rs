@@ -20,7 +20,7 @@ use crate::puzzle::{Puzzle, Slide};
 use crate::types::{PuzzleSlide, SimEvent, Team};
 
 /// Seconds the lid takes to open (or close), and the turret to rise out (or fold away).
-pub const LID_TIME: f32 = 0.35;
+pub const LID_TIME: f32 = 0.5;
 pub const RISE_TIME: f32 = 0.6;
 /// How far from a box's sides (m, along the floor) a player's feet may be to click its pieces.
 pub const POKE_REACH: f32 = 1.8;
@@ -675,7 +675,7 @@ mod tests {
         solve(&mut sim, blue, k);
         assert_eq!(sim.boxes[k].phase, BoxPhase::Closing);
         assert_eq!(sim.boxes[k].owner, Some(Team::Red), "red until shut");
-        let ev = run(&mut sim, 1.0);
+        let ev = run(&mut sim, 1.15);
         assert!(
             ev.iter()
                 .any(|e| matches!(e, SimEvent::BoxTurret { up: false, .. }))
@@ -685,7 +685,7 @@ mod tests {
                 .any(|e| matches!(e, SimEvent::BoxLid { open: false, .. }))
         );
         assert_eq!(sim.boxes[k].owner, Some(Team::Blue));
-        run(&mut sim, 1.0);
+        run(&mut sim, 1.2);
         assert_eq!(sim.boxes[k].phase, BoxPhase::Up);
         assert_eq!(sim.boxes[k].off, 0.0);
     }

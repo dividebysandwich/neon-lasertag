@@ -290,6 +290,11 @@ struct BoxMeshes {
     bridge_y: Handle<Mesh>,
 }
 
+/// The lid's thickness, and each leaf's width: half the box and a little more, so a leaf
+/// hanging down the box's side is clear of its neon edges.
+const LID_T: f32 = 0.05;
+const LEAF_W: f32 = BOX_HALF + 0.025;
+
 /// Size of a piece's tile and how proud of the box's face it stands.
 const TILE: f32 = PUZZLE_CELL - 0.018;
 const PROUD: f32 = 0.014;
@@ -318,13 +323,14 @@ pub fn spawn(
         return;
     }
     let w = 2.0 * BOX_HALF;
-    let lid_t = 0.05;
+    let lid_t = LID_T;
     let body = meshes.add(Cuboid::new(w, BOX_H - lid_t, w));
-    let leaf = meshes.add(Cuboid::new(BOX_HALF, lid_t, w));
+    let leaf = meshes.add(Cuboid::new(LEAF_W, lid_t, w));
     let post = meshes.add(Cuboid::new(0.035, BOX_H, 0.035));
     let rim_x = meshes.add(Cuboid::new(w, 0.03, 0.035));
     let rim_z = meshes.add(Cuboid::new(0.035, 0.03, w));
-    let leaf_edge = meshes.add(Cuboid::new(0.025, 0.02, w));
+    let leaf_edge = meshes.add(Cuboid::new(0.025, lid_t + 0.012, w));
+    let leaf_line = meshes.add(Cuboid::new(0.02, 0.006, w - 0.1));
     let column = meshes.add(Cylinder::new(0.09, 1.1));
     let column_band = meshes.add(Torus::new(0.085, 0.115));
     let ball = meshes.add(Sphere::new(BOX_HEAD - 0.03).mesh().ico(2).unwrap());
@@ -382,7 +388,8 @@ pub fn spawn(
                 commands.entity(e).insert(MeshMaterial3d(trim.clone()));
             }
         }
-        // The lid's leaves (placed by `animate`), each with a glowing inner edge.
+        // The lid's leaves (placed by `animate`), each with a glowing free edge and two lines on
+        // its underside (outwards once it hangs down the box's side).
         let leaves = [0, 1].map(|_| {
             let l = commands
                 .spawn((Transform::IDENTITY, Visibility::default(), ChildOf(root)))
@@ -396,13 +403,22 @@ pub fn spawn(
             l
         });
         for (i, &l) in leaves.iter().enumerate() {
-            let s = if i == 0 { 1.0 } else { -1.0 };
+            // (Its free edge towards the box's middle: -x for the +x leaf.)
+            let s = if i == 0 { -1.0 } else { 1.0 };
             commands.spawn((
                 Mesh3d(leaf_edge.clone()),
                 MeshMaterial3d(trim.clone()),
-                Transform::from_xyz(s * (BOX_HALF / 2.0 - 0.013), lid_t / 2.0, 0.0),
+                Transform::from_xyz(s * (LEAF_W / 2.0 - 0.0125), 0.0, 0.0),
                 ChildOf(l),
             ));
+            for x in [0.12, LEAF_W - 0.12] {
+                commands.spawn((
+                    Mesh3d(leaf_line.clone()),
+                    MeshMaterial3d(trim.clone()),
+                    Transform::from_xyz(s * (LEAF_W / 2.0 - x), -lid_t / 2.0 - 0.003, 0.0),
+                    ChildOf(l),
+                ));
+            }
         }
         // The turret: a column, and the head on it.
         let column_e = commands
@@ -653,12 +669,13 @@ fn animate(
         v.lid += (lid - v.lid) * ease;
         v.rise += (rise - v.rise) * ease;
         for (i, &l) in v.leaves.iter().enumerate() {
-            // Hinged at the box's outer edges, swinging up and over outwards.
+            // Hinged just outside the box's top edges: up, over and all the way down, to hang
+            // flat against the box's side (three quarters of a turn).
             let side = if i == 0 { 1.0 } else { -1.0 };
-            let a = v.lid * 1.9;
+            let a = v.lid * 1.5 * PI;
             let rot = Quat::from_rotation_z(-side * a);
-            let pivot = Vec3::new(side * BOX_HALF, BOX_H, 0.0);
-            let centre = Vec3::new(-side * BOX_HALF / 2.0, -0.025, 0.0);
+            let pivot = Vec3::new(side * LEAF_W, BOX_H, 0.0);
+            let centre = Vec3::new(-side * LEAF_W / 2.0, -LID_T / 2.0, 0.0);
             if let Ok(mut tr) = transforms.get_mut(l) {
                 tr.translation = pivot + rot * centre;
                 tr.rotation = rot;
