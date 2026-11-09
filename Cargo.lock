@@ -3703,7 +3703,7 @@ checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
 name = "lt-master"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "lt-master-proto",
  "serde",
@@ -3713,7 +3713,7 @@ dependencies = [
 
 [[package]]
 name = "lt-master-proto"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3721,7 +3721,7 @@ dependencies = [
 
 [[package]]
 name = "lt-net"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "ciborium",
@@ -3742,7 +3742,7 @@ dependencies = [
 
 [[package]]
 name = "lt-server"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "lt-net",
  "lt-sim",
@@ -3751,7 +3751,7 @@ dependencies = [
 
 [[package]]
 name = "lt-sim"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "glam",
  "rand 0.9.5",
@@ -3957,7 +3957,7 @@ dependencies = [
 
 [[package]]
 name = "neon-lasertag"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "bevy",
