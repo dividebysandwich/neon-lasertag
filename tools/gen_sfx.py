@@ -50,6 +50,16 @@
 - barrier_up: a barrier going up: a deep electric swell rising into a glassy shimmer.
 - barrier_hit: a bolt stopped by a barrier: a dull electric thud with a short crackle.
 - barrier_down: a barrier going down: a falling fizzle.
+- piece_slide: a turret box's puzzle piece sliding in or out: a short grating swish ending in
+  a light plastic clack.
+- piece_stuck: a puzzle piece sliding into another one: the swish cut short by a dull knock and
+  a buzz.
+- puzzle_solved: a turret box's puzzle solved: a latch snapping home and a quick rising chime.
+- box_open: a turret box's lid opening: a latch clunk, a pneumatic hiss and the leaves sliding.
+- turret_extend: a turret rising out of its box: a servo whine climbing over a rattle, locking
+  with a clunk.
+- turret_retract: a turret folding back into its box: the servo whine falling, a soft clunk.
+- box_close: a turret box's lid closing: a short hiss and a heavy shutting thud.
 - event_blackout: a blackout: a heavy relay clunk, the mains hum dying away and a deep
   sub-bass drop.
 - event_overdrive: an overdrive: a fast rising arpeggio over a swelling noise sweep, ending in
@@ -739,6 +749,90 @@ def barrier_down():
     return fizz + hiss
 
 
+
+def slide_swish(T, length):
+    """A piece's swish along its slot: band noise with a rattle, `length` s long."""
+    x = seconds(T)
+    body = noise(T, 700, 4500) * env(T, 0.008, length * 0.5, hold=length * 0.4)
+    rattle = 0.6 + 0.4 * np.sin(2 * np.pi * 55 * x)
+    body = body * rattle * (x < length + 0.03)
+    return lowpass(body, 5000) * 0.35
+
+
+def piece_slide():
+    T = 0.22
+    swish = slide_swish(T, 0.12)
+    clack = at(T, 0.12, click(0.1, 1500, 7000, 0.004) * 1.0 + ring(0.1, [2400, 3700], [0.012, 0.008], [0.5, 0.3]))
+    return swish + clack
+
+
+def piece_stuck():
+    T = 0.3
+    swish = slide_swish(T, 0.07)
+    knock = at(T, 0.07, thump(0.23, 160, 0.04, drop=0.4) * 1.1 + click(0.23, 300, 2500, 0.006) * 0.8)
+    n = int(0.12 * RATE)
+    buzz = at(T, 0.075, lowpass(square(np.full(n, 110.0), 0.35), 1800) * env(0.12, 0.002, 0.04)) * 0.35
+    return swish + knock + buzz
+
+
+def puzzle_solved():
+    T = 0.75
+    latch = click(T, 1200, 8000, 0.003) * 1.2 + thump(T, 220, 0.03, drop=0.3) * 0.7
+    notes = [(0.05, 1046.5), (0.11, 1318.5), (0.17, 1568.0), (0.23, 2093.0)]
+    chime = sum(at(T, t0, (np.sin(2 * np.pi * hz * seconds(T - t0)) * 0.7
+                           + square(np.full(int((T - t0) * RATE), hz), 0.25) * 0.15)
+                   * env(T - t0, 0.002, 0.18)) for t0, hz in notes) * 0.45
+    return echoes(latch + lowpass(chime, 8000), [0.08], [0.25], 6000)
+
+
+def box_open():
+    T = 0.55
+    x = seconds(T)
+    clunk = thump(T, 95, 0.06, drop=0.5) * 1.0 + click(T, 400, 4000, 0.008) * 0.7
+    hiss = noise(T, 2500, 11000) * env(T, 0.01, 0.12, hold=0.05) * 0.35
+    slide = at(T, 0.06, noise(0.35, 500, 2500) * env(0.35, 0.03, 0.12, hold=0.12)) * 0.3
+    stop = at(T, 0.33, click(0.2, 600, 5000, 0.006) * 0.7 + ring(0.2, [1300, 2100], [0.03, 0.02], [0.4, 0.25]))
+    return clunk + hiss + slide + stop
+
+
+def servo(T, f0, f1, tau):
+    """A servo motor's whine gliding from `f0` to `f1` Hz with a geared rattle."""
+    x = seconds(T)
+    f = f1 + (f0 - f1) * np.exp(-x / tau)
+    whine = saw(f) * 0.5 + np.sin(2 * np.pi * phase(f * 2)) * 0.3
+    gears = 0.7 + 0.3 * np.sign(np.sin(2 * np.pi * phase(f / 6)))
+    return lowpass(whine * gears, 3500)
+
+
+def turret_extend():
+    T = 0.85
+    run = 0.6
+    motor = servo(T, 180, 520, 0.25) * env(T, 0.03, 0.05, hold=run - 0.05) * 0.5
+    rattle = noise(T, 800, 5000) * (rng.random(int(T * RATE)) < 0.01).astype(float)
+    rattle = lowpass(rattle, 5000) * env(T, 0.02, 0.1, hold=run - 0.1) * 1.2
+    lock = at(T, run, thump(T - run, 130, 0.05, drop=0.5) * 0.9 + click(T - run, 800, 6000, 0.004) * 0.8
+              + ring(T - run, [1700, 2600], [0.04, 0.03], [0.4, 0.3]))
+    return echoes(motor + rattle + lock, [0.06], [0.15], 4000)
+
+
+def turret_retract():
+    T = 0.8
+    run = 0.58
+    motor = servo(T, 520, 150, 0.3) * env(T, 0.02, 0.05, hold=run - 0.05) * 0.5
+    rattle = noise(T, 800, 5000) * (rng.random(int(T * RATE)) < 0.01).astype(float)
+    rattle = lowpass(rattle, 5000) * env(T, 0.02, 0.1, hold=run - 0.1) * 1.2
+    clunk = at(T, run, thump(T - run, 100, 0.06, drop=0.5) * 0.9 + click(T - run, 300, 3000, 0.006) * 0.5)
+    return motor + rattle + clunk
+
+
+def box_close():
+    T = 0.5
+    hiss = noise(T, 2500, 10000) * env(T, 0.02, 0.06, hold=0.12) * 0.25
+    slide = noise(T, 500, 2500) * env(T, 0.02, 0.06, hold=0.2) * 0.3
+    shut = at(T, 0.24, thump(0.26, 75, 0.08, drop=0.5) * 1.3 + click(0.26, 200, 3000, 0.01) * 0.8
+              + ring(0.26, [700, 1150], [0.05, 0.03], [0.3, 0.2]))
+    return hiss + slide + shut
+
 def event_blackout():
     T = 1.6
     x = seconds(T)
@@ -810,6 +904,13 @@ SOUNDS = {
     "barrier_up": (barrier_up, -19.0, 301),
     "barrier_hit": (barrier_hit, -20.0, 311),
     "barrier_down": (barrier_down, -22.0, 321),
+    "piece_slide": (piece_slide, -23.0, 381),
+    "piece_stuck": (piece_stuck, -22.0, 382),
+    "puzzle_solved": (puzzle_solved, -18.0, 383),
+    "box_open": (box_open, -20.0, 384),
+    "turret_extend": (turret_extend, -20.0, 385),
+    "turret_retract": (turret_retract, -21.0, 386),
+    "box_close": (box_close, -20.0, 387),
     "event_blackout": (event_blackout, -15.0, 331),
     "event_overdrive": (event_overdrive, -16.0, 341),
     "event_double": (event_double, -16.0, 351),
