@@ -83,6 +83,19 @@ they're in the game; infecting everyone ends the match and gives the phantoms 10
 - **Mirrors** bounce a bolt once, so you can bank shots around corners.
 - **Jump pads** throw you up to the upper level.
 - **Laser gates** switch on and off; walking through one while it's on counts as a hit.
+- **Turret boxes** stand in pairs, one in each half. A turret is folded up inside each one,
+  working for nobody (the box glows white). Solve the sliding puzzle on the box's side to make
+  the turret work for your team: it rises out and shoots your enemies within reach, twice a
+  second. Shoot it to switch it off for 10 s (not in its first 3 s out). The other team takes
+  it over by solving the puzzle again. Every solve sets a new puzzle, and team mates can carry
+  on with each other's work.
+
+  **The puzzle:** click a piece to slide it into the square from its side. A piece stops where
+  another one is in its way. Click it again to slide it back out, unless a piece you slid in
+  later now blocks its way out. Fill the square to solve it. At least one piece is a key:
+  slide it in too early and another piece can't get past it. On the flat screen, aim at a piece
+  within reach and click; the blaster doesn't fire while you aim at a puzzle. In VR, touch a
+  piece with the index finger of a hand without a gun and pull that hand's trigger.
 
 ### Arena events
 
