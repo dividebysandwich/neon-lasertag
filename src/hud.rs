@@ -214,17 +214,31 @@ pub fn shooter_pos(game: &Game, by: PlayerId) -> Option<Vec3> {
         return None;
     }
     if by == lt_sim::HAZARD {
-        // A turret: the nearest switched on.
+        // A turret: the nearest switched on (a Megatarget one's, or a turret box's working for
+        // the other team).
         let me = game
             .me
             .and_then(|id| game.snap.players.iter().find(|p| p.id == id))?;
-        let m = game.level.mega.as_ref()?;
-        return m
-            .turrets
+        let mega = game.level.mega.iter().flat_map(|m| {
+            m.turrets
+                .iter()
+                .zip(&game.snap.turrets)
+                .filter(|(_, st)| st.off <= 0.0)
+                .map(|(t, _)| t.pos)
+        });
+        let boxes = game
+            .level
+            .boxes
             .iter()
-            .zip(&game.snap.turrets)
-            .filter(|(_, st)| st.off <= 0.0)
-            .map(|(t, _)| t.pos)
+            .zip(&game.snap.boxes)
+            .filter(|(_, s)| {
+                s.phase == lt_sim::sim::BoxPhase::Up
+                    && s.off <= 0.0
+                    && s.owner.is_some_and(|t| t != me.team)
+            })
+            .map(|(b, _)| b.head(1.0));
+        return mega
+            .chain(boxes)
             .min_by(|a, b| a.distance(me.feet).total_cmp(&b.distance(me.feet)));
     }
     let p = game.snap.players.iter().find(|p| p.id == by)?;
@@ -2742,6 +2756,19 @@ pub fn mega_banner_for(e: &SimEvent, game: &Game) -> Option<Banner> {
         SimEvent::TurretOff { by, .. } if by == me => Some(banner(
             "TURRET OFF",
             format!("FOR {:.0} S", r.turret_off),
+            neonui::AMBER,
+            true,
+        )),
+        // Turret boxes: one's own solve, and one's shot switching a turret off.
+        SimEvent::PuzzleSolved { by, team, .. } if by == me => Some(banner(
+            "TURRET IS YOURS",
+            "IT SHOOTS YOUR ENEMIES - ENEMIES CAN TAKE IT BACK WITH THE PUZZLE".to_string(),
+            crate::endscreen::team_ui_color(Some(team)),
+            true,
+        )),
+        SimEvent::BoxOff { by, .. } if by == me => Some(banner(
+            "TURRET OFF",
+            format!("FOR {:.0} S", r.box_off),
             neonui::AMBER,
             true,
         )),

@@ -361,7 +361,11 @@ fn read_input(
     settings: Res<Settings>,
     mut sway: ResMut<Sway>,
     real: Res<Time>,
-    mut arc: ResMut<ThrowArc>,
+    (mut arc, mut puzzle_aim, mut puzzles): (
+        ResMut<ThrowArc>,
+        ResMut<crate::turretbox::PuzzleAim>,
+        ResMut<crate::turretbox::Puzzles>,
+    ),
 ) {
     let Some(game) = game else { return };
     // (Flying the free camera, or frozen: the player stands as they were.)
@@ -508,8 +512,25 @@ fn read_input(
         pos: muzzle,
         rot: muzzle_rot,
     };
+    // The crosshair on a turret box's puzzle within reach: the fire button clicks its pieces
+    // instead of firing.
+    let puzzle = if grabbed && alive {
+        crate::turretbox::aim_at(&game, &mut puzzles, feet, eye, view * Vec3::NEG_Z)
+    } else {
+        None
+    };
+    puzzle_aim.point = [false; 2];
+    puzzle_aim.hover.clear();
+    if let Some((k, Some(j))) = puzzle {
+        puzzle_aim.hover.push((k, j));
+    }
+    let click = grabbed && !overlays.hold_fire && settings.just_pressed(Action::Fire, &input);
+    if click && let Some((k, Some(j))) = puzzle {
+        cmd.pokes = cmd.pokes.wrapping_add(1);
+        cmd.poke = (k as u8, j as u8);
+    }
     // Dual pistols: the second in the left hand, mirrored; a click fires each in turn.
-    let pull = grabbed && !overlays.hold_fire && settings.just_pressed(Action::Fire, &input);
+    let pull = click && puzzle.is_none();
     if dual {
         let flip = Vec3::new(-1.0, 1.0, 1.0);
         let grip2 = cam + view * ((hold + gun_offset) * flip);
@@ -530,7 +551,7 @@ fn read_input(
         cmd.gun2_hand = None;
         look.left_turn = false;
     }
-    let held = grabbed && !overlays.hold_fire && on(Action::Fire);
+    let held = grabbed && !overlays.hold_fire && on(Action::Fire) && puzzle.is_none();
     cmd.fire = held && !(dual && look.left_turn);
     cmd.fire2 = held && dual && look.left_turn;
     if grabbed && settings.just_pressed(Action::Jump, &input) {

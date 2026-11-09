@@ -122,6 +122,41 @@ pub struct BoxSnap {
     pub guard: f32,
 }
 
+/// The first turret head out of its box by more than half (`rises`: how far out each box's
+/// is, as `Level::boxes`) on the segment `a`..`b`: its box and where the segment meets it.
+/// (The sim's bolts, and a remote client's own as it flies them.)
+pub fn head_hit(
+    level: &crate::level::Level,
+    rises: &[f32],
+    a: Vec3,
+    b: Vec3,
+) -> Option<(usize, Vec3)> {
+    let d = b - a;
+    let dd = d.length_squared();
+    if dd < 1e-12 {
+        return None;
+    }
+    let mut best: Option<(f32, usize)> = None;
+    for (k, (def, &rise)) in level.boxes.iter().zip(rises).enumerate() {
+        if rise < 0.5 {
+            continue;
+        }
+        let f = a - def.head(rise);
+        let bh = f.dot(d);
+        let cc = f.length_squared() - BOX_HEAD * BOX_HEAD;
+        let disc = bh * bh - dd * cc;
+        if disc < 0.0 {
+            continue;
+        }
+        // (From outside it, ahead.)
+        let t = (-bh - disc.sqrt()) / dd;
+        if cc > 0.0 && (0.0..=1.0).contains(&t) && best.is_none_or(|(bt, _)| t < bt) {
+            best = Some((t, k));
+        }
+    }
+    best.map(|(t, k)| (k, a + d * t))
+}
+
 impl Sim {
     /// A box per `Level::boxes`, each with a puzzle of its own.
     pub(super) fn init_boxes(&mut self) {
@@ -191,6 +226,28 @@ impl Sim {
         });
         if st.puzzle.solved(&st.pieces) {
             self.solve(k, pi);
+        }
+    }
+
+    /// Testing: player `id` clicks piece `piece` of box `k` (if close enough, as any click), or
+    /// (`piece` None) the piece the puzzle's hint says next; or solves it at once (`solve`).
+    pub fn dev_poke(
+        &mut self,
+        id: crate::types::PlayerId,
+        k: usize,
+        piece: Option<usize>,
+        solve: bool,
+    ) {
+        let Some(pi) = self.players.iter().position(|p| p.id == id) else {
+            return;
+        };
+        let Some(st) = self.boxes.get(k) else { return };
+        if solve {
+            self.solve(k, pi);
+            return;
+        }
+        if let Some(j) = piece.or_else(|| st.puzzle.hint(&st.pieces)) {
+            self.poke(pi, k, j);
         }
     }
 
@@ -388,35 +445,10 @@ impl Sim {
         });
     }
 
-    /// The first turret head out of its box (by more than half) on the segment `a`..`b`: its
-    /// box and where the segment meets it.
+    /// The first turret head out of its box on the segment `a`..`b` (`head_hit`).
     pub(super) fn box_head_hit(&self, a: Vec3, b: Vec3) -> Option<(usize, Vec3)> {
-        let d = b - a;
-        let dd = d.length_squared();
-        if dd < 1e-12 {
-            return None;
-        }
-        let mut best: Option<(f32, usize)> = None;
-        for (k, st) in self.boxes.iter().enumerate() {
-            let rise = st.rise();
-            if rise < 0.5 {
-                continue;
-            }
-            let c = self.level.boxes[k].head(rise);
-            let f = a - c;
-            let bh = f.dot(d);
-            let cc = f.length_squared() - BOX_HEAD * BOX_HEAD;
-            let disc = bh * bh - dd * cc;
-            if disc < 0.0 {
-                continue;
-            }
-            // (From outside it, ahead.)
-            let t = (-bh - disc.sqrt()) / dd;
-            if cc > 0.0 && (0.0..=1.0).contains(&t) && best.is_none_or(|(bt, _)| t < bt) {
-                best = Some((t, k));
-            }
-        }
-        best.map(|(t, k)| (k, a + d * t))
+        let rises: Vec<f32> = self.boxes.iter().map(|s| s.rise()).collect();
+        head_hit(&self.level, &rises, a, b)
     }
 
     /// Bolt `b` hit box `k`'s turret at `q`: switched off, unless it's its own team's, another

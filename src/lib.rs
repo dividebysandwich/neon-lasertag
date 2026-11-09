@@ -51,6 +51,7 @@ pub mod sevenseg;
 pub mod shots;
 pub mod tail;
 pub mod targets;
+pub mod turretbox;
 pub mod vfont;
 pub mod vr;
 pub mod vrui;
@@ -374,6 +375,7 @@ pub fn run() {
         session::SessionPlugin,
         targets::TargetsPlugin,
         mega::MegaPlugin,
+        turretbox::TurretBoxPlugin,
         features::FeaturesPlugin,
     ))
     .insert_resource(ClearColor(Color::linear_rgb(0.002, 0.002, 0.006)))
@@ -621,6 +623,13 @@ fn build_arena(
         &mut accents,
         &mut glows,
         &assets,
+    );
+    turretbox::spawn(
+        &mut commands,
+        &game.level,
+        &palette,
+        &mut meshes,
+        &mut accents,
     );
     features::spawn(
         &mut commands,

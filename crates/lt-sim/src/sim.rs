@@ -22,7 +22,9 @@ use crate::shot::{BoltTarget, Contact, Gun, HitClaim, Shot, Trigger, bolt_contac
 use crate::types::*;
 
 mod boxes;
-pub use boxes::{BoxPhase, BoxSnap, BoxState, LID_TIME, POKE_REACH, RISE_TIME, box_motion};
+pub use boxes::{
+    BoxPhase, BoxSnap, BoxState, LID_TIME, POKE_REACH, RISE_TIME, box_motion, head_hit,
+};
 
 pub const TICK: f32 = 1.0 / 60.0;
 pub const MAX_PLAYERS: usize = 32;

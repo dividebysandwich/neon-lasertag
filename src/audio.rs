@@ -72,6 +72,13 @@ struct Sounds {
     turret_down: Handle<AudioSource>,
     turret_active: Handle<AudioSource>,
     zap: Handle<AudioSource>,
+    piece_slide: Handle<AudioSource>,
+    piece_stuck: Handle<AudioSource>,
+    puzzle_solved: Handle<AudioSource>,
+    box_open: Handle<AudioSource>,
+    box_close: Handle<AudioSource>,
+    turret_extend: Handle<AudioSource>,
+    turret_retract: Handle<AudioSource>,
 }
 
 /// Seconds until each powered player's next tick.
@@ -170,6 +177,13 @@ fn load(mut commands: Commands, assets: Res<AssetServer>) {
         turret_down: s("turret_down"),
         turret_active: s("turretactive"),
         zap: s("shield_zap"),
+        piece_slide: s("piece_slide"),
+        piece_stuck: s("piece_stuck"),
+        puzzle_solved: s("puzzle_solved"),
+        box_open: s("box_open"),
+        box_close: s("box_close"),
+        turret_extend: s("turret_extend"),
+        turret_retract: s("turret_retract"),
     });
 }
 
@@ -377,6 +391,7 @@ fn play_events(
             SimEvent::TargetHit { by, .. }
             | SimEvent::SecondaryHit { by, .. }
             | SimEvent::TurretOff { by, .. }
+            | SimEvent::BoxOff { by, .. }
             | SimEvent::Assist { player: by, .. }
             | SimEvent::Defended { player: by, .. }
                 if Some(by) == me =>
@@ -718,6 +733,74 @@ fn play_events(
                 1.2,
                 1.0,
             ),
+            // Turret boxes: the puzzle's pieces, the lid and the turret.
+            SimEvent::PieceSlid { slide, pos, by, .. } => {
+                let sound = match slide {
+                    lt_sim::PuzzleSlide::In | lt_sim::PuzzleSlide::Out => &sounds.piece_slide,
+                    lt_sim::PuzzleSlide::Stuck => &sounds.piece_stuck,
+                    lt_sim::PuzzleSlide::Blocked => &sounds.deny,
+                };
+                let volume = if Some(by) == me { 1.0 } else { 0.8 };
+                // (A little higher sliding out.)
+                let speed = if slide == lt_sim::PuzzleSlide::Out {
+                    1.12
+                } else {
+                    1.0
+                };
+                play(&mut commands, gain, sound, Some(pos), volume, speed)
+            }
+            SimEvent::PuzzleSolved { pos, .. } => play(
+                &mut commands,
+                gain,
+                &sounds.puzzle_solved,
+                Some(pos),
+                1.0,
+                1.0,
+            ),
+            SimEvent::BoxLid { open, pos, .. } => {
+                let sound = if open {
+                    &sounds.box_open
+                } else {
+                    &sounds.box_close
+                };
+                play(&mut commands, gain, sound, Some(pos), 1.0, 1.0)
+            }
+            SimEvent::BoxTurret { up, pos, .. } => {
+                let sound = if up {
+                    &sounds.turret_extend
+                } else {
+                    &sounds.turret_retract
+                };
+                play(&mut commands, gain, sound, Some(pos), 1.0, 1.0)
+            }
+            SimEvent::BoxFired { pos, .. } => play(
+                &mut commands,
+                gain,
+                &sounds.turret_fire,
+                Some(pos),
+                1.0,
+                1.0,
+            ),
+            SimEvent::BoxOff { pos, .. } => play(
+                &mut commands,
+                gain,
+                &sounds.turret_down,
+                Some(pos),
+                1.2,
+                1.0,
+            ),
+            SimEvent::BoxOn { turret_box } | SimEvent::BoxEngaged { turret_box } => {
+                if let Some(b) = game.level.boxes.get(turret_box as usize) {
+                    play(
+                        &mut commands,
+                        gain,
+                        &sounds.turret_active,
+                        Some(b.head(1.0)),
+                        1.0,
+                        1.0,
+                    )
+                }
+            }
             SimEvent::TurretOn { turret } | SimEvent::TurretEngaged { turret } => {
                 if let Some(t) = game
                     .level

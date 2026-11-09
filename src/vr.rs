@@ -264,6 +264,7 @@ impl Plugin for VrPlugin {
                 Update,
                 (
                     place_rig,
+                    crate::turretbox::vr_touch,
                     wrist,
                     wrist_points,
                     wrist_glance,

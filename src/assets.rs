@@ -228,6 +228,8 @@ pub struct Models {
     /// Left and right gloves wrapped round the guns' grip, in the guns' frame (the hand's): shown
     /// instead of `hands` on a hand holding a gun.
     pub grips: [Model; 2],
+    /// Left and right gloves pointing with the index finger (near a turret box's puzzle in VR).
+    pub points: [Model; 2],
     /// Rigid body segments posed by `crate::rig`, one mesh for both sides; each hangs from its
     /// joint (the origin) down -Y, front -Z: the neck (from the head's pivot), the pelvis (top
     /// centre, tucked into the chest's hem), upper arm (shoulder), forearm (elbow), thigh
@@ -398,6 +400,11 @@ pub fn load_models(meshes: &mut Assets<Mesh>) -> Models {
                     models.grips[i] = Model::from_glb(&f, Some(n), meshes);
                 }
             }
+            for (i, n) in ["hand_point_left", "hand_point_right"].iter().enumerate() {
+                if f.meshes.contains_key(*n) {
+                    models.points[i] = Model::from_glb(&f, Some(n), meshes);
+                }
+            }
             let b = &mut models.body;
             for (n, m) in [
                 ("neck", &mut b.neck),
@@ -531,6 +538,11 @@ pub fn load_models(meshes: &mut Assets<Mesh>) -> Models {
         }
     }
     for (g, h) in models.grips.iter_mut().zip(&models.hands) {
+        if g.parts.is_empty() {
+            *g = h.clone();
+        }
+    }
+    for (g, h) in models.points.iter_mut().zip(&models.hands) {
         if g.parts.is_empty() {
             *g = h.clone();
         }

@@ -34,9 +34,10 @@ struct AvatarParts {
     /// The floating chest, below the head, turned with the body.
     body: Entity,
     head: Entity,
-    /// Floating gloves, left and right, and each one's two looks: open, and gripping a gun.
+    /// Floating gloves, left and right, and each one's three looks: open, gripping a gun, and
+    /// pointing (one's own, in VR, near a turret box's puzzle).
     hands: [Entity; 2],
-    hand_looks: [[Entity; 2]; 2],
+    hand_looks: [[Entity; 3]; 2],
     /// The body between them, posed by `crate::rig`: the neck, the pelvis, each arm's upper
     /// arm and forearm and each leg's thigh, shin and boot (left, right), and the legs' gait.
     neck: Entity,
@@ -379,12 +380,15 @@ fn spawn_avatar(
         p.id as u64,
         Some((&ghost_mat, &mut solid, &mut ghost)),
     );
-    let mut hand_looks = [[Entity::PLACEHOLDER; 2]; 2];
+    let mut hand_looks = [[Entity::PLACEHOLDER; 3]; 2];
     let hands = [0, 1].map(|i| {
         let h = commands
             .spawn((Transform::IDENTITY, Visibility::default(), ChildOf(root)))
             .id();
-        for (k, model) in [&models.hands[i], &models.grips[i]].into_iter().enumerate() {
+        for (k, model) in [&models.hands[i], &models.grips[i], &models.points[i]]
+            .into_iter()
+            .enumerate()
+        {
             let look = commands
                 .spawn((Transform::IDENTITY, Visibility::default(), ChildOf(h)))
                 .id();
@@ -609,7 +613,10 @@ fn sync_players(
     xr: Option<Res<crate::vr::XrInput>>,
     meshes: Res<ActorMeshes>,
     mut glows: ResMut<Assets<GlowMaterial>>,
-    free: Option<Res<crate::freecam::FreeCam>>,
+    (free, aim): (
+        Option<Res<crate::freecam::FreeCam>>,
+        Option<Res<crate::turretbox::PuzzleAim>>,
+    ),
     mut events: MessageReader<GameEvent>,
 ) {
     let vr = xr.is_some();
@@ -741,8 +748,11 @@ fn sync_players(
         for (i, &h) in v.hands.iter().enumerate() {
             let grips = holds_gun(i);
             set_vis(&mut vis, h, !me || vr || grips);
-            set_vis(&mut vis, v.hand_looks[i][0], !grips);
+            // (One's own hand near a turret box's puzzle points at it.)
+            let points = !grips && me && vr && aim.as_ref().is_some_and(|a| a.point[i]);
+            set_vis(&mut vis, v.hand_looks[i][0], !grips && !points);
             set_vis(&mut vis, v.hand_looks[i][1], grips);
+            set_vis(&mut vis, v.hand_looks[i][2], points);
             if let Ok(mut t) = transforms.get_mut(h) {
                 t.translation = hands[i].pos;
                 t.rotation = hands[i].rot;

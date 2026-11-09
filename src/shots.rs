@@ -266,6 +266,12 @@ impl Shots {
             ..
         } = self;
         let clock = *clock;
+        // The turret boxes' turrets stop bolts (the server says what that did).
+        let rises: Vec<f32> = snap
+            .boxes
+            .iter()
+            .map(|b| lt_sim::sim::box_motion(b.phase, b.t).1)
+            .collect();
         let mut i = 0;
         while i < bolts.len() {
             let f = &mut bolts[i];
@@ -279,6 +285,30 @@ impl Shots {
                     &f.bolt,
                     targets().enumerate(),
                 );
+                let end = match contact {
+                    Contact::Clear => f.bolt.pos + f.bolt.vel * TICK,
+                    Contact::Player { at, .. }
+                    | Contact::Barrier { at, .. }
+                    | Contact::Mirror { at, .. } => at,
+                    Contact::Arena { q, .. } => q,
+                };
+                if let Some((_, q)) = lt_sim::sim::head_hit(level, &rises, f.bolt.pos, end) {
+                    if f.bolt.extra.lance {
+                        out.push(SimEvent::Streak {
+                            player: f.bolt.owner,
+                            from: f.bolt.pos,
+                            to: q,
+                        });
+                    }
+                    struck.push_back((clock, q));
+                    out.push(SimEvent::BoltImpact {
+                        pos: q,
+                        normal: (f.bolt.pos - q).normalize_or_zero(),
+                        team: f.bolt.team,
+                    });
+                    gone = true;
+                    break;
+                }
                 if f.bolt.extra.lance {
                     out.push(SimEvent::Streak {
                         player: f.bolt.owner,

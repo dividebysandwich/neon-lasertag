@@ -302,6 +302,62 @@ fn dev_script(
                 face(w, yaw.1);
             });
         }
+        // Local games, turret boxes: in front of the nearest one's puzzle (`warp-box`, or
+        // `warp-box=M` metres from it), facing it; clicking the piece its puzzle's hint says
+        // (`box-hint`, or `box-hint=N` N times), or a given piece (`box-poke=J`); solving it at
+        // once (`solve-box`).
+        a if a.starts_with("warp-box")
+            || a.starts_with("box-hint")
+            || a.starts_with("box-poke=")
+            || a == "solve-box" =>
+        {
+            let a = a.to_string();
+            commands.queue(move |w: &mut World| {
+                let yaw =
+                    {
+                        let Some(mut game) = w.get_resource_mut::<Game>() else {
+                            return;
+                        };
+                        let Some(me) = game.me else { return };
+                        let Source::Local { sim, .. } = &mut game.source else {
+                            return;
+                        };
+                        let Some(at) = sim.player(me).map(|p| p.feet) else {
+                            return;
+                        };
+                        let Some((k, b)) =
+                            sim.level.boxes.iter().copied().enumerate().min_by(|a, b| {
+                                a.1.pos.distance(at).total_cmp(&b.1.pos.distance(at))
+                            })
+                        else {
+                            return;
+                        };
+                        let arg = |p: &str| a.strip_prefix(p).and_then(|m| m.parse::<f32>().ok());
+                        if a == "solve-box" {
+                            sim.dev_poke(me, k, None, true);
+                            return;
+                        }
+                        if let Some(j) = arg("box-poke=") {
+                            sim.dev_poke(me, k, Some(j as usize), false);
+                            return;
+                        }
+                        if a.starts_with("box-hint") {
+                            for _ in 0..arg("box-hint=").unwrap_or(1.0) as usize {
+                                sim.dev_poke(me, k, None, false);
+                            }
+                            return;
+                        }
+                        // The side towards the player.
+                        let n = if at.z >= b.pos.z { 1.0 } else { -1.0 };
+                        let away = arg("warp-box=").unwrap_or(1.0);
+                        let feet = b.pos + Vec3::Z * n * (lt_sim::level::BOX_HALF + away);
+                        let yaw = if n > 0.0 { 0.0 } else { std::f32::consts::PI };
+                        sim.teleport(me, feet, yaw);
+                        yaw
+                    };
+                face(w, yaw);
+            });
+        }
         // Local games: in front of the nearest mirror, facing it at an angle (`warp-mirror`).
         // Local games: a little way (`warp-pad=M`: M metres) before the nearest jump pad,
         // facing the way it throws.
