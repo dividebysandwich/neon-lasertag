@@ -298,6 +298,15 @@ pub enum MatchPhase {
     Live,
 }
 
+/// What a click did to a turret box's puzzle piece (`crate::puzzle::Slide`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PuzzleSlide {
+    In,
+    Stuck,
+    Out,
+    Blocked,
+}
+
 /// What tagged a player out (`SimEvent::TaggedOut`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TagHow {
@@ -493,6 +502,12 @@ pub struct PlayerCmd {
     /// Use the carried gadget (on pressing; some work while held).
     #[serde(default)]
     pub gadget: bool,
+    /// Turret box puzzle pieces clicked so far (a count, as `jumps`), and the last one clicked:
+    /// (turret box, piece). Every command carries the last click, so a lost command loses none.
+    #[serde(default)]
+    pub pokes: u32,
+    #[serde(default)]
+    pub poke: (u8, u8),
     /// The sim tick the client was showing (the snapshot tick it rendered, after its
     /// interpolation delay) when it made this command; 0 = unknown or local (no lag
     /// compensation). The server flies a bolt fired with it through the other players as they
@@ -839,6 +854,52 @@ pub enum SimEvent {
     /// A turret found a player to shoot at (its first shot comes `TURRET_WARMUP` later).
     TurretEngaged {
         turret: u8,
+    },
+    /// A turret box's puzzle piece clicked by `by`: where it went (`slide`, at `pos`, the
+    /// piece's middle on the box's +z side).
+    PieceSlid {
+        turret_box: u8,
+        piece: u8,
+        by: PlayerId,
+        slide: PuzzleSlide,
+        pos: Vec3,
+    },
+    /// A turret box's puzzle solved by `by`: the turret works for `by`'s team now (after
+    /// switching sides if it worked for the other); a new puzzle is set.
+    PuzzleSolved {
+        turret_box: u8,
+        by: PlayerId,
+        team: Team,
+        pos: Vec3,
+    },
+    /// A turret box's lid opening or closing, and its turret rising out or folding away.
+    BoxLid {
+        turret_box: u8,
+        open: bool,
+        pos: Vec3,
+    },
+    BoxTurret {
+        turret_box: u8,
+        up: bool,
+        pos: Vec3,
+    },
+    /// A turret box's turret fired, was shot (off for `Rules::box_off` seconds), came on
+    /// again, and found a player to shoot at (its first shot `TURRET_WARMUP` later).
+    BoxFired {
+        turret_box: u8,
+        pos: Vec3,
+        dir: Vec3,
+    },
+    BoxOff {
+        turret_box: u8,
+        by: PlayerId,
+        pos: Vec3,
+    },
+    BoxOn {
+        turret_box: u8,
+    },
+    BoxEngaged {
+        turret_box: u8,
     },
     /// A player walked into a laser gate while it was on (and takes a hit).
     GateZap {

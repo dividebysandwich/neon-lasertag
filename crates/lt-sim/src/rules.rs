@@ -201,6 +201,11 @@ pub struct Rules {
     pub turret_range: f32,
     pub turret_spread: f32,
     pub turret_turn: f32,
+    /// Turret boxes' turrets (otherwise as the turrets above): seconds between shots, seconds
+    /// off after being shot, and seconds they can't be shot after coming out.
+    pub box_every: f32,
+    pub box_off: f32,
+    pub box_guard: f32,
 }
 
 /// Seconds an Infection match lasts (others: `Rules::match_time`'s default): about as long as
@@ -347,6 +352,9 @@ impl Default for Rules {
             turret_range: 16.0,
             turret_spread: 0.035,
             turret_turn: 2.2,
+            box_every: 0.5,
+            box_off: 10.0,
+            box_guard: 3.0,
         }
     }
 }

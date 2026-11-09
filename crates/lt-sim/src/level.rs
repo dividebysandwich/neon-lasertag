@@ -337,6 +337,8 @@ pub enum Ground {
     Reload,
     /// Under a structure (`Grid::structures`, which has its own nodes).
     Struct,
+    /// A turret box (`Level::boxes`): solid, open on its +z and -z sides to solve its puzzle.
+    Turret,
 }
 
 impl Ground {
@@ -752,6 +754,105 @@ pub struct Turret {
     pub switch: Panel,
     /// Its housing (bolts stop on it).
     pub body: (Vec3, Vec3),
+}
+
+/// A turret box: a half-height box on the ground with a turret folded up inside, coming out of
+/// its top once someone solves the sliding puzzle (`crate::puzzle`) on its +z or -z side (the
+/// same puzzle on both, the one seen from behind the other).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TurretBox {
+    /// The middle of its foot, on the floor.
+    pub pos: Vec3,
+}
+
+/// A turret box's half width (x and z) and height (a half wall's: players see and shoot over
+/// it, as over the blocks it takes the place of).
+pub const BOX_HALF: f32 = 0.7;
+pub const BOX_H: f32 = kit::HALF_H;
+/// The puzzle's cells' size (m): the square and the strips beside it, where the pieces out lie,
+/// `puzzle::N + 2 * puzzle::DEPTH` cells across.
+pub const PUZZLE_CELL: f32 = 0.12;
+/// The turret's head (where bolts hit it) and how far it rises out of the box.
+pub const BOX_HEAD: f32 = 0.26;
+pub const BOX_RISE: f32 = 0.95;
+
+impl TurretBox {
+    pub fn bounds(&self) -> (Vec3, Vec3) {
+        (
+            self.pos - Vec3::new(BOX_HALF, 0.0, BOX_HALF),
+            self.pos + Vec3::new(BOX_HALF, BOX_H, BOX_HALF),
+        )
+    }
+
+    /// The middle of the puzzle on side `face` (0: +z, 1: -z), on the box's face, and the way
+    /// that face looks out. The columns run along +x on both sides, rows up.
+    pub fn panel(&self, face: usize) -> (Vec3, Vec3) {
+        let n = if face == 0 { Vec3::Z } else { Vec3::NEG_Z };
+        let span = (crate::puzzle::N + 2 * crate::puzzle::DEPTH) as f32 * PUZZLE_CELL;
+        (
+            self.pos + n * BOX_HALF + Vec3::Y * (BOX_H - 0.06 - span / 2.0),
+            n,
+        )
+    }
+
+    /// Where on the box's side `face` the middle of cell (column, row) is (cells beside the
+    /// square too).
+    pub fn cell_pos(&self, face: usize, c: f32, r: f32) -> Vec3 {
+        let (mid, _) = self.panel(face);
+        let h = crate::puzzle::N as f32 / 2.0;
+        mid + Vec3::new(
+            (c + 0.5 - h) * PUZZLE_CELL,
+            (r + 0.5 - h) * PUZZLE_CELL,
+            0.0,
+        )
+    }
+
+    /// The cell (column, row; fractional) at a point on side `face`.
+    pub fn cell_at(&self, face: usize, p: Vec3) -> (f32, f32) {
+        let (mid, _) = self.panel(face);
+        let h = crate::puzzle::N as f32 / 2.0;
+        let d = (p - mid) / PUZZLE_CELL;
+        (d.x + h, d.y + h)
+    }
+
+    /// The turret's head, risen `rise` (0: folded inside, 1: all the way out).
+    pub fn head(&self, rise: f32) -> Vec3 {
+        self.pos + Vec3::Y * (BOX_H - 0.4 + rise.clamp(0.0, 1.0) * BOX_RISE)
+    }
+}
+
+/// Turns some of the blocks into turret boxes: a mirrored pair (two in bigger arenas), in the
+/// middle rows of the halves, each with open floor in front of its +z and -z sides.
+fn place_boxes(g: &mut Grid, movers: &[Mover], seed: u64) {
+    let dm = g.dims;
+    let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x7B0C_5EED_0000_0001);
+    let open = |g: &Grid, ix: usize, iz: usize| {
+        g.ground[dm.idx(ix, iz)] == Ground::Open && !on_track(movers, dm, ix, iz)
+    };
+    let mut cells: Vec<(usize, usize)> = (dm.half() + 1..dm.base_row() - 1)
+        .flat_map(|iz| (0..dm.w).map(move |ix| (ix, iz)))
+        .filter(|&(ix, iz)| {
+            g.ground[dm.idx(ix, iz)] == Ground::Block
+                && open(g, ix, iz + 1)
+                && open(g, ix, iz - 1)
+                && g.wall(0, ix, iz, 0) == Wall::None
+                && g.wall(0, ix, iz, 2) == Wall::None
+        })
+        .collect();
+    let mut placed: Vec<(usize, usize)> = Vec::new();
+    for _ in 0..dm.scaled(1) {
+        cells.retain(|&(x, z)| {
+            placed
+                .iter()
+                .all(|&(px, pz)| x.abs_diff(px) + z.abs_diff(pz) >= 4)
+        });
+        if cells.is_empty() {
+            break;
+        }
+        let (ix, iz) = cells[rng.random_range(0..cells.len())];
+        g.set_ground(ix, iz, Ground::Turret);
+        placed.push((ix, iz));
+    }
 }
 
 /// A forcefield across a doorway of the megatarget's room.
@@ -1190,6 +1291,8 @@ pub struct Level {
     pub gates: Vec<LaserGate>,
     /// Prism mode: each team's prism's home (`Team::index`), `PRISM_HOVER` over the floor.
     pub prisms: Option<[Vec3; 2]>,
+    /// The turret boxes, in mirrored pairs (`Ground::Turret` cells).
+    pub boxes: Vec<TurretBox>,
 }
 
 impl Level {
@@ -1250,6 +1353,8 @@ impl Level {
                     // Movers only turn existing walls into doors and use open cells, so the
                     // validated arena is the one with every door closed.
                     let movers = place_movers(&mut grid, &nav, &mut rng);
+                    // (Their own random numbers: the rest of the arena is as it was without.)
+                    place_boxes(&mut grid, &movers, seed ^ attempt.rotate_left(17));
                     let mirrors = place_mirrors(&grid, mode, &mut rng);
                     if mirrors.is_empty() {
                         continue;
@@ -3484,6 +3589,7 @@ fn build_level(seed: u64, g: Grid, nav: Nav, movers: Vec<Mover>, mode: GameMode)
     let mut targets = Vec::new();
     let mut spawns: [Vec<Spawn>; 2] = [Vec::new(), Vec::new()];
     let mut reloads = Vec::new();
+    let mut boxes = Vec::new();
     let up = Vec3::Y * STOREY;
     for iz in 0..dm.h {
         for ix in 0..dm.w {
@@ -3509,6 +3615,7 @@ fn build_level(seed: u64, g: Grid, nav: Nav, movers: Vec<Mover>, mode: GameMode)
                 }
                 Ground::Reload => reloads.push(c),
                 Ground::Struct => {}
+                Ground::Turret => boxes.push(TurretBox { pos: c }),
                 Ground::Pillar => pieces.push(PieceInstance {
                     kind: PieceKind::Pillar,
                     pos: c,
@@ -3697,6 +3804,10 @@ fn build_level(seed: u64, g: Grid, nav: Nav, movers: Vec<Mover>, mode: GameMode)
     if let Some(m) = &mega {
         colliders.extend(m.colliders());
     }
+    for b in &boxes {
+        let (min, max) = b.bounds();
+        colliders.push(Collider::Box { min, max });
+    }
     for p in &g.structures {
         colliders.extend(p.colliders());
     }
@@ -3716,6 +3827,7 @@ fn build_level(seed: u64, g: Grid, nav: Nav, movers: Vec<Mover>, mode: GameMode)
         pads: Vec::new(),
         gates: Vec::new(),
         prisms: None,
+        boxes,
     }
 }
 
@@ -3757,6 +3869,7 @@ pub fn ascii(level: &Level) -> String {
                 Ground::Alcove { .. } => 'T',
                 Ground::Reload => 'R',
                 Ground::Struct => 'X',
+                Ground::Turret => 'B',
             });
         }
         s.push_str("   ");

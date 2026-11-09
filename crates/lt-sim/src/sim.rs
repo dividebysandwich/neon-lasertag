@@ -21,6 +21,9 @@ use crate::rules::Rules;
 use crate::shot::{BoltTarget, Contact, Gun, HitClaim, Shot, Trigger, bolt_contact, on_box};
 use crate::types::*;
 
+mod boxes;
+pub use boxes::{BoxPhase, BoxSnap, BoxState, LID_TIME, POKE_REACH, RISE_TIME, box_motion};
+
 pub const TICK: f32 = 1.0 / 60.0;
 pub const MAX_PLAYERS: usize = 32;
 /// How close (horizontally) a player has to come to take a grenade pickup.
@@ -157,6 +160,8 @@ pub struct Player {
     /// it fired lately to check them against.
     pub client_hits: bool,
     shot_log: std::collections::VecDeque<ShotRecord>,
+    /// The command's `PlayerCmd::pokes` last seen (none yet: the first one only counts from).
+    pokes: Option<u32>,
 }
 
 /// A shot whose hits a client judges, as the sim fired it.
@@ -606,6 +611,9 @@ pub struct Snapshot {
     pub over: bool,
     /// Megatarget mode's turrets (as `Mega::turrets`).
     pub turrets: Vec<TurretSnap>,
+    /// The turret boxes (as `Level::boxes`).
+    #[serde(default)]
+    pub boxes: Vec<BoxSnap>,
     /// Barriers standing.
     pub barriers: Vec<Barrier>,
     /// Pulse sensors thrown.
@@ -771,6 +779,8 @@ pub struct Sim {
     /// drained by the caller, so bots can't see them).
     pub last_target_hit: Vec<Option<(u64, PlayerId)>>,
     pub turrets: Vec<TurretState>,
+    /// The turret boxes (as `Level::boxes`).
+    pub boxes: Vec<BoxState>,
     /// Barriers standing.
     pub barriers: Vec<Barrier>,
     /// Pulse sensors thrown.
@@ -795,6 +805,8 @@ pub struct Sim {
     history: std::collections::VecDeque<(u64, Vec<Ghost>)>,
     events: Vec<SimEvent>,
     rng: ChaCha8Rng,
+    /// The turret boxes' puzzles' seeds (apart, so the rest plays out as without them).
+    box_rng: ChaCha8Rng,
     next_id: u32,
     /// Distance from a base to the far end, for the respawn time.
     max_dist: f32,
@@ -859,6 +871,7 @@ impl Sim {
                     })
                     .collect()
             }),
+            boxes: Vec::new(),
             barriers: Vec::new(),
             sensors: Vec::new(),
             decoys: Vec::new(),
@@ -873,12 +886,14 @@ impl Sim {
             history: std::collections::VecDeque::with_capacity(HISTORY + 1),
             events: Vec::new(),
             rng: ChaCha8Rng::seed_from_u64(level.seed ^ 0x5EED),
+            box_rng: ChaCha8Rng::seed_from_u64(level.seed ^ 0xB0C5),
             next_id: 1,
             max_dist,
             level,
         };
         let (lo, hi) = sim.rules.event_first;
         sim.next_event = sim.rng.random_range(lo..=hi.max(lo));
+        sim.init_boxes();
         sim
     }
 
@@ -957,6 +972,7 @@ impl Sim {
             mend_ammo: 0.0,
             client_hits: false,
             shot_log: std::collections::VecDeque::new(),
+            pokes: None,
         };
         let spawn = self.pick_spawn(team);
         p.feet = spawn.pos;
@@ -1163,6 +1179,7 @@ impl Sim {
         self.step_medbeams();
         self.step_gates();
         self.step_mega();
+        self.step_boxes();
         self.step_bolts();
         self.step_grenades();
         self.step_barriers();
@@ -1947,6 +1964,25 @@ impl Sim {
                 )
             }
         };
+        // A turret box's turret in the way first?
+        let end = match contact {
+            Contact::Clear => b.pos + b.vel * TICK,
+            Contact::Player { at, .. }
+            | Contact::Barrier { at, .. }
+            | Contact::Mirror { at, .. } => at,
+            Contact::Arena { q, .. } => q,
+        };
+        if let Some((k, q)) = self.box_head_hit(b.pos, end) {
+            if b.extra.lance {
+                self.events.push(SimEvent::Streak {
+                    player: b.owner,
+                    from: b.pos,
+                    to: q,
+                });
+            }
+            self.box_shot(k, b, q);
+            return true;
+        }
         if b.extra.lance {
             let to = match contact {
                 Contact::Clear => b.pos + b.vel * TICK,
@@ -3586,6 +3622,7 @@ impl Sim {
                     off: t.off,
                 })
                 .collect(),
+            boxes: self.boxes.iter().map(|b| b.snap()).collect(),
             barriers: self.barriers.clone(),
             sensors: self.sensors.clone(),
             decoys: self.decoys.iter().map(|d| d.snap()).collect(),

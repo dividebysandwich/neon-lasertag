@@ -7,6 +7,7 @@ pub mod collide;
 pub mod hitbox;
 pub mod kit;
 pub mod level;
+pub mod puzzle;
 pub mod rules;
 pub mod shot;
 pub mod sim;
