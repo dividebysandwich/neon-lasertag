@@ -316,7 +316,8 @@ def check_avatars(ck):
         ck.err("avatars.glb: unexpected meshes %s" % sorted(extra))
 
 
-HANDS = ["hand_left", "hand_right", "hand_grip_left", "hand_grip_right"]
+HANDS = ["hand_left", "hand_right", "hand_grip_left", "hand_grip_right", "hand_point_left",
+         "hand_point_right"]
 
 
 def check_reload(ck):

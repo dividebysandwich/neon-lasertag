@@ -11,6 +11,8 @@ legs, boots) that the game poses by IK every frame.
   the skull to the snout tip plus ears / antlers / tusks / beak, all X mirror symmetric.
 - `torso`: armoured vest, origin at the top centre (neck point), hanging down -Y, front -Z.
   `hit_1` (top), `hit_2`, `hit_3` (bottom) light bars on the chest front and on the back.
+- `hand_point_left`, `hand_point_right`: the gloves pointing with the index finger (tip at
+  `POINT_TIP`), shown near a turret box's puzzle.
 - `hand_left`, `hand_right`: gloved hands gripping, origin at the palm centre, fingers along
   -Z, palm facing +X (left) / -X (right). Built separately (mirror images), not mirrored at
   runtime.
@@ -1149,6 +1151,47 @@ def hand_left():
     return g
 
 
+# The pointing glove's index fingertip (left hand; the right's is mirrored in X): the game
+# touches turret boxes' puzzle pieces with it (src/turretbox.rs, `FINGERTIP`).
+POINT_TIP = (-0.003, 0.031, -0.13)
+
+
+def hand_point_left():
+    """Left glove pointing (near a turret box's puzzle): the index finger straight out along
+    -Z, the other three curled tight into the palm, the thumb across them. Same origin, palm
+    and cuff as `hand_left`."""
+    g = L.Geo()
+    xb = -0.017
+
+    def palm_ring(z, x1, hy0, hy1, ch=0.007):
+        pts = L.chamfer_rect(xb, hy0, x1, hy1, ch)
+        return [(x, y, z) for x, y in pts]
+
+    loft(g, [palm_ring(0.045, 0.01, -0.036, 0.036), palm_ring(0.0, 0.014, -0.046, 0.046),
+             palm_ring(-0.045, 0.012, -0.046, 0.042)])
+    glove_cuff(g)
+    # The index finger, straight (its tip at POINT_TIP), slightly raised.
+    y, w = 0.031, 0.0125
+    tube(g, [(-0.003, y, -0.04), (-0.003, y, -0.075), (-0.003, y, -0.105), (-0.003, y, -0.13)],
+         [w, w * 0.95, w * 0.9, w * 0.85], sides=4, tip=False, phase=45.0)
+    # The others curled tight into the palm.
+    for y, w in ((0.0105, 0.0127), (-0.0095, 0.0122), (-0.029, 0.0112)):
+        tube(g, [(-0.003, y, -0.04), (-0.003, y, -0.062), (0.012, y, -0.074), (0.026, y, -0.064),
+                 (0.03, y, -0.048)], [w, w, w * 0.95, w * 0.9, w * 0.85], sides=4, tip=False,
+             phase=45.0)
+    # The thumb across the curled middle finger.
+    tube(g, [(0.0, 0.038, 0.02), (0.016, 0.042, -0.008), (0.03, 0.03, -0.038),
+             (0.034, 0.016, -0.054)], [0.015, 0.014, 0.0125, 0.0115], sides=4, tip=False)
+    plate(g, (xb, 0.0, -0.036), NX, [(-0.004, -0.034), (0.004, -0.034), (0.004, 0.032),
+                                     (-0.004, 0.032)], h=0.002, depth=0.003, uhint=NZ, vhint=Y)
+    solid = L.Geo()
+    solid.faces = [f for f in g.faces if f[1] == "body"]
+    for y0, y1 in ((0.026, 0.02), (0.0, 0.0), (-0.028, -0.021)):
+        ray_strip(g, [solid], [(0.0, y0, 0.066), (0.0, (y0 + y1) / 2, 0.02), (0.0, y1, -0.0325)],
+                  lambda p: ((-0.3, p[1], p[2]), X), 0.004, step=0.006, h=0.002, depth=0.003)
+    return g
+
+
 def glove_cuff(g):
     """The gloves' cuff (shared by the open and gripping gloves: the forearm slides into it),
     with its accent band."""
@@ -1548,6 +1591,8 @@ def main():
     pieces += [("hand_left", left), ("hand_right", mirrored(left))]
     grip = hand_grip_left()
     pieces += [("hand_grip_left", grip), ("hand_grip_right", mirrored(grip))]
+    point = hand_point_left()
+    pieces += [("hand_point_left", point), ("hand_point_right", mirrored(point))]
     pieces += [(name, build()) for name, build in SEGMENTS]
     for n in HEADS:
         spec = TAILS[n]
