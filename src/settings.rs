@@ -476,8 +476,8 @@ pub const FOV_DEFAULT: f32 = 80.0;
 
 /// VR: the gun tilt's range and default (degrees), the holster's raise range (m), and the
 /// height offset's range (m).
-pub const GUN_TILT_RANGE: (f32, f32) = (0.0, 45.0);
-pub const GUN_TILT_DEFAULT: f32 = 30.0;
+pub const GUN_TILT_RANGE: (f32, f32) = (0.0, 80.0);
+pub const GUN_TILT_DEFAULT: f32 = 40.0;
 pub const HOLSTER_RANGE: (f32, f32) = (-0.15, 0.15);
 pub const EYE_OFFSET_RANGE: (f32, f32) = (-0.5, 1.2);
 

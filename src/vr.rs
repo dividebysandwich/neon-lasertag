@@ -56,7 +56,7 @@ fn holster_offset() -> Vec3 {
 }
 /// How far the blaster is turned nose down from the controller's aim, so its handle sits more
 /// upright in the hand (degrees): `LT_GUN_TILT`, else the setting (`Settings::gun_tilt`,
-/// default 30).
+/// default 40).
 fn gun_tilt(settings: &Settings) -> f32 {
     static ENV: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
     ENV.get_or_init(|| {
