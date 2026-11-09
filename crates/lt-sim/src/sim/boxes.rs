@@ -504,6 +504,13 @@ mod tests {
                     2 * crate::level::boxes_per_half(size),
                     "seed {seed} {size:?}: one per half in a small arena, two in a medium one, three in a large one"
                 );
+                // Spread out, not bunched up (both halves).
+                for (i, a) in level.boxes.iter().enumerate() {
+                    for b in &level.boxes[i + 1..] {
+                        let d = a.pos.distance(b.pos);
+                        assert!(d > 11.0, "seed {seed} {size:?}: two boxes {d:.1} m apart");
+                    }
+                }
                 for b in &level.boxes {
                     assert!(
                         level

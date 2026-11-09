@@ -831,7 +831,8 @@ pub fn boxes_per_half(size: ArenaSize) -> usize {
 }
 
 /// Turns `n` of the blocks in each half into turret boxes (mirrored pairs), in the middle rows
-/// of the halves, each with open floor in front of its +z and -z sides.
+/// of the halves, each with open floor in front of its +z and -z sides, spread out over the
+/// arena.
 fn place_boxes(g: &mut Grid, movers: &[Mover], n: usize, seed: u64) {
     let dm = g.dims;
     let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x7B0C_5EED_0000_0001);
@@ -848,19 +849,32 @@ fn place_boxes(g: &mut Grid, movers: &[Mover], n: usize, seed: u64) {
                 && g.wall(0, ix, iz, 2) == Wall::None
         })
         .collect();
-    let mut placed: Vec<(usize, usize)> = Vec::new();
+    // Spread out: each one as far as can be from the others in both halves and from its own
+    // mirror image (one of the cells at least 80 % as far as the farthest, at random).
+    let mut placed: Vec<Vec3> = Vec::new();
     for _ in 0..n {
-        cells.retain(|&(x, z)| {
+        let apart = |&(ix, iz): &(usize, usize)| {
+            let c = dm.cell_centre(ix, iz);
             placed
                 .iter()
-                .all(|&(px, pz)| x.abs_diff(px) + z.abs_diff(pz) >= 4)
-        });
-        if cells.is_empty() {
+                .flat_map(|&p| [p, mirror_point(p)])
+                .chain([mirror_point(c)])
+                .map(|p| p.distance(c))
+                .fold(f32::MAX, f32::min)
+        };
+        let far = cells.iter().map(apart).fold(0.0, f32::max);
+        let good: Vec<(usize, usize)> = cells
+            .iter()
+            .copied()
+            .filter(|c| apart(c) >= far * 0.8)
+            .collect();
+        if good.is_empty() {
             break;
         }
-        let (ix, iz) = cells[rng.random_range(0..cells.len())];
+        let (ix, iz) = good[rng.random_range(0..good.len())];
         g.set_ground(ix, iz, Ground::Turret);
-        placed.push((ix, iz));
+        placed.push(dm.cell_centre(ix, iz));
+        cells.retain(|&c| c != (ix, iz));
     }
 }
 
