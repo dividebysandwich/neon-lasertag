@@ -50,7 +50,7 @@ pub(super) fn spires(p: &mut Parts, rng: &mut StdRng) {
         },
     };
     let mut placed: Vec<(Vec2, f32)> = Vec::new();
-    let want = rng.random_range(45..70);
+    let want = rng.random_range(22..35);
     for _ in 0..6000 {
         if placed.len() >= want {
             break;
