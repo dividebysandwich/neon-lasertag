@@ -452,6 +452,9 @@ pub struct Mover {
     pub moves: lt_sim::sim::Moves,
     pub valid: bool,
     seed: u64,
+    /// Seconds since the sim last put the player somewhere (`SimEvent::Respawned`): the
+    /// snapshots shown catch up only a little later.
+    since_moved: f32,
 }
 
 /// Drawing the actors (after the prediction and the VR poses).
@@ -748,9 +751,17 @@ fn predict(
 ) {
     let walk = std::mem::take(&mut local.walk_frame);
     let Some(me) = game.me else { return };
-    let respawned = events
-        .read()
-        .any(|e| matches!(e.0, SimEvent::Respawned { player, .. } if player == me));
+    // (Where the sim put the player: the snapshot shown may not have them there yet, and the
+    // prediction would walk them back.)
+    let respawned = events.read().fold(None, |at, e| match e.0 {
+        SimEvent::Respawned { player, pos } if player == me => Some(pos),
+        _ => at,
+    });
+    mover.since_moved = if respawned.is_some() {
+        0.0
+    } else {
+        mover.since_moved + time.delta_secs()
+    };
     let Some(p) = game.snap.players.iter().find(|p| p.id == me) else {
         mover.valid = false;
         local.cmd.feet = None;
@@ -764,10 +775,10 @@ fn predict(
     if !mover.valid
         || mover.seed != game.level.seed
         || p.respawn.is_some()
-        || respawned
-        || (mover.feet - p.feet).length() > 2.0
+        || respawned.is_some()
+        || (mover.feet - p.feet).length() > 2.0 && mover.since_moved > 0.5
     {
-        mover.feet = p.feet;
+        mover.feet = respawned.unwrap_or(p.feet);
         mover.vy = 0.0;
         mover.air = Vec2::ZERO;
         mover.vel = Vec2::ZERO;
