@@ -42,6 +42,17 @@ pub const HISTORY: usize = 60;
 /// in to `CLOAK_NEAR` (the bots and turrets see one closer than `CLOAK_NEAR`).
 pub const CLOAK_NEAR: f32 = 3.0;
 pub const CLOAK_FAR: f32 = 9.0;
+
+/// How a cloaked player shows (m): fully from the first distance (where the bots see them), a
+/// shimmer fading in from the second. Infection's phantoms (`phantom`) are shrouded more
+/// thinly than a cloak pickup's wearer (`Rules::phantom_sight`).
+pub fn cloak_fade(rules: &Rules, phantom: bool) -> (f32, f32) {
+    if phantom {
+        (rules.phantom_sight, rules.phantom_sight * 2.0)
+    } else {
+        (CLOAK_NEAR, CLOAK_FAR)
+    }
+}
 /// (600 ms: also the oldest moment a client's hit claim may be about.)
 pub const MAX_LAG: u64 = 36;
 
@@ -178,9 +189,10 @@ impl Player {
         self.cloak > 0.0 && self.decloak <= 0.0
     }
 
-    /// Whether the bots and the turrets see this player from `dist` (m) away.
-    pub fn seen_from(&self, dist: f32) -> bool {
-        !self.cloaked() || dist < CLOAK_NEAR
+    /// Whether the bots and the turrets see this player from `dist` (m) away, `near` being
+    /// how close a cloaked one has to come (`cloak_fade`).
+    pub fn seen_from(&self, dist: f32, near: f32) -> bool {
+        !self.cloaked() || dist < near
     }
 
     pub fn alive(&self) -> bool {
@@ -2249,7 +2261,14 @@ impl Sim {
             });
             return;
         }
-        p.hits = (p.hits + b.extra.damage.max(1)).min(hits_to_tag);
+        // (Infection: a phantom goes down in `Rules::phantom_hits` survivors' hits.)
+        let damage = if self.infected && p.team == Team::Red && b.owner_team == Team::Blue {
+            let per = hits_to_tag.div_ceil(self.rules.phantom_hits.clamp(1, hits_to_tag));
+            b.extra.damage.max(1).saturating_mul(per)
+        } else {
+            b.extra.damage.max(1)
+        };
+        p.hits = (p.hits + damage).min(hits_to_tag);
         p.cooldown = hit_cooldown;
         p.decloak = self.rules.cloak_flash;
         let (id, team, feet, hits) = (p.id, p.team, p.feet, p.hits);
@@ -2740,6 +2759,11 @@ impl Sim {
         }
     }
 
+    /// How close a cloaked `p` has to come to be seen (`cloak_fade`).
+    pub fn cloak_near(&self, p: &Player) -> f32 {
+        cloak_fade(&self.rules, self.infected && p.team == Team::Red).0
+    }
+
     /// Infection: whether it's on (`Rules::mode`).
     pub fn infection(&self) -> bool {
         self.level.mode == GameMode::Infection
@@ -2759,7 +2783,7 @@ impl Sim {
             }
             self.infected = true;
             self.survive_t = self.rules.survive_every;
-            let k = ((n as f32 * self.rules.infect_share).round() as usize).clamp(1, n - 1);
+            let k = self.rules.infect_start.clamp(1, n - 1);
             let mut order: Vec<usize> = (0..n).collect();
             for i in (1..n).rev() {
                 let j = self.rng.random_range(0..=i);
@@ -3198,7 +3222,7 @@ impl Sim {
                     p.alive()
                         && p.cooldown <= 0.0
                         && p.shield <= 0.0
-                        && p.seen_from(p.chest().distance(muzzle))
+                        && p.seen_from(p.chest().distance(muzzle), self.cloak_near(p))
                 })
                 .map(|p| p.chest())
                 .filter(|c| {
@@ -5091,7 +5115,7 @@ mod tests {
         sim.step();
         assert!(sim.infected);
         let red = |sim: &Sim| sim.players.iter().filter(|p| p.team == Team::Red).count();
-        assert_eq!(red(&sim), 2, "a quarter start as phantoms");
+        assert_eq!(red(&sim), 1, "one starts as a phantom");
         assert!(sim.snapshot().infected);
         let phantom = sim.players.iter().find(|p| p.team == Team::Red).unwrap().id;
         assert!(sim.player(phantom).unwrap().cloaked());
@@ -5105,8 +5129,33 @@ mod tests {
             Team::Red,
             true,
         );
-        assert_eq!(bolts[0].2.damage, sim.rules.hits_to_tag);
+        assert_eq!(bolts[0].2.damage, sim.rules.phantom_damage);
         assert!(bolts[0].0.length() * bolts[0].1 <= sim.rules.phantom_range + 0.01);
+        // A phantom goes down in one survivor's hit, and shows further off than a cloak.
+        {
+            let pi = sim.players.iter().position(|p| p.id == phantom).unwrap();
+            let by = sim
+                .players
+                .iter()
+                .find(|p| p.team == Team::Blue)
+                .unwrap()
+                .id;
+            sim.players[pi].protect = 0.0;
+            let b = Bolt {
+                id: 98,
+                owner: by,
+                owner_team: Team::Blue,
+                team: Some(Team::Blue),
+                pos: Vec3::ZERO,
+                vel: Vec3::X,
+                life: 1.0,
+                extra: BoltExtra::default(),
+            };
+            let at = sim.players[pi].chest();
+            sim.hit_player(pi, &b, at);
+            assert!(!sim.players[pi].alive(), "phantom tagged out");
+            assert!(sim.cloak_near(&sim.players[pi]) > CLOAK_NEAR);
+        }
         // Survivors score while they last.
         let before = sim.scores[Team::Blue.index()];
         for _ in 0..(sim.rules.survive_every / TICK) as usize + 1 {
@@ -6389,7 +6438,7 @@ mod tests {
         sim.give(a, PickupKind::Cloak);
         let pa = sim.player(a).unwrap();
         assert!(pa.cloaked());
-        assert!(!pa.seen_from(CLOAK_FAR) && pa.seen_from(CLOAK_NEAR - 0.5));
+        assert!(!pa.seen_from(CLOAK_FAR, CLOAK_NEAR) && pa.seen_from(CLOAK_NEAR - 0.5, CLOAK_NEAR));
         let fire = PlayerCmd {
             gun_hand: Some(Hand::Right),
             muzzle: Pose {

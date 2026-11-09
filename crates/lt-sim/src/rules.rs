@@ -159,11 +159,17 @@ pub struct Rules {
     pub prism_return: f32,
     pub prism_reach: f32,
     pub prism_catch: f32,
-    /// Infection: the share of players who start as phantoms (at least one), how far
-    /// phantoms' bolts fly (m), and the points each survivor scores every `survive_every`
-    /// seconds.
-    pub infect_share: f32,
+    /// Infection: how many players start as phantoms (at least one, and never everyone), how
+    /// far phantoms' bolts fly (m), the hits each one counts for (of `hits_to_tag`), and the
+    /// points each survivor scores every `survive_every` seconds.
+    pub infect_start: usize,
     pub phantom_range: f32,
+    pub phantom_damage: u8,
+    /// Infection: how close a phantom has to come to show fully (and to the bots); a shimmer
+    /// fades in from twice as far (`sim::cloak_fade`).
+    pub phantom_sight: f32,
+    /// Infection: the survivors' hits that tag a phantom out.
+    pub phantom_hits: u8,
     pub survive_points: u32,
     pub survive_every: f32,
     /// Infection: the phantoms' points for infecting every survivor.
@@ -191,6 +197,26 @@ pub struct Rules {
     pub turret_range: f32,
     pub turret_spread: f32,
     pub turret_turn: f32,
+}
+
+/// Seconds an Infection match lasts (others: `Rules::match_time`'s default): about as long as
+/// it takes the one phantom to start with to infect everyone, so it's a close call.
+pub const INFECTION_TIME: f32 = 300.0;
+
+impl Rules {
+    /// The default rules for a match in `mode` (Infection's is shorter).
+    pub fn for_mode(mode: GameMode) -> Rules {
+        let d = Rules::default();
+        Rules {
+            mode,
+            match_time: if mode == GameMode::Infection {
+                INFECTION_TIME
+            } else {
+                d.match_time
+            },
+            ..d
+        }
+    }
 }
 
 impl Default for Rules {
@@ -289,8 +315,11 @@ impl Default for Rules {
             prism_return: 20.0,
             prism_reach: 1.6,
             prism_catch: 2.0,
-            infect_share: 0.25,
-            phantom_range: 14.0,
+            infect_start: 1,
+            phantom_range: 10.0,
+            phantom_damage: 2,
+            phantom_sight: 6.0,
+            phantom_hits: 1,
             survive_points: 25,
             survive_every: 10.0,
             infect_all_points: 1000,

@@ -273,7 +273,7 @@ pub fn shot_bolts(shot: Shot, dir: Vec3, rules: &Rules, seed: u64) -> Vec<(Vec3,
 }
 
 /// Infection (`infected`: under way): a phantom's (Red's) bolts fly only
-/// `Rules::phantom_range` and tag out at once.
+/// `Rules::phantom_range` and count for `Rules::phantom_damage` hits.
 pub fn as_phantom(
     bolts: Vec<(Vec3, f32, BoltExtra)>,
     rules: &Rules,
@@ -291,7 +291,7 @@ pub fn as_phantom(
                 vel,
                 life.min(rules.phantom_range / speed),
                 BoltExtra {
-                    damage: rules.hits_to_tag,
+                    damage: rules.phantom_damage,
                     ..extra
                 },
             )

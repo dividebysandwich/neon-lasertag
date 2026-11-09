@@ -100,10 +100,9 @@ fn new_match(
         seed,
         Rules {
             arena: arena.pick(rand::random()),
-            mode,
             warmup: if warmup { WARMUP } else { 0.0 },
             team_switch: !lock_teams,
-            ..Rules::default()
+            ..Rules::for_mode(mode)
         },
     );
     let mut b = Bots::default();

@@ -1368,8 +1368,13 @@ pub fn rules_lines(rules: &lt_sim::Rules, mode: lt_sim::level::GameMode) -> Vec<
         }
         GameMode::Infection => {
             out.push(format!(
-                "RED PHANTOMS ARE CLOAKED AND TAG OUT IN ONE HIT - THEIR BOLTS FLY {:.0} M",
-                rules.phantom_range
+                "ONE RED PHANTOM STARTS - CLOAKED, A SHIMMER WITHIN {:.0} M - ONE HIT TAGS IT OUT",
+                rules.phantom_sight * 2.0
+            ));
+            out.push(format!(
+                "PHANTOM BOLTS FLY {:.0} M - {} OF THEM TAG YOU OUT",
+                rules.phantom_range,
+                rules.hits_to_tag.div_ceil(rules.phantom_damage.max(1))
             ));
             out.push(format!(
                 "BLUE SURVIVORS TAGGED OUT TURN PHANTOM - EACH SCORES {} EVERY {:.0} S",

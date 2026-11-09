@@ -1437,7 +1437,7 @@ impl Bot {
             let d = to.length();
             let in_view = d < SENSE || fwd.dot(Vec2::new(to.x, to.z).normalize_or_zero()) > FOV_COS;
             let mut known = false;
-            if d < sight && in_view && o.seen_from(d) {
+            if d < sight && in_view && o.seen_from(d, sim.cloak_near(o)) {
                 // The chest if it shows, otherwise the head (over a half wall).
                 let point = if clear(&sim.world, eye, chest) {
                     Some(chest)
@@ -3326,8 +3326,8 @@ mod tests {
             "infected {infected}, phantoms at the end {red}, scores {:?}",
             sim.scores
         );
-        // (Two to start with, and more since.)
-        assert!(infected >= 4, "infected {infected}");
+        // (One to start with, and more since.)
+        assert!(infected >= 3, "infected {infected}");
     }
 
     /// Phantoms comb the arena on their own instead of gathering somewhere and waiting: over
@@ -3512,5 +3512,108 @@ mod tests {
         assert!(totals[0] >= 6, "secondaries hit: {totals:?}");
         assert!(totals[2] >= 1, "the megatarget hit: {totals:?}");
         assert_eq!(totals[3], 0, "bots keep out of forcefields: {totals:?}");
+    }
+}
+
+#[cfg(test)]
+mod infection_balance {
+    use super::*;
+    use crate::level::{ArenaSize, GameMode};
+    use crate::rules::Rules;
+
+    /// Seconds into the live match when each survivor fell, until none were left or `cap`.
+    fn env<T: std::str::FromStr>(k: &str, d: T) -> T {
+        std::env::var(k)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(d)
+    }
+
+    fn run(seed: u64, n: usize, arena: ArenaSize, cap: f32) -> (Vec<f32>, usize) {
+        let d = Rules::for_mode(GameMode::Infection);
+        let mut sim = Sim::new(
+            seed,
+            Rules {
+                arena,
+                infect_start: env("START", d.infect_start),
+                phantom_range: env("RANGE", d.phantom_range),
+                phantom_damage: env("DAMAGE", d.phantom_damage),
+                phantom_sight: env("SIGHT", d.phantom_sight),
+                phantom_hits: env("PHITS", d.phantom_hits),
+                match_time: cap,
+                ..d
+            },
+        );
+        let mut bots = Bots::default();
+        bots.fill(&mut sim, n, 0.6);
+        let mut times = Vec::new();
+        let mut start = None;
+        let mut k0 = 0;
+        for _ in 0..((cap + 10.0) / TICK) as usize {
+            bots.think(&mut sim);
+            sim.step();
+            let infected = sim
+                .drain_events()
+                .iter()
+                .filter(|e| matches!(e, SimEvent::Infected { .. }))
+                .count();
+            if sim.infected && start.is_none() {
+                start = Some(sim.tick);
+                k0 = infected;
+                continue;
+            }
+            if let Some(s) = start {
+                for _ in 0..infected {
+                    times.push((sim.tick - s) as f32 * TICK);
+                }
+            }
+            if sim.over {
+                break;
+            }
+        }
+        (times, n - k0)
+    }
+
+    #[test]
+    #[ignore]
+    fn infection_timeline() {
+        let cap: f32 = env("CAP", crate::rules::INFECTION_TIME);
+        for arena in ArenaSize::ALL {
+            for n in [6usize, 8, 12, 16] {
+                let mut fulls = Vec::new();
+                let mut halves = Vec::new();
+                let mut left_at = [0usize; 3];
+                for seed in 1..=8u64 {
+                    let (t, survivors) = run(seed * 31 + n as u64, n, arena, cap);
+                    if t.len() >= survivors {
+                        fulls.push(t[survivors - 1]);
+                    }
+                    if t.len() >= survivors.div_ceil(2) {
+                        halves.push(t[survivors.div_ceil(2) - 1]);
+                    }
+                    for (j, m) in [180.0f32, 300.0, 420.0].iter().enumerate() {
+                        left_at[j] += survivors - t.iter().filter(|x| **x <= *m).count();
+                    }
+                }
+                let med = |v: &mut Vec<f32>| {
+                    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                    if v.is_empty() {
+                        f32::NAN
+                    } else {
+                        v[v.len() / 2]
+                    }
+                };
+                let full_n = fulls.len();
+                println!(
+                    "{arena:?} n={n:2}: all infected {full_n}/8 median {:6.0}s (min {:5.0}) | half median {:5.0}s | avg survivors left @180 {:.1} @300 {:.1} @420 {:.1}",
+                    med(&mut fulls),
+                    fulls.first().copied().unwrap_or(f32::NAN),
+                    med(&mut halves),
+                    left_at[0] as f32 / 8.0,
+                    left_at[1] as f32 / 8.0,
+                    left_at[2] as f32 / 8.0,
+                );
+            }
+        }
     }
 }

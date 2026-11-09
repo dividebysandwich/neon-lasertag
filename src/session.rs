@@ -47,8 +47,7 @@ impl Session {
     pub fn rules(&self, args: &crate::Args) -> lt_sim::Rules {
         lt_sim::Rules {
             arena: self.arena.pick(rand::random()),
-            mode: self.mode,
-            ..args.rules()
+            ..args.rules(self.mode)
         }
     }
 

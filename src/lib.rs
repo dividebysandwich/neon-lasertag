@@ -215,9 +215,9 @@ impl Args {
             .unwrap_or_else(|| format!("{}'s arena", self.name))
     }
 
-    /// The rules of local games.
-    pub fn rules(&self) -> lt_sim::Rules {
-        let mut r = lt_sim::Rules::default();
+    /// The rules of local games in `mode`.
+    pub fn rules(&self, mode: lt_sim::level::GameMode) -> lt_sim::Rules {
+        let mut r = lt_sim::Rules::for_mode(mode);
         if let Some(t) = self.match_time {
             r.match_time = t;
         }

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use bevy::prelude::*;
-use lt_sim::sim::{CLOAK_FAR, CLOAK_NEAR, EYE, PlayerSnap, TICK};
+use lt_sim::sim::{EYE, PlayerSnap, TICK, cloak_fade};
 use lt_sim::{PickupKind, PlayerId, Pose, SimEvent, Team, Weapon};
 
 use crate::assets::{Model, Models};
@@ -842,7 +842,10 @@ fn sync_players(
             1.0
         } else {
             let d = viewer.map_or(0.0, |e| e.distance(feet + Vec3::Y * 1.2));
-            ((CLOAK_FAR - d) / (CLOAK_FAR - CLOAK_NEAR)).clamp(0.0, 1.0)
+            // (Infection's phantoms show from further off.)
+            let phantom = game.snap.infected && p.team == Team::Red;
+            let (near, far) = cloak_fade(&game.rules, phantom);
+            ((far - d) / (far - near)).clamp(0.0, 1.0)
         };
         for &e in &v.solid {
             set_vis(&mut vis, e, !cloaked);
