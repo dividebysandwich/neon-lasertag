@@ -98,6 +98,8 @@ they're in the game; infecting everyone ends the match and gives the phantoms 10
   within reach and click; the blaster doesn't fire while you aim at a puzzle. In VR, touch a
   piece with the index finger of a hand without a gun and pull that hand's trigger.
 
+  <img width="1254" height="1085" alt="image" src="https://github.com/user-attachments/assets/8a8b9c01-1345-47b5-ab17-ff5e25e46b20" />
+
 ### Arena events
 
 The first event strikes 2-3 minutes into a match, then another every 2-3 minutes, never the same
