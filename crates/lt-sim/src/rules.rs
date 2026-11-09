@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::level::{ArenaSize, GameMode};
+use crate::types::ArenaEvent;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -146,6 +147,9 @@ pub struct Rules {
     pub blackout_time: f32,
     /// Seconds a mirror storm lasts.
     pub storm_time: f32,
+    /// Match modifiers: arena events on all match long (of `ArenaEvent::MODIFIERS`; none of
+    /// them comes as a timed event then).
+    pub modifiers: Vec<ArenaEvent>,
     /// Seconds low gravity lasts, and how much of the gravity is left.
     pub lowgrav_time: f32,
     pub lowgrav_factor: f32,
@@ -204,6 +208,12 @@ pub struct Rules {
 pub const INFECTION_TIME: f32 = 300.0;
 
 impl Rules {
+    /// Whether arena event `kind` is in effect, with `event` going on: as it, or as one of the
+    /// match's modifiers.
+    pub fn in_effect(&self, event: Option<(ArenaEvent, f32)>, kind: ArenaEvent) -> bool {
+        event.is_some_and(|(k, _)| k == kind) || self.modifiers.contains(&kind)
+    }
+
     /// The default rules for a match in `mode` (Infection's is shorter).
     pub fn for_mode(mode: GameMode) -> Rules {
         let d = Rules::default();
@@ -307,6 +317,7 @@ impl Default for Rules {
             event_every: (120.0, 180.0),
             event_quiet: 75.0,
             storm_time: 20.0,
+            modifiers: Vec::new(),
             lowgrav_time: 20.0,
             lowgrav_factor: 0.35,
             bounty_time: 30.0,

@@ -1384,6 +1384,10 @@ pub fn rules_lines(rules: &lt_sim::Rules, mode: lt_sim::level::GameMode) -> Vec<
     }
     out.push("YOUR SPAWN PADS HEAL YOU - THEY AND THE WHITE STATIONS REFILL YOUR BLASTER".into());
     out.push(format!("THE LAST {:.0} S COUNT DOUBLE", rules.double_last));
+    if !rules.modifiers.is_empty() {
+        let names: Vec<_> = rules.modifiers.iter().map(|k| k.modifier_name()).collect();
+        out.push(format!("ALL MATCH LONG: {}", names.join(" - ")));
+    }
     out
 }
 

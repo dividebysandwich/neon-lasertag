@@ -342,6 +342,23 @@ impl ArenaEvent {
         ArenaEvent::Bounty,
     ];
 
+    /// The events that make sense on all match long, as match modifiers (`Rules::modifiers`).
+    pub const MODIFIERS: [ArenaEvent; 3] = [
+        ArenaEvent::Blackout,
+        ArenaEvent::LowGravity,
+        ArenaEvent::MirrorStorm,
+    ];
+
+    /// The name of the event as a match modifier.
+    pub fn modifier_name(self) -> &'static str {
+        match self {
+            ArenaEvent::Blackout => "DARK",
+            ArenaEvent::LowGravity => "LOW GRAV",
+            ArenaEvent::MirrorStorm => "MIRRORS",
+            k => k.name(),
+        }
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             ArenaEvent::Blackout => "BLACKOUT",
@@ -365,6 +382,26 @@ impl ArenaEvent {
 
     pub fn parse(s: &str) -> Option<ArenaEvent> {
         Self::ALL.into_iter().find(|k| k.id() == s)
+    }
+
+    /// Match modifiers from the command line: a comma list of `dark`, `lowgrav` and `mirror`
+    /// (or the events' ids); `None` if one isn't a modifier.
+    pub fn parse_modifiers(s: &str) -> Option<Vec<ArenaEvent>> {
+        let mut out = Vec::new();
+        for w in s.split(',').map(str::trim).filter(|w| !w.is_empty()) {
+            let k = match w.to_ascii_lowercase().as_str() {
+                "dark" => ArenaEvent::Blackout,
+                "mirror" => ArenaEvent::MirrorStorm,
+                w => ArenaEvent::parse(w)?,
+            };
+            if !Self::MODIFIERS.contains(&k) {
+                return None;
+            }
+            if !out.contains(&k) {
+                out.push(k);
+            }
+        }
+        Some(out)
     }
 }
 

@@ -2534,10 +2534,10 @@ impl Sim {
             && elapsed >= self.next_event
             && self.time_left > rules.event_quiet
         {
-            // (Any but the last one.)
+            // (Any but the last one, and those on all match long.)
             let kinds: Vec<ArenaEvent> = ArenaEvent::ALL
                 .into_iter()
-                .filter(|k| Some(*k) != self.last_event)
+                .filter(|k| Some(*k) != self.last_event && !rules.modifiers.contains(k))
                 .collect();
             let kind = kinds[self.rng.random_range(0..kinds.len())];
             self.start_event(kind);
@@ -2569,7 +2569,7 @@ impl Sim {
 
     /// A mirror storm going on.
     pub fn storm(&self) -> bool {
-        matches!(self.event, Some((ArenaEvent::MirrorStorm, _)))
+        self.rules.in_effect(self.event, ArenaEvent::MirrorStorm)
     }
 
     /// Starts an arena event now (testing too).
@@ -3781,11 +3781,12 @@ pub fn look_rot(dir: Vec3) -> Quat {
 pub const GRENADE_AIM_RANGE: f32 = 20.0;
 
 /// The gravity (m/s²) with arena event `event` going on (`Sim::gravity`; a client's from its
-/// snapshot).
+/// snapshot), or low gravity on all match long.
 pub fn gravity_for(event: Option<(ArenaEvent, f32)>, rules: &Rules) -> f32 {
-    match event {
-        Some((ArenaEvent::LowGravity, _)) => GRAVITY * rules.lowgrav_factor,
-        _ => GRAVITY,
+    if rules.in_effect(event, ArenaEvent::LowGravity) {
+        GRAVITY * rules.lowgrav_factor
+    } else {
+        GRAVITY
     }
 }
 
@@ -4880,6 +4881,29 @@ mod tests {
         sim.start_event(ArenaEvent::MirrorStorm);
         assert!(sim.storm());
         assert_eq!(ArenaEvent::parse("storm"), Some(ArenaEvent::MirrorStorm));
+    }
+
+    #[test]
+    fn match_modifiers_stay_on_and_never_come_as_events() {
+        let modifiers = ArenaEvent::parse_modifiers("dark,lowgrav,mirror").unwrap();
+        assert_eq!(modifiers, ArenaEvent::MODIFIERS);
+        assert_eq!(ArenaEvent::parse_modifiers("bounty"), None);
+        let rules = Rules {
+            modifiers,
+            ..Rules::default()
+        };
+        let mut sim = Sim::new(3, rules);
+        sim.add_player("a", Some(Team::Red), false).unwrap();
+        assert!(sim.storm());
+        assert!(sim.gravity() < crate::collide::GRAVITY);
+        assert!(sim.rules.in_effect(None, ArenaEvent::Blackout));
+        for _ in 0..20 {
+            sim.event = None;
+            sim.next_event = 0.0;
+            sim.step();
+            let kind = sim.event.expect("one started").0;
+            assert!(!ArenaEvent::MODIFIERS.contains(&kind), "{kind:?}");
+        }
     }
 
     #[test]

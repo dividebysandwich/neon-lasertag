@@ -29,6 +29,8 @@ struct Args {
     lan: bool,
     /// Nobody changes sides during a match (`Rules::team_switch`).
     lock_teams: bool,
+    /// Match modifiers (`Rules::modifiers`).
+    modifiers: Vec<lt_sim::ArenaEvent>,
 }
 
 fn args() -> Args {
@@ -44,6 +46,7 @@ fn args() -> Args {
         private: false,
         lan: true,
         lock_teams: false,
+        modifiers: Vec::new(),
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -68,10 +71,19 @@ fn args() -> Args {
             "--private" => a.private = true,
             "--no-lan" => a.lan = false,
             "--lock-teams" => a.lock_teams = true,
+            "--modifiers" => match it
+                .next()
+                .as_deref()
+                .map(lt_sim::ArenaEvent::parse_modifiers)
+            {
+                Some(Some(m)) => a.modifiers = m,
+                _ => eprintln!("--modifiers takes a comma list of dark, lowgrav and mirror"),
+            },
             "-h" | "--help" => {
                 println!(
                     "lt-server [--port N] [--name NAME] [--seed N] [--bots N] [--difficulty easy|normal|hard] \
-                     [--arena small|medium|large|random] [--mode classic|megatarget|prism|infection] [--master URL] [--private] [--no-lan]"
+                     [--arena small|medium|large|random] [--mode classic|megatarget|prism|infection] [--master URL] [--private] [--no-lan] [--lock-teams] \
+                     [--modifiers dark,lowgrav,mirror]"
                 );
                 std::process::exit(0);
             }
@@ -87,26 +99,19 @@ const WARMUP: f32 = 30.0;
 const WARMUP_PLAYERS: usize = 2;
 
 /// A match; the first one (`warmup`) begins with a warmup, the next ones with a countdown.
-fn new_match(
-    seed: u64,
-    bots: usize,
-    difficulty: Difficulty,
-    arena: SizeChoice,
-    mode: GameMode,
-    warmup: bool,
-    lock_teams: bool,
-) -> (Sim, Bots) {
+fn new_match(seed: u64, args: &Args, warmup: bool) -> (Sim, Bots) {
     let mut sim = Sim::new(
         seed,
         Rules {
-            arena: arena.pick(rand::random()),
+            arena: args.arena.pick(rand::random()),
             warmup: if warmup { WARMUP } else { 0.0 },
-            team_switch: !lock_teams,
-            ..Rules::for_mode(mode)
+            team_switch: !args.lock_teams,
+            modifiers: args.modifiers.clone(),
+            ..Rules::for_mode(args.mode)
         },
     );
     let mut b = Bots::default();
-    b.fill(&mut sim, bots, difficulty.skill());
+    b.fill(&mut sim, args.bots, args.difficulty.skill());
     sim.begin();
     (sim, b)
 }
@@ -114,15 +119,7 @@ fn new_match(
 fn main() {
     let args = args();
     let mut seed = args.seed.unwrap_or_else(rand::random);
-    let (mut sim, mut bots) = new_match(
-        seed,
-        args.bots,
-        args.difficulty,
-        args.arena,
-        args.mode,
-        true,
-        args.lock_teams,
-    );
+    let (mut sim, mut bots) = new_match(seed, &args, true);
     let mut server = match Server::listen(args.port, &args.name, seed) {
         Ok(s) => s,
         Err(e) => {
@@ -166,15 +163,7 @@ fn main() {
             if since.elapsed() > Duration::from_secs(10) {
                 println!("match over {:?}; next arena", sim.scores);
                 seed = rand::random();
-                let (mut next_sim, mut next_bots) = new_match(
-                    seed,
-                    args.bots,
-                    args.difficulty,
-                    args.arena,
-                    args.mode,
-                    false,
-                    args.lock_teams,
-                );
+                let (mut next_sim, mut next_bots) = new_match(seed, &args, false);
                 server.move_to(&mut next_sim, &mut next_bots, &sim);
                 sim = next_sim;
                 bots = next_bots;

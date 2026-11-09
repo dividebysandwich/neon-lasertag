@@ -547,10 +547,12 @@ fn animate(
     mut glows: ResMut<Assets<GlowMaterial>>,
 ) {
     globals.time = time.elapsed_secs_wrapped();
-    // A blackout dims the arena's own lights (eased, a little quicker going dark).
-    let dark = game
-        .as_ref()
-        .is_some_and(|g| matches!(g.snap.event, Some((lt_sim::ArenaEvent::Blackout, _))));
+    // A blackout (or the Dark modifier) dims the arena's own lights (eased, a little quicker
+    // going dark).
+    let dark = game.as_ref().is_some_and(|g| {
+        g.rules
+            .in_effect(g.snap.event, lt_sim::ArenaEvent::Blackout)
+    });
     let (want, tau) = if dark {
         (BLACKOUT_DIM, 0.35)
     } else {

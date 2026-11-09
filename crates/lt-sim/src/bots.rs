@@ -1423,7 +1423,7 @@ impl Bot {
         let eye = p.eye();
         let fwd = Vec2::new(self.aim.x, self.aim.z).normalize_or_zero();
         // (Less far in a blackout.)
-        let sight = if matches!(sim.event, Some((ArenaEvent::Blackout, _))) {
+        let sight = if sim.rules.in_effect(sim.event, ArenaEvent::Blackout) {
             BLACKOUT_SIGHT
         } else {
             SIGHT

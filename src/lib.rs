@@ -103,6 +103,8 @@ pub struct Args {
     /// players may switch teams during a match (`--lock-teams` turns it off).
     pub team: Option<lt_sim::Team>,
     pub team_switch: bool,
+    /// Match modifiers in local and hosted games (`--modifiers dark,lowgrav,mirror`).
+    pub modifiers: Vec<lt_sim::ArenaEvent>,
     /// VR: the holster on the left hip (`--left-handed` or `LT_LEFT_HANDED=1`).
     pub left_handed: bool,
     /// Local games: the match's length in seconds (testing).
@@ -131,6 +133,7 @@ impl Args {
             game_mode: lt_sim::level::GameMode::Megatarget,
             team: None,
             team_switch: true,
+            modifiers: Vec::new(),
             left_handed: std::env::var("LT_LEFT_HANDED").is_ok_and(|v| v == "1"),
             match_time: None,
             screenshot: None,
@@ -189,6 +192,13 @@ impl Args {
                     _ => eprintln!("--team: red, blue or auto"),
                 },
                 "--lock-teams" => a.team_switch = false,
+                "--modifiers" => match next(&mut i)
+                    .as_deref()
+                    .map(lt_sim::ArenaEvent::parse_modifiers)
+                {
+                    Some(Some(m)) => a.modifiers = m,
+                    _ => eprintln!("--modifiers: a comma list of dark, lowgrav and mirror"),
+                },
                 "--left-handed" => a.left_handed = true,
                 "--match-time" => a.match_time = next(&mut i).and_then(|v| v.parse().ok()),
                 "--screenshot" => shot = next(&mut i),
@@ -450,6 +460,7 @@ fn setup(
                 mode: args.game_mode,
                 team: args.team,
                 team_switch: args.team_switch,
+                modifiers: args.modifiers.clone(),
             },
         });
     }
@@ -499,12 +510,14 @@ fn start_game(
             mode,
             team,
             team_switch,
+            modifiers,
         } => {
             session.difficulty = difficulty;
             session.arena = arena;
             session.mode = mode;
             let rules = lt_sim::Rules {
                 team_switch,
+                modifiers,
                 ..session.rules(&args)
             };
             let mut game = Game::local(

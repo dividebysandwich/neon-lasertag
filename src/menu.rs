@@ -4,7 +4,7 @@
 //! ```text
 //! top          Botmatch | Multiplayer | Options | Quit
 //! botmatch     the bots' number and difficulty, the arenas' size, the mode, one's team and
-//!              whether teams may be switched during a match; Start
+//!              whether teams may be switched during a match, the match modifiers; Start
 //! multiplayer  Internet | LAN
 //! internet     the master server's list (join one), join by address, host an internet game
 //! lan          the games found on the local network (lt-net's lan.rs), join by address,
@@ -19,9 +19,9 @@
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::prelude::*;
 use lt_net::{LanBrowser, LanServer, ListSlot, ServerEntry, fetch_list_into};
-use lt_sim::Team;
 use lt_sim::bots::Difficulty;
 use lt_sim::level::{GameMode, SizeChoice};
+use lt_sim::{ArenaEvent, Team};
 
 use crate::Args;
 use crate::desktop::Overlays;
@@ -99,6 +99,8 @@ pub enum MenuAct {
     Team(Option<Team>),
     /// Whether players may switch teams during a match.
     TeamSwitch(bool),
+    /// A match modifier (of `ArenaEvent::MODIFIERS`) on or off.
+    Modifier(ArenaEvent),
     Options,
     Quit,
 }
@@ -114,6 +116,18 @@ pub fn mode_blurb(mode: GameMode) -> &'static str {
         GameMode::Infection => {
             "CLOAKED RED PHANTOMS HUNT BLUE SURVIVORS - TAGGED OUT YOU TURN PHANTOM"
         }
+    }
+}
+
+/// What a match modifier does, in a line (its button's tooltip; capitals for VR's panels).
+pub fn modifier_blurb(kind: ArenaEvent) -> &'static str {
+    match kind {
+        ArenaEvent::Blackout => {
+            "THE ARENA'S LIGHTS STAY LOW ALL MATCH - BOLTS AND PLAYERS STILL GLOW"
+        }
+        ArenaEvent::LowGravity => "EVERYONE JUMPS HIGHER AND FALLS SLOWER ALL MATCH",
+        ArenaEvent::MirrorStorm => "EVERY WALL TURNS A BOLT BACK ONCE, ALL MATCH",
+        _ => "",
     }
 }
 
@@ -177,6 +191,8 @@ pub struct MenuModel {
     /// players may switch teams during a match.
     pub team: Option<Team>,
     pub team_switch: bool,
+    /// The match modifiers on (`Rules::modifiers`).
+    pub modifiers: Vec<ArenaEvent>,
     /// The hosted game's name, and the address typed to join.
     pub server_name: String,
     pub address: String,
@@ -202,6 +218,7 @@ impl MenuModel {
             mode: args.game_mode,
             team: args.team,
             team_switch: args.team_switch,
+            modifiers: args.modifiers.clone(),
             server_name: args.hosted_name(),
             address: String::new(),
             port: args.host.unwrap_or(lt_net::protocol::DEFAULT_PORT),
@@ -273,6 +290,7 @@ impl MenuModel {
             MenuAct::Mode(m) => *m == self.mode,
             MenuAct::Team(t) => *t == self.team,
             MenuAct::TeamSwitch(on) => *on == self.team_switch,
+            MenuAct::Modifier(k) => self.modifiers.contains(k),
             _ => false,
         }
     }
@@ -286,6 +304,7 @@ impl MenuModel {
             mode: self.mode,
             team: self.team,
             team_switch: self.team_switch,
+            modifiers: self.modifiers.clone(),
         }
     }
 
@@ -348,6 +367,14 @@ impl MenuModel {
                 self.team_switch = *on;
                 None
             }
+            MenuAct::Modifier(k) => {
+                if let Some(i) = self.modifiers.iter().position(|m| m == k) {
+                    self.modifiers.remove(i);
+                } else {
+                    self.modifiers.push(*k);
+                }
+                None
+            }
             MenuAct::Options => return Outcome::Options,
             MenuAct::Quit => return Outcome::Quit,
         };
@@ -375,6 +402,8 @@ pub enum Start {
         /// during a match (`Rules::team_switch`).
         team: Option<Team>,
         team_switch: bool,
+        /// The match modifiers (`Rules::modifiers`).
+        modifiers: Vec<ArenaEvent>,
     },
     Join(String),
 }
@@ -765,6 +794,23 @@ fn choices(p: &mut ChildSpawnerCommands, model: &MenuModel) {
                     Some(Tip("EVERYONE STAYS ON THE TEAM THEY STARTED ON")),
                 ),
             ],
+        );
+    });
+    // (Any number of them, each on or off.)
+    p.spawn(neonui::row(10.0)).with_children(|r| {
+        name(r, "MODIFIERS");
+        options(
+            r,
+            ArenaEvent::MODIFIERS
+                .iter()
+                .map(|k| {
+                    (
+                        k.modifier_name(),
+                        MenuAct::Modifier(*k),
+                        Some(Tip(modifier_blurb(*k))),
+                    )
+                })
+                .collect(),
         );
     });
 }

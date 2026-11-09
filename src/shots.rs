@@ -390,7 +390,7 @@ impl Shots {
                             &mut f.bolt,
                             q,
                             n,
-                            matches!(snap.event, Some((lt_sim::ArenaEvent::MirrorStorm, _))),
+                            rules.in_effect(snap.event, lt_sim::ArenaEvent::MirrorStorm),
                         ) {
                             out.push(SimEvent::Reflected {
                                 pos: q,

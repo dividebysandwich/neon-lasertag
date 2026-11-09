@@ -27,13 +27,15 @@
 use bevy::prelude::*;
 use lt_sim::bots::Difficulty;
 use lt_sim::level::{GameMode, SizeChoice};
-use lt_sim::{PlayerId, SimEvent, Team};
+use lt_sim::{ArenaEvent, PlayerId, SimEvent, Team};
 
 use crate::assets::MeshData;
 use crate::endscreen::{Row, standings, winner};
 use crate::game::{Game, GameEvent};
 use crate::materials::{AccentMaterial, GlowMaterial, NeonUniform, Palette, team_color};
-use crate::menu::{InternetList, MenuAct, MenuModel, Outcome, Screen, mode_blurb, team_name};
+use crate::menu::{
+    InternetList, MenuAct, MenuModel, Outcome, Screen, mode_blurb, modifier_blurb, team_name,
+};
 use crate::segtext::{self, Align};
 use crate::session::{Session, SessionCmd};
 use crate::vfont;
@@ -147,6 +149,7 @@ type LobbyKey = (
     GameMode,
     Option<Team>,
     bool,
+    u8,
     u32,
     usize,
 );
@@ -160,6 +163,12 @@ fn lobby_key(m: &MenuModel, list_top: usize) -> LobbyKey {
         m.mode,
         m.team,
         m.team_switch,
+        // (The modifiers on, as bits.)
+        ArenaEvent::MODIFIERS
+            .iter()
+            .enumerate()
+            .filter(|(_, k)| m.modifiers.contains(k))
+            .fold(0, |bits, (i, _)| bits | 1 << i),
         m.rev,
         list_top,
     )
@@ -831,7 +840,8 @@ fn menu(a: MenuAct) -> Act {
     Act::Menu(a)
 }
 
-/// The bots' number and skill, the arena's size, the mode, from `y` down; returns the y below.
+/// The bots' number and skill, the arena's size, the mode, the teams and the match modifiers,
+/// from `y` down; returns the y below.
 fn lobby_choices(b: &mut Builder, buttons: &mut Vec<Button>, m: &MenuModel, mut y: f32) -> f32 {
     let dim = b.mats.dim.clone();
     let white = b.mats.white.clone();
@@ -925,15 +935,36 @@ fn lobby_choices(b: &mut Builder, buttons: &mut Vec<Button>, m: &MenuModel, mut 
         .map(|&(on, name)| item(name, MenuAct::TeamSwitch(on)))
         .map(|(n, a, on)| (n, menu(a), Hue::Cyan, on))
         .collect();
-    let first = buttons.len();
+    let switch_first = buttons.len();
     button_row(b, buttons, switching, y - 0.07, 0.3, 0.09);
+    y -= 0.16;
+    label(b, "MODIFIERS", y);
+    let modifiers = ArenaEvent::MODIFIERS
+        .iter()
+        .map(|&k| item(k.modifier_name(), MenuAct::Modifier(k)))
+        .map(|(n, a, on)| (n, menu(a), Hue::Cyan, on))
+        .collect();
+    let first = buttons.len();
+    button_row(b, buttons, modifiers, y - 0.07, 0.3, 0.09);
+    // Pointed at, a switching or modifier button says what it does (under the last row, the
+    // one place there's room).
     let tips = [
         "PLAYERS MAY CHANGE SIDES FROM THE MENU - BOTS EVEN THE TEAMS OUT",
         "EVERYONE STAYS ON THE TEAM THEY STARTED ON",
     ];
-    for (k, s) in tips.iter().enumerate() {
+    let tips = tips
+        .iter()
+        .enumerate()
+        .map(|(k, s)| (switch_first + k, *s))
+        .chain(
+            ArenaEvent::MODIFIERS
+                .iter()
+                .enumerate()
+                .map(|(k, &m)| (first + k, modifier_blurb(m))),
+        );
+    for (i, s) in tips {
         let tip = b.tip(s, Vec2::new(0.0, y - 0.155), 1.0);
-        if let Some(button) = buttons.get_mut(first + k) {
+        if let Some(button) = buttons.get_mut(i) {
             button.tip = Some(tip);
         }
     }
@@ -1121,8 +1152,8 @@ fn lobby_list(
 fn build_lobby(b: &mut Builder, m: &MenuModel, list_top: usize) -> Vec<Button> {
     // (The screens with the game's choices are taller.)
     let height = match m.screen {
-        Screen::Botmatch => 1.5,
-        Screen::Host { .. } => 1.58,
+        Screen::Botmatch => 1.66,
+        Screen::Host { .. } => 1.74,
         _ => 1.12,
     };
     let size = Vec2::new(1.1, height);
