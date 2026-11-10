@@ -1,5 +1,7 @@
 # Neon Lasertag
 
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/W7J0271P9Q)
+
 Red vs Blue lasertag in procedurally generated neon arenas, for VR headsets (OpenXR) and the
 flat screen. Built with Bevy.
 
