@@ -44,10 +44,17 @@ pub enum ConsoleKind {
 /// Seconds a light bridge stands.
 pub const BRIDGE_TIME: f32 = 25.0;
 /// How far from its bridge's middle (m) a light bridge's console stands at most.
-const BRIDGE_NEAR: f32 = 9.0;
+const BRIDGE_NEAR: f32 = 10.0;
+/// How many cells a light bridge spans (between the upper floor's ends), and its side rails'
+/// height (m): low, to shoot down over.
+const MIN_SPAN: usize = 2;
+const MAX_SPAN: usize = 7;
+pub const BRIDGE_RAIL: f32 = 0.5;
 
-/// A light bridge over a gap in the upper floor (1 to 3 cells, open floor below): the slab it
-/// is while it stands, and its ends (feet on the floor either side).
+/// A light bridge: a walkway at the upper floor's height across the arena, from one part of
+/// the upper floor to another (`MIN_SPAN` to `MAX_SPAN` cells over the floor and what stands
+/// on it), with low rails along its sides to shoot down over: the slab it is while it
+/// stands, and its ends (feet on the floor either side).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Bridge {
     pub min: Vec3,
@@ -58,6 +65,42 @@ pub struct Bridge {
 impl Bridge {
     pub fn mid(&self) -> Vec3 {
         (self.min + self.max) / 2.0
+    }
+
+    /// Whether it runs along x (else along z).
+    pub fn along_x(&self) -> bool {
+        let d = self.max - self.min;
+        d.x >= d.z
+    }
+
+    /// Its slab and its side rails (`BRIDGE_RAIL` high), as boxes.
+    pub fn boxes(&self) -> [(Vec3, Vec3); 3] {
+        let t = 0.06;
+        let top = self.max.y;
+        let (a, b) = if self.along_x() {
+            (
+                (
+                    Vec3::new(self.min.x, top, self.min.z),
+                    Vec3::new(self.max.x, top + BRIDGE_RAIL, self.min.z + t),
+                ),
+                (
+                    Vec3::new(self.min.x, top, self.max.z - t),
+                    Vec3::new(self.max.x, top + BRIDGE_RAIL, self.max.z),
+                ),
+            )
+        } else {
+            (
+                (
+                    Vec3::new(self.min.x, top, self.min.z),
+                    Vec3::new(self.min.x + t, top + BRIDGE_RAIL, self.max.z),
+                ),
+                (
+                    Vec3::new(self.max.x - t, top, self.min.z),
+                    Vec3::new(self.max.x, top + BRIDGE_RAIL, self.max.z),
+                ),
+            )
+        };
+        [(self.min, self.max), a, b]
     }
 
     fn mirrored(&self) -> Bridge {
@@ -80,9 +123,15 @@ fn bridge_spans(g: &Grid) -> Vec<Bridge> {
         let i = dm.idx(ix, iz);
         g.upper[i] && !g.upper_block[i]
     };
-    let gap = |ix: usize, iz: usize| {
+    // What a bridge may pass over: open floor and what's no higher than a storey (no
+    // structures, ramps, alcoves' roofs or spawn pads).
+    let under = |ix: usize, iz: usize| {
         let i = dm.idx(ix, iz);
-        !g.upper[i] && g.ground[i] == Ground::Open
+        !g.upper[i]
+            && matches!(
+                g.ground[i],
+                Ground::Open | Ground::Block | Ground::Pillar | Ground::Reload
+            )
     };
     let mut out = Vec::new();
     for iz in dm.half() + 1..dm.h - 2 {
@@ -90,48 +139,54 @@ fn bridge_spans(g: &Grid) -> Vec<Bridge> {
             if !walk(ix, iz) {
                 continue;
             }
-            // Along +x (dir 1) and +z (dir 0).
+            // Along +x (dir 1) and +z (dir 0): over the cells below the upper floor, to
+            // where it goes on.
             for dir in [1u8, 0] {
-                for len in 1..=3 {
-                    let Some(end) = dm.step(ix, iz, dir, len + 1) else {
-                        continue;
+                let mut cells = Vec::new();
+                let mut end = None;
+                for k in 1..=MAX_SPAN as i32 + 1 {
+                    let Some((x, z)) = dm.step(ix, iz, dir, k) else {
+                        break;
                     };
-                    let cells: Vec<(usize, usize)> =
-                        (1..=len).filter_map(|k| dm.step(ix, iz, dir, k)).collect();
-                    if cells.len() != len as usize
-                        || !walk(end.0, end.1)
-                        || !cells.iter().all(|&(x, z)| gap(x, z))
-                        || end.1 <= dm.half()
-                    {
-                        continue;
+                    if walk(x, z) {
+                        end = Some((x, z));
+                        break;
                     }
-                    // Nothing on the upper floor's edges along the way (but railings, which
-                    // the bridge's ends open: `place_consoles`).
-                    let path = std::iter::once((ix, iz)).chain(cells.iter().copied());
-                    if path
-                        .clone()
-                        .any(|(x, z)| !matches!(g.wall(1, x, z, dir), Wall::None | Wall::Rail))
-                    {
-                        continue;
+                    if !under(x, z) {
+                        break;
                     }
-                    let a = dm.cell_centre(ix, iz);
-                    let b = dm.cell_centre(end.0, end.1);
-                    let (lo, hi) = (a.min(b), a.max(b));
-                    let w = CELL / 2.0 - 0.2;
-                    let side = if dir == 1 {
-                        Vec3::new(0.0, 0.0, w)
-                    } else {
-                        Vec3::new(w, 0.0, 0.0)
-                    };
-                    // (From the near ends' edges, a little onto the floor either side.)
-                    let along = if dir == 1 { Vec3::X } else { Vec3::Z } * (CELL / 2.0 - 0.1);
-                    out.push(Bridge {
-                        min: lo + along - side + Vec3::Y * (STOREY - 0.12),
-                        max: hi - along + side + Vec3::Y * STOREY,
-                        ends: [a + Vec3::Y * STOREY, b + Vec3::Y * STOREY],
-                    });
-                    break;
+                    cells.push((x, z));
                 }
+                let Some(end) = end else {
+                    continue;
+                };
+                if !(MIN_SPAN..=MAX_SPAN).contains(&cells.len()) || end.1 <= dm.half() {
+                    continue;
+                }
+                // Nothing on the upper floor's edges along the way (but railings, which the
+                // bridge's ends open: `place_consoles`).
+                if std::iter::once((ix, iz))
+                    .chain(cells.iter().copied())
+                    .any(|(x, z)| !matches!(g.wall(1, x, z, dir), Wall::None | Wall::Rail))
+                {
+                    continue;
+                }
+                let a = dm.cell_centre(ix, iz);
+                let b = dm.cell_centre(end.0, end.1);
+                let (lo, hi) = (a.min(b), a.max(b));
+                let w = CELL / 2.0 - 0.15;
+                let side = if dir == 1 {
+                    Vec3::new(0.0, 0.0, w)
+                } else {
+                    Vec3::new(w, 0.0, 0.0)
+                };
+                // (From the near ends' edges, a little onto the floor either side.)
+                let along = if dir == 1 { Vec3::X } else { Vec3::Z } * (CELL / 2.0 - 0.1);
+                out.push(Bridge {
+                    min: lo + along - side + Vec3::Y * (STOREY - 0.12),
+                    max: hi - along + side + Vec3::Y * STOREY,
+                    ends: [a + Vec3::Y * STOREY, b + Vec3::Y * STOREY],
+                });
             }
         }
     }
@@ -397,10 +452,8 @@ pub fn bridge_colliders(
         .enumerate()
         .filter(|(k, _)| up(*k))
         .filter_map(|(_, d)| bridge_for(level, d))
-        .map(|b| crate::collide::Collider::Box {
-            min: b.min,
-            max: b.max,
-        })
+        .flat_map(|b| b.boxes())
+        .map(|(min, max)| crate::collide::Collider::Box { min, max })
         .collect()
 }
 
@@ -443,7 +496,17 @@ pub(crate) fn place_consoles(
     kinds.truncate(n);
     // (The light bridge's first: it has the fewest places to go.)
     kinds.sort_by_key(|k| *k != ConsoleKind::Bridge);
-    let span = (!spans.is_empty()).then(|| spans[rng.random_range(0..spans.len())]);
+    // (One of the longest: across as much of the arena as can be.)
+    let longest = spans
+        .iter()
+        .map(|b| (b.max - b.min).x.max((b.max - b.min).z))
+        .fold(0.0, f32::max);
+    let long: Vec<Bridge> = spans
+        .iter()
+        .copied()
+        .filter(|b| (b.max - b.min).x.max((b.max - b.min).z) >= longest - 2.5)
+        .collect();
+    let span = (!long.is_empty()).then(|| long[rng.random_range(0..long.len())]);
     let mut bridges = Vec::new();
     let open = |g: &Grid, ix: usize, iz: usize| {
         g.ground[dm.idx(ix, iz)] == Ground::Open && !crate::level::on_track(movers, dm, ix, iz)

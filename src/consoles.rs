@@ -79,7 +79,7 @@ pub fn solved_banner(kind: ConsoleKind) -> Option<(&'static str, &'static str)> 
         ),
         ConsoleKind::Bridge => (
             "LIGHT BRIDGE UP",
-            "IT SPANS THE GAP IN THE UPPER FLOOR FOR 25 S - FOR EVERYONE",
+            "A WALKWAY OVER THE ARENA FOR 25 S - SHOOT DOWN FROM IT (ANYONE CAN USE IT)",
         ),
     })
 }
@@ -341,14 +341,36 @@ pub fn spawn(
                 Transform::IDENTITY,
                 ChildOf(root),
             ));
+            // Its sides: an edge strip, and a low rail on posts (`BRIDGE_RAIL`, to shoot down
+            // over).
             let rail = meshes.add(Cuboid::new(len, 0.05, 0.05));
+            let post = meshes.add(Cuboid::new(0.04, lt_sim::console::BRIDGE_RAIL, 0.04));
+            let posts = (len / 1.5).round().max(1.0) as usize;
             for s in [-1.0, 1.0] {
-                commands.spawn((
-                    Mesh3d(rail.clone()),
-                    MeshMaterial3d(edges.clone()),
-                    Transform::from_xyz(0.0, size.y / 2.0 + 0.02, s * (w / 2.0 - 0.03)),
-                    ChildOf(root),
-                ));
+                let z = s * (w / 2.0 - 0.03);
+                for y in [
+                    size.y / 2.0 + 0.02,
+                    size.y / 2.0 + lt_sim::console::BRIDGE_RAIL,
+                ] {
+                    commands.spawn((
+                        Mesh3d(rail.clone()),
+                        MeshMaterial3d(edges.clone()),
+                        Transform::from_xyz(0.0, y, z),
+                        ChildOf(root),
+                    ));
+                }
+                for i in 0..=posts {
+                    commands.spawn((
+                        Mesh3d(post.clone()),
+                        MeshMaterial3d(edges.clone()),
+                        Transform::from_xyz(
+                            (i as f32 / posts as f32 - 0.5) * (len - 0.05),
+                            size.y / 2.0 + lt_sim::console::BRIDGE_RAIL / 2.0,
+                            z,
+                        ),
+                        ChildOf(root),
+                    ));
+                }
             }
             // Crossbars every metre or so.
             let bar = meshes.add(Cuboid::new(0.04, 0.02, w - 0.1));

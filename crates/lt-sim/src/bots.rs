@@ -1710,13 +1710,21 @@ impl Bot {
                 let best = boxes
                     .chain(consoles)
                     .filter(|(k, at, _)| {
+                        // (Defenders keep near their posts: only the consoles close by.)
+                        let sight =
+                            if self.role == Role::Defense && *k >= crate::console::CONSOLE_POKE {
+                                8.0
+                            } else {
+                                PUZZLE_SIGHT
+                            };
                         Self::wants_puzzle(sim, p, *k)
-                            && at.distance(p.feet) < PUZZLE_SIGHT
+                            && at.distance(p.feet) < sight
                             // (Attackers on their way leave their own half's to the others; not
                             // the secondary targets', in the middle.)
                             && (self.role != Role::Offense
                                 || Team::of_z(at.z) != p.team
-                                || *k >= crate::console::CONSOLE_POKE + Self::pedestals(sim))
+                                || *k >= crate::console::CONSOLE_POKE + Self::pedestals(sim)
+                                || Self::is_vault(sim, *k))
                             && !mates.iter().any(|m| m.distance(*at) < 2.5)
                     })
                     .filter_map(|(k, at, faces)| {
@@ -1756,6 +1764,14 @@ impl Bot {
             }
             _ => matches!(self.plan, Plan::Hold | Plan::Engage),
         }
+    }
+
+    /// Whether puzzle `k` (as `Errand::Puzzle`) is a supply vault's (it arms whoever solves
+    /// it: worth a stop anywhere).
+    fn is_vault(sim: &Sim, k: u8) -> bool {
+        k.checked_sub(crate::console::CONSOLE_POKE)
+            .and_then(|c| sim.console_defs().get(c as usize))
+            .is_some_and(|d| d.kind == crate::console::ConsoleKind::Vault)
     }
 
     /// How many of the consoles in play are the arena's own (the rest: the secondary targets').
@@ -3428,7 +3444,8 @@ mod tests {
     #[test]
     fn defenders_converge_after_target_hits() {
         let (mut with, mut without) = (0.0, 0.0);
-        for seed in 1..=6 {
+        let n = 10;
+        for seed in 1..=n {
             let a = guard_distance(seed, true);
             let b = guard_distance(seed, false);
             println!(
@@ -3440,8 +3457,8 @@ mod tests {
         }
         println!(
             "mean distance after the hit: together {:.1} m, alone {:.1} m",
-            with / 6.0,
-            without / 6.0
+            with / n as f32,
+            without / n as f32
         );
         assert!(with < 0.75 * without, "together {with}, alone {without}");
     }
@@ -3564,7 +3581,7 @@ mod tests {
         let mut solved: std::collections::HashMap<crate::console::ConsoleKind, u32> =
             Default::default();
         let mut present = std::collections::HashSet::new();
-        for seed in 1..=3 {
+        for seed in 1..=4 {
             let mut sim = Sim::new(
                 seed,
                 Rules {
