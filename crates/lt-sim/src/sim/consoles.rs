@@ -160,6 +160,21 @@ impl Sim {
         }
     }
 
+    /// Testing: a new puzzle of `kind` on console `k` (and done resting).
+    pub fn dev_console_game(&mut self, k: usize, kind: crate::minigame::MinigameKind) {
+        let Some(st) = self.consoles.get_mut(k) else {
+            return;
+        };
+        let seed = (st.seed.wrapping_add(1)..)
+            .find(|&s| crate::minigame::MinigameKind::of(s) == kind)
+            .unwrap_or(st.seed);
+        *st = ConsoleState {
+            owner: st.owner,
+            active: st.active,
+            ..ConsoleState::new(seed)
+        };
+    }
+
     /// Console `k`'s puzzle solved by player `pi`: a new one, and what the console does.
     fn console_solved(&mut self, k: usize, pi: usize) {
         let (team, by, feet) = (

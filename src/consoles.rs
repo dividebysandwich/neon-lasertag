@@ -37,6 +37,9 @@ impl Plugin for ConsolePlugin {
 const GLIDE: f32 = 9.0;
 const STUCK: Vec3 = Vec3::new(1.0, 0.1, 0.05);
 const DARK: Vec3 = Vec3::new(0.05, 0.05, 0.06);
+/// Circuit wires with current through them, and without.
+const WIRE_ON: Vec3 = Vec3::new(0.15, 1.0, 0.9);
+const WIRE_OFF: Vec3 = Vec3::new(0.35, 0.4, 0.75);
 
 /// The colour of what a console does (its hologram).
 pub fn kind_color(kind: ConsoleKind) -> Vec3 {
@@ -256,6 +259,10 @@ fn spawn_puzzle(
     let tile = meshes.add(Cuboid::new(cell - 0.018, cell - 0.018, 0.02));
     let bridge_x = meshes.add(Cuboid::new(0.022, (cell - 0.018) * 0.6, 0.016));
     let bridge_y = meshes.add(Cuboid::new((cell - 0.018) * 0.6, 0.022, 0.016));
+    // A circuit tile's wire from its middle to one edge (up), its hub, and its backing.
+    let wire = meshes.add(Cuboid::new(0.03, cell / 2.0 + 0.015, 0.012));
+    let hub = meshes.add(Cuboid::new(0.05, 0.05, 0.014));
+    let backing = meshes.add(Cuboid::new(cell - 0.012, cell - 0.012, 0.006));
     let mut roots = Vec::new();
     let mut elems: Vec<ElemView> = (0..game.elements())
         .map(|j| {
@@ -342,6 +349,67 @@ fn spawn_puzzle(
                     }
                     e.roots.push(r);
                     e.shown = q.out as f32;
+                }
+            }
+            Minigame::Circuit(cc) => {
+                use lt_sim::minigame::circuit::{LEFT, RIGHT, UP, turned};
+                for (i, e) in elems.iter_mut().enumerate() {
+                    let (c, r) = (i % n, i / n);
+                    // (Turned about its middle by `animate`.)
+                    let tile_root = commands
+                        .spawn((
+                            Transform::from_translation(at(c as f32, r as f32)),
+                            Visibility::default(),
+                            ChildOf(face_root),
+                        ))
+                        .id();
+                    commands.spawn((
+                        Mesh3d(backing.clone()),
+                        MeshMaterial3d(palette.body.clone()),
+                        Transform::from_xyz(0.0, 0.0, 0.008),
+                        ChildOf(tile_root),
+                    ));
+                    commands.spawn((
+                        Mesh3d(hub.clone()),
+                        MeshMaterial3d(e.mat.clone()),
+                        Transform::from_xyz(0.0, 0.0, 0.016),
+                        ChildOf(tile_root),
+                    ));
+                    for k in 0..4u8 {
+                        if cc.shapes[i] & turned(UP, k) == 0 {
+                            continue;
+                        }
+                        // (A quarter turn clockwise each: -90 degrees about the face's out.)
+                        let rot = Quat::from_rotation_z(-(k as f32) * std::f32::consts::FRAC_PI_2);
+                        commands.spawn((
+                            Mesh3d(wire.clone()),
+                            MeshMaterial3d(e.mat.clone()),
+                            Transform::from_translation(rot * Vec3::new(0.0, cell / 4.0, 0.016))
+                                .with_rotation(rot),
+                            ChildOf(tile_root),
+                        ));
+                    }
+                    e.roots.push(tile_root);
+                    e.color = WIRE_OFF;
+                }
+                // The current's way in (left edge) and out (right edge): fixed stubs.
+                let stub = meshes.add(Cuboid::new(cell * 0.6, 0.04, 0.014));
+                let ends = [
+                    (at(-0.8, cc.source as f32), LEFT, WIRE_ON),
+                    (
+                        at(n as f32 - 0.2, cc.sink as f32),
+                        RIGHT,
+                        Vec3::new(1.0, 0.85, 0.1),
+                    ),
+                ];
+                for (pos, _, color) in ends {
+                    let m = accent(accents, color, 3.0);
+                    commands.spawn((
+                        Mesh3d(stub.clone()),
+                        MeshMaterial3d(m),
+                        Transform::from_translation(pos + Vec3::Z * 0.016),
+                        ChildOf(face_root),
+                    ));
                 }
             }
         }
@@ -454,6 +522,7 @@ fn animate(
         }
         let g = puzzles.game(s.seed).clone();
         let poke = (lt_sim::console::CONSOLE_POKE as usize + k, 0);
+        let mut powered: Option<Vec<bool>> = None;
         for (j, e) in v.elems.iter_mut().enumerate() {
             let state = s.state.get(j).copied().unwrap_or(0);
             e.flash = (e.flash - dt * 2.5).max(0.0);
@@ -473,6 +542,28 @@ fn animate(
                     }
                     if want == 0.0 {
                         lit = 1.6;
+                    }
+                }
+                Minigame::Circuit(cc) => {
+                    // Turning (always clockwise: from 3 on to 0 is a quarter turn more).
+                    let want = state as f32;
+                    if want < e.shown - 0.5 {
+                        e.shown -= 4.0;
+                    }
+                    e.shown = (e.shown + dt * 8.0).min(want);
+                    let rot = Quat::from_rotation_z(-e.shown * std::f32::consts::FRAC_PI_2);
+                    for &r in &e.roots {
+                        if let Ok(mut tr) = transforms.get_mut(r) {
+                            tr.rotation = rot;
+                        }
+                    }
+                    let on = powered.get_or_insert_with(|| cc.powered(&s.state));
+                    if on.get(j).copied().unwrap_or(false) {
+                        e.color = WIRE_ON;
+                        lit = 3.0;
+                    } else {
+                        e.color = WIRE_OFF;
+                        lit = 0.9;
                     }
                 }
             }

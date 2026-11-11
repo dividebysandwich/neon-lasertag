@@ -19,7 +19,8 @@
 //! one (`warp-box-all`, hosting), clicking its puzzle (`box-hint=N`, `box-poke=J`, and
 //! `box-click`, which works in a remote game too) or solving it at once (`solve-box`); consoles:
 //! in front of one (`warp-console`, `warp-console=K`, `warp-console=vault`), clicking the
-//! nearest one's puzzle (`console-hint=N`) or solving it (`solve-console`); arena events (`blackout`, `overdrive`) and the last
+//! nearest one's puzzle (`console-hint=N`), giving it a puzzle of a kind (`console-game=circuit`)
+//! or solving it (`solve-console`); arena events (`blackout`, `overdrive`) and the last
 //! minute's double points (`double`); freezing the game (`freeze`), the free camera
 //! (`freecam`), its view's width (`fov=DEG`) and aperture (`dof=N`).
 
@@ -371,6 +372,7 @@ fn dev_script(
         a if a == "warp-console"
             || a.starts_with("warp-console=")
             || a.starts_with("console-hint")
+            || a.starts_with("console-game=")
             || a == "solve-console" =>
         {
             let a = a.to_string();
@@ -395,6 +397,15 @@ fn dev_script(
                     let Some(near) = nearest else { return };
                     if a == "solve-console" {
                         sim.dev_console_poke(me, near, None, true);
+                        return;
+                    }
+                    if let Some(kind) = a.strip_prefix("console-game=") {
+                        if let Some(kind) = lt_sim::minigame::MinigameKind::ALL
+                            .into_iter()
+                            .find(|k| k.id() == kind)
+                        {
+                            sim.dev_console_game(near, kind);
+                        }
                         return;
                     }
                     if a.starts_with("console-hint") {
