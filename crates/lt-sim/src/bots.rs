@@ -3392,7 +3392,8 @@ mod tests {
         }
         let avg = total.as_secs_f32() * 1000.0 / 20.0;
         println!("bot graph: {avg:.1} ms per arena");
-        let limit = if cfg!(debug_assertions) { 400.0 } else { 40.0 };
+        // Loose: shared CI runners are several times slower than a desktop (~12 ms here).
+        let limit = if cfg!(debug_assertions) { 400.0 } else { 150.0 };
         assert!(avg < limit, "{avg} ms");
     }
 
