@@ -872,6 +872,29 @@ pub enum SimEvent {
         team: Team,
         pos: Vec3,
     },
+    /// A console's puzzle element clicked by `by`: what it did (`slide`; `pos`: the middle of
+    /// the console's first puzzle).
+    ConsolePoked {
+        console: u8,
+        element: u8,
+        by: PlayerId,
+        slide: PuzzleSlide,
+        pos: Vec3,
+    },
+    /// A console's puzzle solved by `by` (of `team`): it does what its `kind` does; a new
+    /// puzzle is set.
+    ConsoleSolved {
+        console: u8,
+        kind: crate::console::ConsoleKind,
+        by: PlayerId,
+        team: Team,
+        pos: Vec3,
+    },
+    /// A console done resting: its puzzle can be clicked again.
+    ConsoleReady {
+        console: u8,
+        pos: Vec3,
+    },
     /// A turret box's lid opening or closing, and its turret rising out or folding away.
     BoxLid {
         turret_box: u8,

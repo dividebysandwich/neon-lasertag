@@ -1,0 +1,496 @@
+//! Consoles (lt_sim::console): a black pedestal with neon edges (white while it works for
+//! nobody, then in its team's colour), a hologram of what it does turning over it, and on its
+//! faces a click puzzle (lt_sim::minigame) drawn from the snapshot's seed and state. The
+//! puzzles glow on their own (fixed neon, not the arena's dimmable lighting), so they read in a
+//! blackout too. While a console rests (no clicks), its puzzle and hologram are dim.
+//!
+//! Clicking works as on the turret boxes (src/turretbox.rs: `ray_at`, `vr_touch`): a console's
+//! puzzle is `console::CONSOLE_POKE` plus its index in the clicks and in `PuzzleAim::hover`.
+
+use std::f32::consts::TAU;
+
+use bevy::prelude::*;
+use lt_sim::SimEvent;
+use lt_sim::console::{CONSOLE_H, CONSOLE_HALF, ConsoleDef, ConsoleKind, PanelFrame};
+use lt_sim::minigame::Minigame;
+
+use crate::arena::ArenaPart;
+use crate::game::{Game, GameEvent};
+use crate::materials::{AccentMaterial, NeonUniform, Palette, team_color};
+use crate::turretbox::{PIECE_COLORS, PuzzleAim, Puzzles};
+
+pub struct ConsolePlugin;
+
+impl Plugin for ConsolePlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Update,
+            (on_events, animate)
+                .chain()
+                .in_set(crate::game::DrawSet)
+                .run_if(resource_exists::<Game>),
+        );
+    }
+}
+
+/// How fast sliding pieces glide (cells a second).
+const GLIDE: f32 = 9.0;
+const STUCK: Vec3 = Vec3::new(1.0, 0.1, 0.05);
+const DARK: Vec3 = Vec3::new(0.05, 0.05, 0.06);
+
+/// The colour of what a console does (its hologram).
+pub fn kind_color(kind: ConsoleKind) -> Vec3 {
+    match kind {
+        ConsoleKind::Vault => Vec3::new(1.0, 0.75, 0.1),
+    }
+}
+
+/// The banner for solving a console of `kind`: its title and what it did.
+pub fn solved_banner(kind: ConsoleKind) -> (&'static str, &'static str) {
+    match kind {
+        ConsoleKind::Vault => (
+            "SUPPLY VAULT CRACKED",
+            "A SPECIAL WEAPON IS YOURS - IT RESETS FOR A MINUTE",
+        ),
+    }
+}
+
+#[derive(Component)]
+struct ConsoleView {
+    k: usize,
+    trim: Handle<AccentMaterial>,
+    icon: Entity,
+    icon_mat: Handle<AccentMaterial>,
+    /// Along the top's edges: bars filling up while it resets (hidden while it can be
+    /// solved).
+    charge: Vec<Entity>,
+    charge_mat: Handle<AccentMaterial>,
+    /// The puzzle shown (its seed), its root on each face and its elements.
+    seed: Option<u32>,
+    roots: Vec<Entity>,
+    elems: Vec<ElemView>,
+}
+
+struct ElemView {
+    /// Its root on each face.
+    roots: Vec<Entity>,
+    mat: Handle<AccentMaterial>,
+    color: Vec3,
+    /// How far it's shown along its way (sliding: cells out), and the red flash after a
+    /// blocked click.
+    shown: f32,
+    flash: f32,
+}
+
+fn accent(accents: &mut Assets<AccentMaterial>, c: Vec3, i: f32) -> Handle<AccentMaterial> {
+    accents.add(AccentMaterial {
+        overlay: false,
+        neon: NeonUniform::fixed(c, i),
+    })
+}
+
+/// A console's puzzles (as the sim has them) for the level and rules in play.
+pub fn defs(game: &Game) -> Vec<ConsoleDef> {
+    lt_sim::console::console_defs(&game.level, &game.rules)
+}
+
+/// Spawns the consoles of the match in play (as parts of the arena).
+pub fn spawn(
+    commands: &mut Commands,
+    game: &Game,
+    palette: &Palette,
+    meshes: &mut Assets<Mesh>,
+    accents: &mut Assets<AccentMaterial>,
+) {
+    let defs = defs(game);
+    let w = 2.0 * CONSOLE_HALF;
+    let body = meshes.add(Cuboid::new(w - 0.1, CONSOLE_H - 0.06, w - 0.1));
+    let cap = meshes.add(Cuboid::new(w, 0.06, w));
+    let post = meshes.add(Cuboid::new(0.035, CONSOLE_H, 0.035));
+    let rim_x = meshes.add(Cuboid::new(w, 0.03, 0.035));
+    let rim_z = meshes.add(Cuboid::new(0.035, 0.03, w));
+    let vault = meshes.add(Cuboid::new(0.28, 0.2, 0.2));
+    let vault_band = meshes.add(Cuboid::new(0.3, 0.035, 0.22));
+    let charge_bar = meshes.add(Cuboid::new(1.0, 0.03, 0.03));
+    for (k, d) in defs.iter().enumerate() {
+        let trim = accent(accents, Vec3::ONE, 4.0);
+        let icon_mat = accent(accents, kind_color(d.kind), 4.0);
+        let root = commands
+            .spawn((
+                ArenaPart,
+                Transform::from_translation(d.pos),
+                Visibility::default(),
+                Name::new("console"),
+            ))
+            .id();
+        let part = |commands: &mut Commands, mesh: &Handle<Mesh>, mat, t: Transform| {
+            commands.spawn((Mesh3d(mesh.clone()), mat, t, ChildOf(root)));
+        };
+        // (Wall panels, the secondary targets', have no pedestal.)
+        let pedestal = d.nfaces == 2;
+        if pedestal {
+            part(
+                commands,
+                &body,
+                MeshMaterial3d(palette.body.clone()),
+                Transform::from_xyz(0.0, (CONSOLE_H - 0.06) / 2.0, 0.0),
+            );
+            commands.spawn((
+                Mesh3d(cap.clone()),
+                MeshMaterial3d(palette.suit.clone()),
+                Transform::from_xyz(0.0, CONSOLE_H - 0.03, 0.0),
+                ChildOf(root),
+            ));
+            let o = CONSOLE_HALF - 0.04;
+            for (sx, sz) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+                commands.spawn((
+                    Mesh3d(post.clone()),
+                    MeshMaterial3d(trim.clone()),
+                    Transform::from_xyz(sx * o, CONSOLE_H / 2.0, sz * o),
+                    ChildOf(root),
+                ));
+            }
+            for y in [0.03, CONSOLE_H - 0.07] {
+                for s in [-1.0, 1.0] {
+                    commands.spawn((
+                        Mesh3d(rim_x.clone()),
+                        MeshMaterial3d(trim.clone()),
+                        Transform::from_xyz(0.0, y, s * (o + 0.02)),
+                        ChildOf(root),
+                    ));
+                    commands.spawn((
+                        Mesh3d(rim_z.clone()),
+                        MeshMaterial3d(trim.clone()),
+                        Transform::from_xyz(s * (o + 0.02), y, 0.0),
+                        ChildOf(root),
+                    ));
+                }
+            }
+        }
+        // The hologram over it.
+        let icon = commands
+            .spawn((
+                Transform::from_xyz(0.0, CONSOLE_H + 0.45, 0.0),
+                Visibility::default(),
+                ChildOf(root),
+            ))
+            .id();
+        let icon_part = |commands: &mut Commands, mesh: &Handle<Mesh>, t: Transform| {
+            commands.spawn((
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(icon_mat.clone()),
+                t,
+                ChildOf(icon),
+            ));
+        };
+        match d.kind {
+            ConsoleKind::Vault => {
+                icon_part(commands, &vault, Transform::IDENTITY);
+                for y in [-0.07, 0.07] {
+                    icon_part(commands, &vault_band, Transform::from_xyz(0.0, y, 0.0));
+                }
+            }
+        }
+        if !pedestal {
+            commands.entity(icon).insert(Visibility::Hidden);
+        }
+        // The reset bars: along the top's +z and -z edges, over the puzzles.
+        let charge_mat = accent(accents, kind_color(d.kind), 3.0);
+        let charge: Vec<Entity> = if pedestal {
+            [1.0, -1.0]
+                .map(|s| {
+                    commands
+                        .spawn((
+                            Mesh3d(charge_bar.clone()),
+                            MeshMaterial3d(charge_mat.clone()),
+                            Transform::from_xyz(0.0, CONSOLE_H + 0.02, s * (CONSOLE_HALF - 0.05)),
+                            Visibility::Hidden,
+                            ChildOf(root),
+                        ))
+                        .id()
+                })
+                .to_vec()
+        } else {
+            Vec::new()
+        };
+        commands.entity(root).insert(ConsoleView {
+            k,
+            trim,
+            icon,
+            icon_mat,
+            charge,
+            charge_mat,
+            seed: None,
+            roots: Vec::new(),
+            elems: Vec::new(),
+        });
+    }
+}
+
+/// A transform at `p` on `frame` (the face's own way round: +z out of it).
+fn on_face(frame: &PanelFrame, p: Vec3) -> Transform {
+    let rot = Quat::from_mat3(&Mat3::from_cols(frame.right, frame.up, frame.normal));
+    Transform::from_translation(p).with_rotation(rot)
+}
+
+/// A new puzzle on every face of console `d` (children of `root`, which stands at `d.pos`):
+/// each face's root, and the elements.
+#[allow(clippy::too_many_arguments)]
+fn spawn_puzzle(
+    commands: &mut Commands,
+    root: Entity,
+    d: &ConsoleDef,
+    game: &Minigame,
+    palette: &Palette,
+    meshes: &mut Assets<Mesh>,
+    accents: &mut Assets<AccentMaterial>,
+    trim: &Handle<AccentMaterial>,
+) -> (Vec<Entity>, Vec<ElemView>) {
+    let (n, cell) = (game.n(), game.cell());
+    let ext = game.extent();
+    let span = (ext.end - ext.start) as f32 * cell;
+    let square = n as f32 * cell;
+    let plate = meshes.add(Cuboid::new(span + 0.04, span + 0.04, 0.01));
+    let frame_h = meshes.add(Cuboid::new(square + 0.03, 0.015, 0.012));
+    let frame_v = meshes.add(Cuboid::new(0.015, square + 0.03, 0.012));
+    let tile = meshes.add(Cuboid::new(cell - 0.018, cell - 0.018, 0.02));
+    let bridge_x = meshes.add(Cuboid::new(0.022, (cell - 0.018) * 0.6, 0.016));
+    let bridge_y = meshes.add(Cuboid::new((cell - 0.018) * 0.6, 0.022, 0.016));
+    let mut roots = Vec::new();
+    let mut elems: Vec<ElemView> = (0..game.elements())
+        .map(|j| {
+            let color = PIECE_COLORS[j % PIECE_COLORS.len()];
+            ElemView {
+                roots: Vec::new(),
+                mat: accent(accents, color, 1.2),
+                color,
+                shown: 0.0,
+                flash: 0.0,
+            }
+        })
+        .collect();
+    for f in d.faces() {
+        // The face's root: on the face, its own axes (cells along x and y, out along z).
+        let mid = f.cell_pos(n, cell, (n as f32 - 1.0) / 2.0, (n as f32 - 1.0) / 2.0);
+        let face_root = commands
+            .spawn((
+                on_face(f, mid - d.pos),
+                Visibility::default(),
+                ChildOf(root),
+            ))
+            .id();
+        roots.push(face_root);
+        let span_mid = (ext.start + ext.end) as f32 / 2.0 - n as f32 / 2.0;
+        commands.spawn((
+            Mesh3d(plate.clone()),
+            MeshMaterial3d(palette.suit.clone()),
+            Transform::from_xyz(span_mid * cell, span_mid * cell, 0.005),
+            ChildOf(face_root),
+        ));
+        let half = square / 2.0 + 0.008;
+        for s in [-1.0, 1.0] {
+            commands.spawn((
+                Mesh3d(frame_h.clone()),
+                MeshMaterial3d(trim.clone()),
+                Transform::from_xyz(0.0, s * half, 0.012),
+                ChildOf(face_root),
+            ));
+            commands.spawn((
+                Mesh3d(frame_v.clone()),
+                MeshMaterial3d(trim.clone()),
+                Transform::from_xyz(s * half, 0.0, 0.012),
+                ChildOf(face_root),
+            ));
+        }
+        // A cell's middle on the face root, from the square's middle.
+        let at = |c: f32, r: f32| {
+            Vec3::new(
+                (c + 0.5 - n as f32 / 2.0) * cell,
+                (r + 0.5 - n as f32 / 2.0) * cell,
+                0.0,
+            )
+        };
+        match game {
+            Minigame::Slide(p) => {
+                for (e, q) in elems.iter_mut().zip(&p.pieces) {
+                    let r = commands
+                        .spawn((
+                            Transform::IDENTITY,
+                            Visibility::default(),
+                            ChildOf(face_root),
+                        ))
+                        .id();
+                    for &(c, row) in &q.cells {
+                        let pos = at(c as f32, row as f32) + Vec3::Z * 0.014;
+                        commands.spawn((
+                            Mesh3d(tile.clone()),
+                            MeshMaterial3d(e.mat.clone()),
+                            Transform::from_translation(pos),
+                            ChildOf(r),
+                        ));
+                        for (dc, dr, mesh) in [(1, 0, &bridge_x), (0, 1, &bridge_y)] {
+                            if q.cells.contains(&(c + dc, row + dr)) {
+                                let off = Vec3::new(dc as f32, dr as f32, 0.0) * cell / 2.0;
+                                commands.spawn((
+                                    Mesh3d(mesh.clone()),
+                                    MeshMaterial3d(e.mat.clone()),
+                                    Transform::from_translation(pos + off),
+                                    ChildOf(r),
+                                ));
+                            }
+                        }
+                    }
+                    e.roots.push(r);
+                    e.shown = q.out as f32;
+                }
+            }
+        }
+    }
+    (roots, elems)
+}
+
+fn on_events(mut events: MessageReader<GameEvent>, mut views: Query<&mut ConsoleView>) {
+    for GameEvent(e) in events.read() {
+        if let SimEvent::ConsolePoked {
+            console,
+            element,
+            slide: lt_sim::PuzzleSlide::Stuck | lt_sim::PuzzleSlide::Blocked,
+            ..
+        } = *e
+        {
+            for mut v in views.iter_mut().filter(|v| v.k == console as usize) {
+                if let Some(p) = v.elems.get_mut(element as usize) {
+                    p.flash = 1.0;
+                }
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn animate(
+    mut commands: Commands,
+    time: Res<Time>,
+    game: Res<Game>,
+    aim: Res<PuzzleAim>,
+    palette: Res<Palette>,
+    mut puzzles: ResMut<Puzzles>,
+    mut views: Query<(Entity, &mut ConsoleView)>,
+    mut transforms: Query<&mut Transform>,
+    mut shown: Query<&mut Visibility>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut accents: ResMut<Assets<AccentMaterial>>,
+) {
+    if views.is_empty() {
+        return;
+    }
+    let defs = defs(&game);
+    let t = time.elapsed_secs();
+    let dt = time.delta_secs();
+    for (root, mut v) in &mut views {
+        let k = v.k;
+        let (Some(d), Some(s)) = (defs.get(k), game.snap.consoles.get(k)) else {
+            continue;
+        };
+        if v.seed != Some(s.seed) {
+            for r in v.roots.drain(..) {
+                commands.entity(r).despawn();
+            }
+            let g = puzzles.game(s.seed).clone();
+            let trim = v.trim.clone();
+            let (roots, elems) = spawn_puzzle(
+                &mut commands,
+                root,
+                d,
+                &g,
+                &palette,
+                &mut meshes,
+                &mut accents,
+                &trim,
+            );
+            v.roots = roots;
+            v.elems = elems;
+            v.seed = Some(s.seed);
+        }
+        let open = s.open();
+        // Resetting: the bars fill up from the middle.
+        let rest = d.kind.rest().max(0.1);
+        let full = (1.0 - s.cooldown / rest).clamp(0.0, 1.0);
+        for &e in &v.charge {
+            if let Ok(mut vis) = shown.get_mut(e) {
+                vis.set_if_neq(if open {
+                    Visibility::Hidden
+                } else {
+                    Visibility::Inherited
+                });
+            }
+            if let Ok(mut tr) = transforms.get_mut(e) {
+                tr.scale.x = (2.0 * CONSOLE_HALF - 0.1) * full.max(0.01);
+            }
+        }
+        if let Some(mut m) = accents.get_mut(&v.charge_mat) {
+            m.neon.color = kind_color(d.kind).extend(2.0 + 1.5 * (t * 4.0).sin().abs());
+        }
+        let color = team_color(s.owner);
+        let breathe = 0.8 + 0.2 * (t * 2.5 + k as f32).sin();
+        if let Some(mut m) = accents.get_mut(&v.trim) {
+            m.neon.color = color.extend(if open { 4.0 * breathe } else { 1.2 });
+        }
+        // The hologram: turning, bobbing, bright while it works or can be solved.
+        if let Ok(mut tr) = transforms.get_mut(v.icon) {
+            tr.translation.y = CONSOLE_H + 0.45 + 0.04 * (t * 1.7 + k as f32).sin();
+            tr.rotation = Quat::from_rotation_y((t * 0.9 + k as f32) % TAU);
+        }
+        if let Some(mut m) = accents.get_mut(&v.icon_mat) {
+            let c = match s.owner {
+                Some(team) if s.active > 0.0 => team_color(Some(team)),
+                _ => kind_color(d.kind),
+            };
+            m.neon.color = if open || s.active > 0.0 {
+                c.extend(4.0 + 1.5 * (t * 3.0).sin())
+            } else {
+                c.extend(0.6)
+            };
+        }
+        let g = puzzles.game(s.seed).clone();
+        let poke = (lt_sim::console::CONSOLE_POKE as usize + k, 0);
+        for (j, e) in v.elems.iter_mut().enumerate() {
+            let state = s.state.get(j).copied().unwrap_or(0);
+            e.flash = (e.flash - dt * 2.5).max(0.0);
+            let mut lit = 1.0;
+            match &g {
+                Minigame::Slide(p) => {
+                    let q = &p.pieces[j.min(p.pieces.len() - 1)];
+                    let want = state as f32;
+                    let dd = want - e.shown;
+                    e.shown += dd.signum() * dd.abs().min(GLIDE * dt);
+                    let (dc, dr) = q.outward();
+                    let off = Vec3::new(dc as f32, dr as f32, 0.0) * e.shown * g.cell();
+                    for &r in &e.roots {
+                        if let Ok(mut tr) = transforms.get_mut(r) {
+                            tr.translation = off;
+                        }
+                    }
+                    if want == 0.0 {
+                        lit = 1.6;
+                    }
+                }
+            }
+            let hover = aim.hover.contains(&(poke.0, j));
+            if let Some(mut m) = accents.get_mut(&e.mat) {
+                let mut c = e.color;
+                let mut i = lit;
+                if !open {
+                    c = c.lerp(DARK, 0.5);
+                    i *= 0.35;
+                } else if hover {
+                    c = c.lerp(Vec3::ONE, 0.35);
+                    i = 3.5 + 0.8 * (t * 10.0).sin();
+                }
+                c = c.lerp(STUCK, e.flash);
+                i += e.flash * 3.0;
+                m.neon.color = c.extend(i);
+            }
+        }
+    }
+}

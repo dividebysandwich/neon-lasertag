@@ -893,12 +893,13 @@ enum Errand {
         node: usize,
         pos: Vec3,
     },
-    /// Solving turret box `k`'s puzzle (standing at `pos`, in front of one side) to have its
-    /// turret for the team.
+    /// Solving a puzzle (`k` as `PlayerCmd::poke` has it: a turret box's, or a console's from
+    /// `console::CONSOLE_POKE` on), standing at `pos` in front of it, looking at `at`.
     Puzzle {
-        k: usize,
+        k: u8,
         node: usize,
         pos: Vec3,
+        at: Vec3,
     },
 }
 
@@ -1614,7 +1615,9 @@ impl Bot {
                     || self.errand_time > 15.0
             }
             Some(Errand::Puzzle { k, .. }) => {
-                !Self::wants_box(sim, p, k) || self.errand_time > PUZZLE_TIME
+                !Self::wants_puzzle(sim, p, k)
+                    || self.errand_time > PUZZLE_TIME
+                    || k >= crate::console::CONSOLE_POKE && !self.free_for_consoles()
             }
             None => false,
         };
@@ -1680,32 +1683,87 @@ impl Bot {
                     .filter(|o| o.id != p.id && o.team == p.team && o.alive())
                     .map(|o| o.feet)
                     .collect();
-                let best = sim
+                // (Each puzzle: its click index, where it stands, and its faces.)
+                let boxes = sim
                     .level
                     .boxes
                     .iter()
                     .enumerate()
-                    .filter(|&(k, b)| {
-                        Self::wants_box(sim, p, k)
-                            && b.pos.distance(p.feet) < PUZZLE_SIGHT
+                    .map(|(k, b)| (k as u8, b.pos, vec![b.frame(0), b.frame(1)]));
+                let free = self.free_for_consoles();
+                let consoles =
+                    sim.console_defs()
+                        .iter()
+                        .enumerate()
+                        .filter(|_| free)
+                        .map(|(k, d)| {
+                            (
+                                crate::console::CONSOLE_POKE + k as u8,
+                                d.pos,
+                                d.faces().to_vec(),
+                            )
+                        });
+                let best = boxes
+                    .chain(consoles)
+                    .filter(|(k, at, _)| {
+                        Self::wants_puzzle(sim, p, *k)
+                            && at.distance(p.feet) < PUZZLE_SIGHT
                             // (Attackers on their way leave their own half's to the others.)
-                            && (self.role != Role::Offense || Team::of_z(b.pos.z) != p.team)
-                            && !mates.iter().any(|m| m.distance(b.pos) < 2.5)
+                            && (self.role != Role::Offense || Team::of_z(at.z) != p.team)
+                            && !mates.iter().any(|m| m.distance(*at) < 2.5)
                     })
-                    .filter_map(|(k, b)| {
-                        let n = if p.feet.z >= b.pos.z { 1.0 } else { -1.0 };
-                        let pos = b.pos + Vec3::Z * n * (crate::level::BOX_HALF + 0.55);
+                    .filter_map(|(k, at, faces)| {
+                        // The side towards the bot.
+                        let f = faces.iter().min_by(|a, b| {
+                            a.centre
+                                .distance(p.feet)
+                                .total_cmp(&b.centre.distance(p.feet))
+                        })?;
+                        let mut pos = f.centre + f.normal * 0.55;
+                        pos.y = at.y;
                         let node = sim.level.nav.node_at(pos)?;
-                        g.connected(here, node)
-                            .then_some((b.pos.distance(p.feet), k, node, pos))
+                        g.connected(here, node).then_some((
+                            at.distance(p.feet),
+                            k,
+                            node,
+                            pos,
+                            f.centre,
+                        ))
                     })
                     .min_by(|a, b| a.0.total_cmp(&b.0));
-                if let Some((_, k, node, pos)) = best {
-                    self.set_errand(Errand::Puzzle { k, node, pos });
+                if let Some((_, k, node, pos, at)) = best {
+                    self.set_errand(Errand::Puzzle { k, node, pos, at });
                     self.poke_t = 1.0;
                 }
             }
         }
+    }
+
+    /// Whether the plan leaves time for a console's puzzle (not while pushing in, answering an
+    /// alarm or going for the megatarget or a prism).
+    fn free_for_consoles(&self) -> bool {
+        matches!(self.plan, Plan::Hold | Plan::Engage)
+    }
+
+    /// Whether puzzle `k` (as `Errand::Puzzle`) is worth solving for `p`.
+    fn wants_puzzle(sim: &Sim, p: &Player, k: u8) -> bool {
+        match k.checked_sub(crate::console::CONSOLE_POKE) {
+            Some(c) => Self::wants_console(sim, p, c as usize),
+            None => Self::wants_box(sim, p, k as usize),
+        }
+    }
+
+    /// Whether console `c`'s puzzle is worth solving for `p`: it can be clicked now, and what
+    /// it does helps.
+    fn wants_console(sim: &Sim, p: &Player, c: usize) -> bool {
+        let (Some(def), Some(st)) = (sim.console_defs().get(c), sim.consoles.get(c)) else {
+            return false;
+        };
+        st.open()
+            && match def.kind {
+                // (Not with a special weapon in hand already.)
+                crate::console::ConsoleKind::Vault => p.weapon == crate::types::Weapon::Blaster,
+            }
     }
 
     /// Whether box `k`'s puzzle is worth solving for `p`: its turret doesn't work (nor is about
@@ -2352,11 +2410,10 @@ impl Bot {
     /// Where to look with nothing to shoot.
     fn look_dir(&self, sim: &Sim, p: &Player, move_dir: Vec2, now: f64) -> Vec3 {
         let eye = p.eye();
-        if let Some(Errand::Puzzle { k, pos, .. }) = self.errand
+        if let Some(Errand::Puzzle { pos, at, .. }) = self.errand
             && Vec2::new(pos.x - p.feet.x, pos.z - p.feet.z).length() < 1.0
-            && let Some(b) = sim.level.boxes.get(k)
         {
-            return (b.panel(if pos.z > b.pos.z { 0 } else { 1 }).0 - eye).normalize_or(self.aim);
+            return (at - eye).normalize_or(self.aim);
         }
         if let Some((pt, _)) = self.alert {
             return (pt - eye).normalize_or(self.aim);
@@ -2797,11 +2854,19 @@ impl Controller for Bot {
             self.poke_t -= TICK;
             if self.poke_t <= 0.0 {
                 self.poke_t = self.rng.random_range(0.6..1.2) * (1.4 - 0.6 * self.skill);
-                if let Some(s) = sim.boxes.get(k)
-                    && let Some(j) = s.puzzle.hint(&s.pieces)
-                {
+                let hint = match k.checked_sub(crate::console::CONSOLE_POKE) {
+                    Some(c) => sim
+                        .consoles
+                        .get(c as usize)
+                        .and_then(|s| s.game.hint(&s.state)),
+                    None => sim
+                        .boxes
+                        .get(k as usize)
+                        .and_then(|s| s.puzzle.hint(&s.pieces)),
+                };
+                if let Some(j) = hint {
                     self.pokes = self.pokes.wrapping_add(1);
-                    self.poke = (k as u8, j as u8);
+                    self.poke = (k, j as u8);
                 }
             }
         }
@@ -3255,7 +3320,7 @@ mod tests {
     fn attackers_group_up_before_pushing() {
         // When the attackers get into the enemy half, team play on and off.
         let (mut with, mut without) = (Vec::new(), Vec::new());
-        for seed in 1..=6 {
+        for seed in 1..=12 {
             let a = crossings(seed, true);
             let b = crossings(seed, false);
             println!("seed {seed}: together {a:?}, alone {b:?}");
@@ -3266,9 +3331,12 @@ mod tests {
         // lone push after the timeout can happen when the others are busy elsewhere).
         let close = |runs: &[Vec<f32>]| runs.iter().filter(|t| t[1] - t[0] < 1.5).count();
         let (c_with, c_without) = (close(&with), close(&without));
-        println!("first two together in {c_with} of 6 arenas with team play, {c_without} without");
+        let n = with.len();
+        println!(
+            "first two together in {c_with} of {n} arenas with team play, {c_without} without"
+        );
         assert!(
-            c_with >= 4 && c_with >= c_without + 3,
+            c_with * 3 >= n * 2 && c_with >= c_without + 5,
             "together {c_with}, alone {c_without}"
         );
     }
@@ -3459,6 +3527,40 @@ mod tests {
         println!("solved {solved}, turrets off {off}, tagged out by turrets {turret_tags}");
         assert!(solved >= 3, "solved {solved}");
         assert!(off >= 1, "turrets off {off}");
+    }
+
+    #[test]
+    fn bots_solve_consoles() {
+        let mut solved: std::collections::HashMap<crate::console::ConsoleKind, u32> =
+            Default::default();
+        for seed in 1..=3 {
+            let mut sim = Sim::new(
+                seed,
+                Rules {
+                    arena: level::ArenaSize::Large,
+                    ..Rules::default()
+                },
+            );
+            assert!(!sim.console_defs().is_empty(), "seed {seed}: no consoles");
+            let mut bots = Bots::default();
+            bots.fill(&mut sim, 8, 0.6);
+            for _ in 0..(180.0 / TICK) as usize {
+                bots.think(&mut sim);
+                sim.step();
+                for e in sim.drain_events() {
+                    if let SimEvent::ConsoleSolved { kind, .. } = e {
+                        *solved.entry(kind).or_default() += 1;
+                    }
+                }
+            }
+        }
+        println!("consoles solved {solved:?}");
+        for kind in crate::console::ConsoleKind::PEDESTALS {
+            assert!(
+                solved.get(&kind).copied().unwrap_or(0) >= 1,
+                "{kind:?}: {solved:?}"
+            );
+        }
     }
 
     #[test]

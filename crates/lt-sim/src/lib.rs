@@ -4,9 +4,11 @@
 
 pub mod bots;
 pub mod collide;
+pub mod console;
 pub mod hitbox;
 pub mod kit;
 pub mod level;
+pub mod minigame;
 pub mod puzzle;
 pub mod rules;
 pub mod shot;

@@ -18,7 +18,9 @@
 use std::f32::consts::PI;
 
 use bevy::prelude::*;
+use lt_sim::console::CONSOLE_POKE;
 use lt_sim::level::{BOX_H, BOX_HALF, BOX_HEAD, Level, PUZZLE_CELL, TurretBox};
+use lt_sim::minigame::Minigame;
 use lt_sim::puzzle::{DEPTH, N, Puzzle};
 use lt_sim::sim::{BoxPhase, BoxSnap, POKE_REACH, box_motion, look_rot};
 use lt_sim::{Hand, SimEvent};
@@ -39,7 +41,7 @@ const CLICK_REACH: f32 = 2.6;
 /// How fast the pieces glide (cells a second).
 const GLIDE: f32 = 9.0;
 /// The pieces' colours, by their number.
-const PIECE_COLORS: [Vec3; 8] = [
+pub const PIECE_COLORS: [Vec3; 8] = [
     Vec3::new(0.1, 0.9, 1.0),
     Vec3::new(1.0, 0.2, 0.85),
     Vec3::new(1.0, 0.85, 0.1),
@@ -68,8 +70,8 @@ impl Plugin for TurretBoxPlugin {
     }
 }
 
-/// What the local player points at: the pieces under the crosshair or the fingertips (box,
-/// piece), and per hand (VR) whether it points.
+/// What the local player points at: the pieces under the crosshair or the fingertips (box, or
+/// `CONSOLE_POKE` plus a console; piece), and per hand (VR) whether it points.
 #[derive(Resource, Default)]
 pub struct PuzzleAim {
     pub hover: Vec<(usize, usize)>,
@@ -78,11 +80,26 @@ pub struct PuzzleAim {
     pub ray: [Option<(Vec3, Vec3)>; 2],
 }
 
-/// The puzzles of the seeds in play (made again from a seed only when it changes).
+/// The puzzles of the seeds in play (made again from a seed only when it changes): the turret
+/// boxes', and the consoles'.
 #[derive(Resource, Default)]
-pub struct Puzzles(Vec<(u32, Puzzle)>);
+pub struct Puzzles(Vec<(u32, Puzzle)>, Vec<(u32, Minigame)>);
 
 impl Puzzles {
+    pub fn game(&mut self, seed: u32) -> &Minigame {
+        let i = match self.1.iter().position(|p| p.0 == seed) {
+            Some(i) => i,
+            None => {
+                if self.1.len() >= 32 {
+                    self.1.remove(0);
+                }
+                self.1.push((seed, Minigame::generate(seed)));
+                self.1.len() - 1
+            }
+        };
+        &self.1[i].1
+    }
+
     pub fn get(&mut self, seed: u32) -> &Puzzle {
         let i = match self.0.iter().position(|p| p.0 == seed) {
             Some(i) => i,
@@ -127,7 +144,8 @@ fn cell_on(b: &TurretBox, face: usize, p: Vec3) -> Option<(i8, i8)> {
 }
 
 /// Flat screen: the puzzle under the crosshair (from the eyes at `eye` looking along `dir`),
-/// within reach of the player's feet: its box, and the piece there if any.
+/// within reach of the player's feet: its box (or `CONSOLE_POKE` plus its console), and the
+/// piece there if any.
 pub fn aim_at(
     game: &Game,
     puzzles: &mut Puzzles,
@@ -174,6 +192,36 @@ fn ray_at(
             }
             let piece = puzzles.get(s.seed).piece_at(&s.pieces, c, r);
             best = Some((t, p, k, piece));
+        }
+    }
+    // The consoles' puzzles.
+    for (k, (d, s)) in crate::consoles::defs(game)
+        .iter()
+        .zip(&game.snap.consoles)
+        .enumerate()
+    {
+        if !s.open() || !d.in_reach(feet) {
+            continue;
+        }
+        let g = puzzles.game(s.seed);
+        let (n, cell, ext) = (g.n(), g.cell(), g.extent());
+        for f in d.faces() {
+            let Some((t, p)) = f.ray(from, dir, reach) else {
+                continue;
+            };
+            if best.is_some_and(|x| x.0 < t) {
+                continue;
+            }
+            let (c, r) = f.cell_at(n, cell, p);
+            let lim = ext.start as f32..ext.end as f32;
+            if !lim.contains(&c) || !lim.contains(&r) {
+                continue;
+            }
+            if game.world.ray(from, p).is_some_and(|h| h.0 * t < t - 0.05) {
+                continue;
+            }
+            let piece = g.element_at(&s.state, c.floor() as i8, r.floor() as i8);
+            best = Some((t, p, CONSOLE_POKE as usize + k, piece));
         }
     }
     best.map(|(_, p, k, piece)| (p, k, piece))

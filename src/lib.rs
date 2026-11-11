@@ -22,6 +22,7 @@ pub mod ambience;
 pub mod arena;
 pub mod assets;
 pub mod audio;
+pub mod consoles;
 pub mod desktop;
 pub mod endscreen;
 pub mod eyes;
@@ -378,6 +379,7 @@ pub fn run() {
         turretbox::TurretBoxPlugin,
         features::FeaturesPlugin,
     ))
+    .add_plugins(consoles::ConsolePlugin)
     .insert_resource(ClearColor(Color::linear_rgb(0.002, 0.002, 0.006)))
     .insert_resource(GlobalAmbientLight {
         color: Color::linear_rgb(0.6, 0.65, 1.0),
@@ -631,6 +633,7 @@ fn build_arena(
         &mut meshes,
         &mut accents,
     );
+    consoles::spawn(&mut commands, &game, &palette, &mut meshes, &mut accents);
     features::spawn(
         &mut commands,
         &game.level,

@@ -2772,6 +2772,16 @@ pub fn mega_banner_for(e: &SimEvent, game: &Game) -> Option<Banner> {
             neonui::AMBER,
             true,
         )),
+        // Consoles: one's own solve.
+        SimEvent::ConsoleSolved { by, kind, team, .. } if by == me => {
+            let (title, sub) = crate::consoles::solved_banner(kind);
+            Some(banner(
+                title,
+                sub.to_string(),
+                crate::endscreen::team_ui_color(Some(team)),
+                true,
+            ))
+        }
         SimEvent::MegaHit { by, .. } if by == me => Some(banner(
             "MEGATARGET HIT",
             "".to_string(),

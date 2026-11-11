@@ -169,11 +169,9 @@ impl Sim {
             .collect();
     }
 
-    /// Once a tick: the players' clicks, then the boxes' lids and turrets.
-    pub(super) fn step_boxes(&mut self) {
-        if self.boxes.is_empty() {
-            return;
-        }
+    /// Once a tick: the players' clicks, on the turret boxes' puzzles and the consoles'
+    /// (`console::CONSOLE_POKE`).
+    pub(super) fn step_pokes(&mut self) {
         for pi in 0..self.players.len() {
             let p = &mut self.players[pi];
             let n = p.cmd.pokes;
@@ -182,8 +180,20 @@ impl Sim {
                 continue;
             }
             let (k, piece) = p.cmd.poke;
-            self.poke(pi, k as usize, piece as usize);
+            if k >= crate::console::CONSOLE_POKE {
+                self.console_poke(
+                    pi,
+                    (k - crate::console::CONSOLE_POKE) as usize,
+                    piece as usize,
+                );
+            } else {
+                self.poke(pi, k as usize, piece as usize);
+            }
         }
+    }
+
+    /// Once a tick: the boxes' lids and turrets.
+    pub(super) fn step_boxes(&mut self) {
         for k in 0..self.boxes.len() {
             self.step_box(k);
         }

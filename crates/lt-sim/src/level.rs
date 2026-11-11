@@ -227,7 +227,7 @@ impl Dims {
     }
 
     /// The first row of Red's base (its spawn pads: `BASE_W` cells in a corner, rows base_row..h).
-    fn base_row(self) -> usize {
+    pub(crate) fn base_row(self) -> usize {
         self.h - 2
     }
 
@@ -352,6 +352,10 @@ pub enum Ground {
     Struct,
     /// A turret box (`Level::boxes`): solid, open on its +z and -z sides to solve its puzzle.
     Turret,
+    /// A console (`Level::consoles`): as a turret box, with a puzzle on its +z and -z sides.
+    Console {
+        kind: crate::console::ConsoleKind,
+    },
 }
 
 impl Ground {
@@ -502,7 +506,7 @@ impl Grid {
 
     // Setters writing Red's half and its mirror image in Blue's.
 
-    fn set_ground(&mut self, ix: usize, iz: usize, g: Ground) {
+    pub(crate) fn set_ground(&mut self, ix: usize, iz: usize, g: Ground) {
         let dm = self.dims;
         self.ground[dm.idx(ix, iz)] = g;
         let (mx, mz) = dm.mirror_cell(ix, iz);
@@ -806,6 +810,17 @@ impl TurretBox {
             self.pos + n * BOX_HALF + Vec3::Y * (BOX_H - 0.06 - span / 2.0),
             n,
         )
+    }
+
+    /// The puzzle on side `face` (as `panel`), as a console's (`console::PanelFrame`).
+    pub fn frame(&self, face: usize) -> crate::console::PanelFrame {
+        let (mid, n) = self.panel(face);
+        crate::console::PanelFrame {
+            centre: mid,
+            right: Vec3::X,
+            up: Vec3::Y,
+            normal: n,
+        }
     }
 
     /// Where on the box's side `face` the middle of cell (column, row) is (cells beside the
@@ -1329,6 +1344,9 @@ pub struct Level {
     pub prisms: Option<[Vec3; 2]>,
     /// The turret boxes, in mirrored pairs (`Ground::Turret` cells).
     pub boxes: Vec<TurretBox>,
+    /// The consoles, in mirrored pairs (`Ground::Console` cells).
+    #[serde(default)]
+    pub consoles: Vec<crate::console::Console>,
 }
 
 impl Level {
@@ -1395,6 +1413,13 @@ impl Level {
                         &movers,
                         boxes_per_half(size),
                         seed ^ attempt.rotate_left(17),
+                    );
+                    crate::console::place_consoles(
+                        &mut grid,
+                        &movers,
+                        crate::console::consoles_per_half(size),
+                        mode,
+                        seed ^ attempt.rotate_left(29),
                     );
                     let mirrors = place_mirrors(&grid, mode, &mut rng);
                     if mirrors.is_empty() {
@@ -3284,7 +3309,7 @@ fn place_movers(g: &mut Grid, nav: &Nav, rng: &mut ChaCha8Rng) -> Vec<Mover> {
 }
 
 /// Whether the cell is on one of `movers`' sliding panels' tracks.
-fn on_track(movers: &[Mover], dm: Dims, ix: usize, iz: usize) -> bool {
+pub(crate) fn on_track(movers: &[Mover], dm: Dims, ix: usize, iz: usize) -> bool {
     let c = dm.cell_centre(ix, iz);
     movers
         .iter()
@@ -3644,6 +3669,7 @@ fn build_level(seed: u64, g: Grid, nav: Nav, movers: Vec<Mover>, mode: GameMode)
     let mut spawns: [Vec<Spawn>; 2] = [Vec::new(), Vec::new()];
     let mut reloads = Vec::new();
     let mut boxes = Vec::new();
+    let mut consoles = Vec::new();
     let up = Vec3::Y * STOREY;
     for iz in 0..dm.h {
         for ix in 0..dm.w {
@@ -3670,6 +3696,7 @@ fn build_level(seed: u64, g: Grid, nav: Nav, movers: Vec<Mover>, mode: GameMode)
                 Ground::Reload => reloads.push(c),
                 Ground::Struct => {}
                 Ground::Turret => boxes.push(TurretBox { pos: c }),
+                Ground::Console { kind } => consoles.push(crate::console::Console { pos: c, kind }),
                 Ground::Pillar => pieces.push(PieceInstance {
                     kind: PieceKind::Pillar,
                     pos: c,
@@ -3862,6 +3889,10 @@ fn build_level(seed: u64, g: Grid, nav: Nav, movers: Vec<Mover>, mode: GameMode)
         let (min, max) = b.bounds();
         colliders.push(Collider::Box { min, max });
     }
+    for c in &consoles {
+        let (min, max) = c.bounds();
+        colliders.push(Collider::Box { min, max });
+    }
     for p in &g.structures {
         colliders.extend(p.colliders());
     }
@@ -3882,6 +3913,7 @@ fn build_level(seed: u64, g: Grid, nav: Nav, movers: Vec<Mover>, mode: GameMode)
         gates: Vec::new(),
         prisms: None,
         boxes,
+        consoles,
     }
 }
 
@@ -3924,6 +3956,7 @@ pub fn ascii(level: &Level) -> String {
                 Ground::Reload => 'R',
                 Ground::Struct => 'X',
                 Ground::Turret => 'B',
+                Ground::Console { .. } => 'C',
             });
         }
         s.push_str("   ");

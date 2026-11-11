@@ -22,9 +22,11 @@ use crate::shot::{BoltTarget, Contact, Gun, HitClaim, Shot, Trigger, bolt_contac
 use crate::types::*;
 
 mod boxes;
+mod consoles;
 pub use boxes::{
     BoxPhase, BoxSnap, BoxState, LID_TIME, POKE_REACH, RISE_TIME, box_motion, head_hit,
 };
+pub use consoles::{ConsoleSnap, ConsoleState, VAULT_KINDS};
 
 pub const TICK: f32 = 1.0 / 60.0;
 pub const MAX_PLAYERS: usize = 32;
@@ -616,6 +618,9 @@ pub struct Snapshot {
     /// The turret boxes (as `Level::boxes`).
     #[serde(default)]
     pub boxes: Vec<BoxSnap>,
+    /// The consoles (as `console::console_defs`).
+    #[serde(default)]
+    pub consoles: Vec<ConsoleSnap>,
     /// Barriers standing.
     pub barriers: Vec<Barrier>,
     /// Pulse sensors thrown.
@@ -783,6 +788,9 @@ pub struct Sim {
     pub turrets: Vec<TurretState>,
     /// The turret boxes (as `Level::boxes`).
     pub boxes: Vec<BoxState>,
+    /// The consoles' puzzles (as `console_defs`).
+    pub consoles: Vec<ConsoleState>,
+    console_defs: Arc<Vec<crate::console::ConsoleDef>>,
     /// Barriers standing.
     pub barriers: Vec<Barrier>,
     /// Pulse sensors thrown.
@@ -809,6 +817,8 @@ pub struct Sim {
     rng: ChaCha8Rng,
     /// The turret boxes' puzzles' seeds (apart, so the rest plays out as without them).
     box_rng: ChaCha8Rng,
+    /// The consoles' puzzles' seeds and what they lay out (apart, as `box_rng`).
+    console_rng: ChaCha8Rng,
     next_id: u32,
     /// Distance from a base to the far end, for the respawn time.
     max_dist: f32,
@@ -874,6 +884,8 @@ impl Sim {
                     .collect()
             }),
             boxes: Vec::new(),
+            consoles: Vec::new(),
+            console_defs: Arc::new(Vec::new()),
             barriers: Vec::new(),
             sensors: Vec::new(),
             decoys: Vec::new(),
@@ -889,6 +901,7 @@ impl Sim {
             events: Vec::new(),
             rng: ChaCha8Rng::seed_from_u64(level.seed ^ 0x5EED),
             box_rng: ChaCha8Rng::seed_from_u64(level.seed ^ 0xB0C5),
+            console_rng: ChaCha8Rng::seed_from_u64(level.seed ^ 0xC025),
             next_id: 1,
             max_dist,
             level,
@@ -896,6 +909,7 @@ impl Sim {
         let (lo, hi) = sim.rules.event_first;
         sim.next_event = sim.rng.random_range(lo..=hi.max(lo));
         sim.init_boxes();
+        sim.init_consoles();
         sim
     }
 
@@ -1181,7 +1195,9 @@ impl Sim {
         self.step_medbeams();
         self.step_gates();
         self.step_mega();
+        self.step_pokes();
         self.step_boxes();
+        self.step_consoles();
         self.step_bolts();
         self.step_grenades();
         self.step_barriers();
@@ -3635,6 +3651,7 @@ impl Sim {
                 })
                 .collect(),
             boxes: self.boxes.iter().map(|b| b.snap()).collect(),
+            consoles: self.consoles.iter().map(|c| c.snap()).collect(),
             barriers: self.barriers.clone(),
             sensors: self.sensors.clone(),
             decoys: self.decoys.iter().map(|d| d.snap()).collect(),

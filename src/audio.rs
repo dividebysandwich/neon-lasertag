@@ -734,7 +734,8 @@ fn play_events(
                 1.0,
             ),
             // Turret boxes: the puzzle's pieces, the lid and the turret.
-            SimEvent::PieceSlid { slide, pos, by, .. } => {
+            SimEvent::PieceSlid { slide, pos, by, .. }
+            | SimEvent::ConsolePoked { slide, pos, by, .. } => {
                 let sound = match slide {
                     lt_sim::PuzzleSlide::In | lt_sim::PuzzleSlide::Out => &sounds.piece_slide,
                     lt_sim::PuzzleSlide::Stuck => &sounds.piece_stuck,
@@ -749,7 +750,15 @@ fn play_events(
                 };
                 play(&mut commands, gain, sound, Some(pos), volume, speed)
             }
-            SimEvent::PuzzleSolved { pos, .. } => play(
+            SimEvent::ConsoleReady { pos, .. } => play(
+                &mut commands,
+                gain,
+                &sounds.turret_active,
+                Some(pos),
+                0.6,
+                1.3,
+            ),
+            SimEvent::PuzzleSolved { pos, .. } | SimEvent::ConsoleSolved { pos, .. } => play(
                 &mut commands,
                 gain,
                 &sounds.puzzle_solved,

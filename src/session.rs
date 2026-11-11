@@ -17,7 +17,9 @@
 //! down for S seconds (`fire=S`); putting up a carried barrier (`barrier`); turret boxes: in
 //! front of the nearest one (`warp-box`, `warp-box=M`), every player but the bots at the first
 //! one (`warp-box-all`, hosting), clicking its puzzle (`box-hint=N`, `box-poke=J`, and
-//! `box-click`, which works in a remote game too) or solving it at once (`solve-box`); arena events (`blackout`, `overdrive`) and the last
+//! `box-click`, which works in a remote game too) or solving it at once (`solve-box`); consoles:
+//! in front of one (`warp-console`, `warp-console=K`, `warp-console=vault`), clicking the
+//! nearest one's puzzle (`console-hint=N`) or solving it (`solve-console`); arena events (`blackout`, `overdrive`) and the last
 //! minute's double points (`double`); freezing the game (`freeze`), the free camera
 //! (`freecam`), its view's width (`fov=DEG`) and aperture (`dof=N`).
 
@@ -359,6 +361,70 @@ fn dev_script(
                         sim.teleport(me, feet, yaw);
                         yaw
                     };
+                face(w, yaw);
+            });
+        }
+        // Local games, consoles: in front of console K's first puzzle (`warp-console=K`), of
+        // the first one of a kind (`warp-console=vault`, ...), or of the nearest one
+        // (`warp-console`), facing it; clicking the nearest one's hint (`console-hint`, or
+        // `console-hint=N` N times) or solving it at once (`solve-console`).
+        a if a == "warp-console"
+            || a.starts_with("warp-console=")
+            || a.starts_with("console-hint")
+            || a == "solve-console" =>
+        {
+            let a = a.to_string();
+            commands.queue(move |w: &mut World| {
+                let yaw = {
+                    let Some(mut game) = w.get_resource_mut::<Game>() else {
+                        return;
+                    };
+                    let Some(me) = game.me else { return };
+                    let Source::Local { sim, .. } = &mut game.source else {
+                        return;
+                    };
+                    let Some(at) = sim.player(me).map(|p| p.feet) else {
+                        return;
+                    };
+                    let defs = sim.console_defs().to_vec();
+                    let nearest = defs
+                        .iter()
+                        .enumerate()
+                        .min_by(|a, b| a.1.pos.distance(at).total_cmp(&b.1.pos.distance(at)))
+                        .map(|(k, _)| k);
+                    let Some(near) = nearest else { return };
+                    if a == "solve-console" {
+                        sim.dev_console_poke(me, near, None, true);
+                        return;
+                    }
+                    if a.starts_with("console-hint") {
+                        let n = a
+                            .strip_prefix("console-hint=")
+                            .and_then(|n| n.parse::<usize>().ok())
+                            .unwrap_or(1);
+                        for _ in 0..n {
+                            sim.dev_console_poke(me, near, None, false);
+                        }
+                        return;
+                    }
+                    let k = match a.strip_prefix("warp-console=") {
+                        Some(arg) => match arg.parse::<usize>() {
+                            Ok(k) => k,
+                            Err(_) => match defs.iter().position(|d| d.kind.id() == arg) {
+                                Some(k) => k,
+                                None => return,
+                            },
+                        },
+                        None => near,
+                    };
+                    let Some(d) = defs.get(k) else { return };
+                    let f = d.faces[0];
+                    let mut feet = f.centre + f.normal * 1.0;
+                    feet.y = d.floor;
+                    let yaw = lt_sim::sim::yaw_of(-f.normal);
+                    sim.teleport(me, feet, yaw);
+                    yaw
+                };
                 face(w, yaw);
             });
         }
