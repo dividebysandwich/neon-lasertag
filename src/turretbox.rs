@@ -11,8 +11,9 @@
 //!
 //! Clicking: on the flat screen, the crosshair on a piece within reach and the fire button
 //! (the blaster doesn't fire while aiming at a puzzle: `aim_at`); in VR, the index finger of a
-//! hand not holding a gun touching a piece, and that hand's trigger (`vr_touch`). A hand near a
-//! puzzle points (src/actors.rs shows the pointing glove: `PuzzleAim::point`).
+//! hand not holding a gun pointing at a piece (a thin ray from the fingertip shows where, or the
+//! fingertip pressed onto it), and that hand's trigger (`vr_touch`). A hand pointing at a puzzle
+//! shows the pointing glove (src/actors.rs: `PuzzleAim::point`).
 
 use std::f32::consts::PI;
 
@@ -29,10 +30,9 @@ use crate::materials::{AccentMaterial, NeonUniform, Palette, team_color};
 /// The pointing glove's index fingertip in the glove's frame (left hand; the right's is
 /// mirrored): tools/models/avatars.py's `POINT_TIP`.
 const FINGERTIP: Vec3 = Vec3::new(-0.003, 0.031, -0.13);
-/// A hand this close to a puzzle (m, its palm to the puzzle's face) points.
-const POINT_NEAR: f32 = 0.45;
-/// How far in front of a puzzle's face (and behind it) the fingertip touches it (m).
-const TOUCH_FRONT: f32 = 0.035;
+/// VR: a hand points at a puzzle this far from its fingertip (m) ...
+const POINT_REACH: f32 = 2.6;
+/// ... and at one its fingertip is pressed this far into (m).
 const TOUCH_BEHIND: f32 = 0.06;
 /// Flat screen: the crosshair clicks a puzzle this close to the eyes (m).
 const CLICK_REACH: f32 = 2.6;
@@ -60,7 +60,7 @@ impl Plugin for TurretBoxPlugin {
             .init_resource::<Puzzles>()
             .add_systems(
                 Update,
-                (on_events, animate)
+                (on_events, animate, finger_rays)
                     .chain()
                     .in_set(crate::game::DrawSet)
                     .run_if(resource_exists::<Game>),
@@ -74,6 +74,8 @@ impl Plugin for TurretBoxPlugin {
 pub struct PuzzleAim {
     pub hover: Vec<(usize, usize)>,
     pub point: [bool; 2],
+    /// VR: each pointing hand's ray, from its fingertip to where it meets the puzzle.
+    pub ray: [Option<(Vec3, Vec3)>; 2],
 }
 
 /// The puzzles of the seeds in play (made again from a seed only when it changes).
@@ -133,8 +135,21 @@ pub fn aim_at(
     eye: Vec3,
     dir: Vec3,
 ) -> Option<(usize, Option<usize>)> {
+    ray_at(game, puzzles, feet, eye, dir, CLICK_REACH).map(|(_, k, p)| (k, p))
+}
+
+/// The puzzle a ray from `from` along `dir` meets within `reach` (m), of a box within reach of
+/// the player's feet: the point it meets, its box, and the piece there if any.
+fn ray_at(
+    game: &Game,
+    puzzles: &mut Puzzles,
+    feet: Vec3,
+    from: Vec3,
+    dir: Vec3,
+    reach: f32,
+) -> Option<(Vec3, usize, Option<usize>)> {
     let dir = dir.normalize_or_zero();
-    let mut best: Option<(f32, usize, Option<usize>)> = None;
+    let mut best: Option<(f32, Vec3, usize, Option<usize>)> = None;
     for (k, (b, s)) in game.level.boxes.iter().zip(&game.snap.boxes).enumerate() {
         if !clickable(s) || !in_reach(b, feet) {
             continue;
@@ -142,30 +157,32 @@ pub fn aim_at(
         for face in 0..2 {
             let (z, n) = face_z(b, face);
             // In front of that side, looking at it.
-            if (eye.z - z) * n <= 0.0 || dir.z * n >= 0.0 {
+            if (from.z - z) * n <= 0.0 || dir.z * n >= 0.0 {
                 continue;
             }
-            let t = (z - eye.z) / dir.z;
-            if !(0.0..CLICK_REACH).contains(&t) || best.is_some_and(|x| x.0 < t) {
+            let t = (z - from.z) / dir.z;
+            if !(0.0..reach).contains(&t) || best.is_some_and(|x| x.0 < t) {
                 continue;
             }
-            let p = eye + dir * t;
+            let p = from + dir * t;
             let Some((c, r)) = cell_on(b, face, p) else {
                 continue;
             };
             // (Nothing else in the way.)
-            if game.world.ray(eye, p).is_some_and(|h| h.0 * t < t - 0.05) {
+            if game.world.ray(from, p).is_some_and(|h| h.0 * t < t - 0.05) {
                 continue;
             }
             let piece = puzzles.get(s.seed).piece_at(&s.pieces, c, r);
-            best = Some((t, k, piece));
+            best = Some((t, p, k, piece));
         }
     }
-    best.map(|(_, k, p)| (k, p))
+    best.map(|(_, p, k, piece)| (p, k, piece))
 }
 
-/// VR: which hands point at a puzzle near them and what their fingertips touch; a trigger
-/// pulled on a hand touching a piece clicks it (and doesn't put up a shield or a gadget).
+/// VR: which hands point at a puzzle and at which piece: a ray from the index fingertip along
+/// the hand (from a little behind the tip, so a finger pressed onto a piece points at it too);
+/// a trigger pulled on a hand pointing at a piece clicks it (and doesn't put up a shield or a
+/// gadget).
 #[allow(clippy::too_many_arguments)]
 pub fn vr_touch(
     game: Res<Game>,
@@ -179,6 +196,7 @@ pub fn vr_touch(
 ) {
     aim.hover.clear();
     aim.point = [false; 2];
+    aim.ray = [None; 2];
     let me = game
         .me
         .and_then(|id| game.snap.players.iter().find(|p| p.id == id));
@@ -201,52 +219,94 @@ pub fn vr_touch(
             continue;
         }
         let pose = local.cmd.hands[i];
-        let palm = feet + pose.pos;
         let tip_local = if i == 0 {
             FINGERTIP
         } else {
             FINGERTIP * Vec3::new(-1.0, 1.0, 1.0)
         };
-        let tip = palm + pose.rot * tip_local;
-        for (k, (b, s)) in game.level.boxes.iter().zip(&game.snap.boxes).enumerate() {
-            if !clickable(s) || !in_reach(b, feet) {
-                continue;
-            }
-            for face in 0..2 {
-                let (z, n) = face_z(b, face);
-                let off = (palm.z - z) * n;
-                if !(-0.1..POINT_NEAR).contains(&off)
-                    || cell_on(b, face, palm).is_none() && {
-                        // (Near the puzzle: the palm in front of it, or a little beside.)
-                        let (c, r) = b.cell_at(face, palm);
-                        let lim = -(DEPTH as f32) - 2.0..(N + DEPTH) as f32 + 2.0;
-                        !(lim.contains(&c) && lim.contains(&r))
-                    }
-                {
-                    continue;
-                }
-                aim.point[i] = true;
-                let depth = (tip.z - z) * n;
-                if !(-TOUCH_BEHIND..TOUCH_FRONT).contains(&depth) {
-                    continue;
-                }
-                let Some((c, r)) = cell_on(b, face, tip) else {
-                    continue;
-                };
-                let Some(piece) = puzzles.get(s.seed).piece_at(&s.pieces, c, r) else {
-                    continue;
-                };
-                aim.hover.push((k, piece));
-                if pulled[i] && !was {
-                    local.cmd.pokes = local.cmd.pokes.wrapping_add(1);
-                    local.cmd.poke = (k as u8, piece as u8);
-                }
+        let tip = feet + pose.pos + pose.rot * tip_local;
+        let dir = pose.rot * Vec3::NEG_Z;
+        let from = tip - dir * TOUCH_BEHIND;
+        let Some((at, k, piece)) = ray_at(
+            &game,
+            &mut puzzles,
+            feet,
+            from,
+            dir,
+            POINT_REACH + TOUCH_BEHIND,
+        ) else {
+            continue;
+        };
+        aim.point[i] = true;
+        aim.ray[i] = Some((tip, at));
+        if let Some(piece) = piece {
+            aim.hover.push((k, piece));
+            if pulled[i] && !was {
+                local.cmd.pokes = local.cmd.pokes.wrapping_add(1);
+                local.cmd.poke = (k as u8, piece as u8);
             }
         }
-        if aim.point[i] && pulled[i] {
+        if pulled[i] {
             // (The trigger is the puzzle's here, not the shield's or the gadget's.)
             local.cmd.shield = false;
             local.cmd.gadget = false;
+        }
+    }
+}
+
+/// VR: the pointing hands' rays, a thin beam from the fingertip to the puzzle and a dot where
+/// it meets it.
+fn finger_rays(
+    mut commands: Commands,
+    aim: Res<PuzzleAim>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut accents: ResMut<Assets<AccentMaterial>>,
+    mut rays: Local<Option<[(Entity, Entity); 2]>>,
+    mut q: Query<(&mut Transform, &mut Visibility)>,
+) {
+    if aim.ray.iter().all(Option::is_none) && rays.is_none() {
+        return;
+    }
+    let rays = rays.get_or_insert_with(|| {
+        let beam = meshes.add(Cylinder::new(0.0018, 1.0));
+        let dot = meshes.add(Sphere::new(0.006).mesh().ico(2).unwrap());
+        let mat = accent(&mut accents, Vec3::new(0.85, 0.95, 1.0), 2.5);
+        [0, 1].map(|_| {
+            let mut part = |mesh: &Handle<Mesh>| {
+                commands
+                    .spawn((
+                        Mesh3d(mesh.clone()),
+                        MeshMaterial3d(mat.clone()),
+                        Transform::default(),
+                        Visibility::Hidden,
+                    ))
+                    .id()
+            };
+            (part(&beam), part(&dot))
+        })
+    });
+    for (i, &(beam, dot)) in rays.iter().enumerate() {
+        let ray = aim.ray[i];
+        if let Ok((mut t, mut v)) = q.get_mut(beam) {
+            match ray {
+                Some((from, to)) if from.distance(to) > 0.02 => {
+                    let len = from.distance(to);
+                    *t = Transform::from_translation((from + to) / 2.0)
+                        .with_rotation(Quat::from_rotation_arc(Vec3::Y, (to - from) / len))
+                        .with_scale(Vec3::new(1.0, len, 1.0));
+                    *v = Visibility::Inherited;
+                }
+                _ => *v = Visibility::Hidden,
+            }
+        }
+        if let Ok((mut t, mut v)) = q.get_mut(dot) {
+            match ray {
+                Some((_, to)) => {
+                    *t = Transform::from_translation(to);
+                    *v = Visibility::Inherited;
+                }
+                None => *v = Visibility::Hidden,
+            }
         }
     }
 }
