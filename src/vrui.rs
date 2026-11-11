@@ -2203,8 +2203,19 @@ fn event_banner(
     game: Res<Game>,
     mut settings: ResMut<crate::settings::Settings>,
     palette: Res<Palette>,
-    (alert, mut alerted, mut rumble): (Res<crate::game::TargetAlert>, Local<u32>, ResMut<Rumble>),
+    (alert, mut alerted, mut rumble, mut warmup): (
+        Res<crate::game::TargetAlert>,
+        Local<u32>,
+        ResMut<Rumble>,
+        Local<bool>,
+    ),
 ) {
+    if game.is_added() {
+        *warmup = false;
+    }
+    if let Some(b) = crate::hud::warmup_banner(&game.snap, &mut warmup) {
+        queue.push(b);
+    }
     if let Some(b) = crate::hud::alert_banner(&alert, &mut alerted) {
         queue.push(b);
         // (A double pulse in both hands.)

@@ -1062,14 +1062,15 @@ fn update(
         }
     }
     if let Ok((mut t, mut c)) = clock.single_mut() {
-        let left = game.snap.time_left.max(0.0);
+        let left = game.snap.clock();
+        let warmup = matches!(game.snap.phase, lt_sim::MatchPhase::Warmup(_));
         let s = left as u32;
         let want = format!("{}:{:02}", s / 60, s % 60);
         if t.0 != want {
             t.0 = want;
         }
         // Amber in the last minute, throbbing pink in the last ten seconds.
-        c.0 = if game.snap.over || left > 60.0 {
+        c.0 = if game.snap.over || warmup || left > 60.0 {
             neonui::TEXT
         } else if left > 10.0 {
             neonui::AMBER
@@ -1149,8 +1150,8 @@ fn update(
 fn clock_events(snap: &lt_sim::sim::Snapshot) -> (String, Color) {
     let mut parts = Vec::new();
     let mut color = neonui::AMBER;
-    if let lt_sim::MatchPhase::Warmup(left) = snap.phase {
-        parts.push(format!("WARMUP {:.0}", left.ceil()));
+    if let lt_sim::MatchPhase::Warmup(_) = snap.phase {
+        parts.push("WARMUP".to_string());
     }
     if let Some((lt_sim::ArenaEvent::Blackout, left)) = snap.event {
         parts.push(format!("BLACKOUT {:.0}", left.ceil()));
@@ -2696,6 +2697,38 @@ pub fn alert_banner(alert: &crate::game::TargetAlert, seen: &mut u32) -> Option<
     })
 }
 
+/// The warmup's start and end announced: `was` is whether a warmup ran when last asked (false
+/// for a game just begun).
+pub fn warmup_banner(snap: &lt_sim::sim::Snapshot, was: &mut bool) -> Option<Banner> {
+    let now = matches!(snap.phase, lt_sim::MatchPhase::Warmup(_));
+    // (Nothing heard yet: no phase to go by.)
+    if snap.players.is_empty() || now == *was {
+        return None;
+    }
+    *was = now;
+    Some(if now {
+        Banner {
+            title: "WARMUP",
+            sub:
+                "FREE PLAY - NOTHING COUNTS YET - EVERYONE GOES BACK TO BASE WHEN THE MATCH STARTS"
+                    .to_string(),
+            color: neonui::AMBER,
+            time: 5.0,
+            pickup: None,
+            small: false,
+        }
+    } else {
+        Banner {
+            title: "MATCH STARTING",
+            sub: "BACK TO BASE - THE SCORES START FROM ZERO".to_string(),
+            color: neonui::AMBER,
+            time: 3.0,
+            pickup: None,
+            small: false,
+        }
+    })
+}
+
 /// Megatarget mode: the banner for what `e` means to the local player, if anything.
 pub fn mega_banner_for(e: &SimEvent, game: &Game) -> Option<Banner> {
     let me = game.me?;
@@ -2846,6 +2879,7 @@ fn event_banner(
     alert: Res<crate::game::TargetAlert>,
     mut alerted: Local<u32>,
     mut queue: Local<BannerQueue>,
+    mut warmup: Local<bool>,
     mut q: Query<
         (&mut Text, &mut TextColor, &mut TextFont),
         (With<EventBanner>, Without<EventBannerSub>),
@@ -2865,6 +2899,12 @@ fn event_banner(
         }
     }
     if let Some(b) = alert_banner(&alert, &mut alerted) {
+        queue.push(b);
+    }
+    if game.is_added() {
+        *warmup = false;
+    }
+    if let Some(b) = warmup_banner(&game.snap, &mut warmup) {
         queue.push(b);
     }
     if let Some(banner) = queue.tick(time.delta_secs()) {

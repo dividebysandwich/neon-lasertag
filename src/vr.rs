@@ -1017,6 +1017,8 @@ struct Wrist {
     clock: Vec<Digit>,
     colon: Entity,
     double: Entity,
+    /// "WARMUP" beside the clock while the clock counts the warmup down.
+    warmup: Entity,
     blackout: Entity,
     blackout_digits: Vec<Digit>,
     /// Small copies of the powerups one has, in a row along the top, and under each a bar in
@@ -1186,6 +1188,13 @@ fn spawn_wrist(
         Vec3::new(0.022, -0.03, 0.0),
         0.012,
     );
+    let warmup = label(
+        &mut commands,
+        &mut meshes,
+        "WARMUP",
+        Vec3::new(0.022, -0.033, 0.0),
+        0.008,
+    );
     let blackout = label(
         &mut commands,
         &mut meshes,
@@ -1226,6 +1235,7 @@ fn spawn_wrist(
         clock,
         colon,
         double,
+        warmup,
         blackout,
         blackout_digits,
         powerups,
@@ -1329,13 +1339,15 @@ fn wrist(
             x += 0.03;
         }
     }
-    // The clock, blinking in the last ten seconds.
-    let clock_left = game.snap.time_left.max(0.0);
-    let ticking = clock_left > 10.0 || game.snap.over || clock_left.fract() > 0.3;
-    let s = clock_left.ceil() as u32;
+    // The clock (the warmup's while it runs), blinking in the match's last ten seconds.
+    let clock_left = game.snap.clock();
+    let warmup = matches!(game.snap.phase, lt_sim::MatchPhase::Warmup(_));
+    let ticking = clock_left > 10.0 || warmup || game.snap.over || clock_left.fract() > 0.3;
+    // (One digit for the minutes: ten or more show as 9:59.)
+    let s = (clock_left.ceil() as u32).min(9 * 60 + 59);
     show(
         &if ticking {
-            format!("{}{:02}", (s / 60).min(9), s % 60)
+            format!("{}{:02}", s / 60, s % 60)
         } else {
             String::new()
         },
@@ -1355,7 +1367,8 @@ fn wrist(
         }
     };
     toggle(&mut vis, w.colon, ticking);
-    toggle(&mut vis, w.double, game.snap.double);
+    toggle(&mut vis, w.double, game.snap.double && !warmup);
+    toggle(&mut vis, w.warmup, warmup);
     let dark = match game.snap.event {
         Some((lt_sim::ArenaEvent::Blackout, t)) => Some(t),
         _ => None,

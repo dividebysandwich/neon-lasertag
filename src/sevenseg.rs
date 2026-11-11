@@ -299,7 +299,7 @@ impl Plugin for ScoreboardPlugin {
 }
 
 fn update(game: Res<Game>, boards: Res<Boards>, mut vis: Query<&mut Visibility>) {
-    let s = game.snap.time_left.max(0.0) as u32;
+    let s = game.snap.clock() as u32;
     let [r, b] = game.snap.scores;
     let text = format!(
         "{:>5}{:>2}{:02}{:>5}",
