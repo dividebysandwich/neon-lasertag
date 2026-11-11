@@ -653,6 +653,18 @@ pub struct Snapshot {
     pub infected: bool,
 }
 
+impl Snapshot {
+    /// The seconds the arena's clocks show: the warmup's left while it runs (the match's clock
+    /// stands meanwhile), else the match's.
+    pub fn clock(&self) -> f32 {
+        match self.phase {
+            MatchPhase::Warmup(left) => left,
+            _ => self.time_left,
+        }
+        .max(0.0)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PickupSnap {
     pub id: u32,
@@ -986,7 +998,8 @@ impl Sim {
             grenade_tags: 0,
             cloak_tags: 0,
             hit_by: Vec::new(),
-            claim_block: 0,
+            // (A client's prediction from before, maybe in the last arena, isn't taken.)
+            claim_block: 30,
             mega_hits: 0,
             power: None,
             core_live: false,
@@ -5723,6 +5736,7 @@ mod tests {
     #[test]
     fn predicted_feet_are_limited_and_collide() {
         let (mut sim, a, _) = duel();
+        sim.player_mut(a).unwrap().claim_block = 0;
         let start = sim.player(a).unwrap().feet;
         // A claim 10 m away moves only a speed-limited step.
         sim.set_cmd(
@@ -5749,6 +5763,27 @@ mod tests {
         }
         let f = sim.player(a).unwrap().feet;
         assert!(f.z < lt_level_half() - 0.3, "{f}");
+    }
+
+    #[test]
+    fn a_new_player_ignores_claims_from_before() {
+        // A client's prediction from the last arena, still coming in after the next match
+        // began, doesn't drag its player off the spawn pad.
+        let mut sim = Sim::new(3, Rules::default());
+        let a = sim.add_player("A", Some(Team::Red), false).unwrap();
+        let start = sim.player(a).unwrap().feet;
+        for _ in 0..20 {
+            sim.set_cmd(
+                a,
+                PlayerCmd {
+                    feet: Some(Vec3::ZERO),
+                    ..Default::default()
+                },
+            );
+            sim.step();
+        }
+        let moved = (sim.player(a).unwrap().feet - start).length();
+        assert!(moved < 0.05, "{moved}");
     }
 
     fn lt_level_half() -> f32 {

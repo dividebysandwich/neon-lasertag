@@ -243,6 +243,11 @@ impl Server {
                 for (seq, cmd) in recent {
                     if seq > r.last_seq {
                         r.last_seq = seq;
+                        // Looking at a tick still to come: sent from the last arena before the
+                        // client heard of this one (its predicted feet are over there).
+                        if cmd.view_tick > sim.tick {
+                            continue;
+                        }
                         r.queue.push_back(cmd);
                     }
                 }
