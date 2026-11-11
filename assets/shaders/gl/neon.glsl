@@ -26,6 +26,8 @@ uniform vec4 u_extra;
 uniform vec3 u_eye[2];
 // Shots near the eye: xyz, w strength (0: none). They light up the dimmed lights near them.
 uniform vec4 u_shots[8];
+// How dark each quarter of the arena is (a blackout breaker's): +x+z, +x-z, -x+z, -x-z.
+uniform vec4 u_zones;
 
 #ifdef VERTEX
 layout(num_views = NUM_VIEWS) in;
@@ -212,6 +214,16 @@ vec3 tone(vec3 c) {
 
 // How much the shots light up a point (0..1): each within SHOT_REACH metres, more nearer.
 const float SHOT_REACH = 4.5;
+// How bright the arena's lights are at `p` by the breakers' dark quarters (soft across the
+// centre lines).
+const float ZONE_DIM = 0.015;
+float zone_light(vec3 p) {
+    float ax = smoothstep(-0.6, 0.6, p.x);
+    float az = smoothstep(-0.6, 0.6, p.z);
+    vec4 w = vec4(ax * az, ax * (1.0 - az), (1.0 - ax) * az, (1.0 - ax) * (1.0 - az));
+    return mix(1.0, ZONE_DIM, clamp(dot(w, u_zones), 0.0, 1.0));
+}
+
 float shot_light(vec3 p) {
     float l = 0.0;
     for (int i = 0; i < 8; i++) {
@@ -228,6 +240,9 @@ void main() {
     // (The arena's own lights dim in a blackout: extra.z marks them, extra.w is how bright.)
     // (Shots light them up again around them.)
     float lit = u_extra.w;
+    if (u_extra.z > 0.5) {
+        lit = min(lit, zone_light(v_world));
+    }
     if (u_extra.z > 0.5 && lit < 0.99) {
         lit = max(lit, shot_light(v_world));
     }

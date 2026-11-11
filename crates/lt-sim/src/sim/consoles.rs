@@ -249,6 +249,11 @@ impl Sim {
                 st.next_pulse = 0.0;
             }
             ConsoleKind::Beacon => self.consoles[k].owner = Some(team),
+            ConsoleKind::Breaker => {
+                let st = &mut self.consoles[k];
+                st.owner = Some(team);
+                st.active = crate::console::BREAKER_TIME;
+            }
         }
     }
 
@@ -279,6 +284,14 @@ impl Sim {
         Some(crate::level::Spawn {
             pos,
             yaw: super::yaw_of(f.normal),
+        })
+    }
+
+    /// Whether `p` is in a quarter of the arena a blackout breaker has dark now.
+    pub fn dark_at(&self, p: Vec3) -> bool {
+        let q = crate::console::quarter(p);
+        self.console_defs.iter().zip(&self.consoles).any(|(d, s)| {
+            d.kind == ConsoleKind::Breaker && s.active > 0.0 && crate::console::quarter(d.pos) == q
         })
     }
 
@@ -517,5 +530,22 @@ mod tests {
             let level = Level::generate_for(seed, ArenaSize::Large, GameMode::Infection);
             assert!(!level.consoles.iter().any(|c| c.kind == ConsoleKind::Beacon));
         }
+    }
+
+    #[test]
+    fn a_solved_breaker_darkens_its_quarter_for_a_while() {
+        let (mut sim, k, red, _) = console_sim(ConsoleKind::Breaker, GameMode::Classic);
+        let at = sim.console_defs()[k].pos;
+        let other = Vec3::new(-at.x, 1.0, at.z);
+        assert!(!sim.dark_at(at));
+        to_console(&mut sim, k, red);
+        let i = sim.consoles[k].game.hint(&sim.consoles[k].state).unwrap();
+        click(&mut sim, red, k, i);
+        solve(&mut sim, red, k);
+        assert!(sim.dark_at(at + Vec3::new(0.0, 1.0, 0.0)));
+        assert!(!sim.dark_at(other), "only its quarter");
+        run(&mut sim, crate::console::BREAKER_TIME + 0.5);
+        assert!(!sim.dark_at(at));
+        assert!(!sim.consoles[k].open(), "still resetting");
     }
 }

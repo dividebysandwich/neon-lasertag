@@ -1451,11 +1451,8 @@ impl Bot {
         let eye = p.eye();
         let fwd = Vec2::new(self.aim.x, self.aim.z).normalize_or_zero();
         // (Less far in a blackout.)
-        let sight = if sim.rules.in_effect(sim.event, ArenaEvent::Blackout) {
-            BLACKOUT_SIGHT
-        } else {
-            SIGHT
-        };
+        let blackout = sim.rules.in_effect(sim.event, ArenaEvent::Blackout);
+        let dark_here = sim.dark_at(eye);
         for o in &sim.players {
             if o.team == p.team || !o.alive() {
                 continue;
@@ -1463,6 +1460,12 @@ impl Bot {
             let chest = o.chest();
             let to = chest - eye;
             let d = to.length();
+            // (Less far in the dark: a blackout, or a breaker's dark quarter at either end.)
+            let sight = if blackout || dark_here || sim.dark_at(chest) {
+                BLACKOUT_SIGHT
+            } else {
+                SIGHT
+            };
             let in_view = d < SENSE || fwd.dot(Vec2::new(to.x, to.z).normalize_or_zero()) > FOV_COS;
             let mut known = false;
             if d < sight && in_view && o.seen_from(d, sim.cloak_near(o)) {
@@ -1766,6 +1769,7 @@ impl Bot {
                 // (Locked while it works: open, it's anyone's.)
                 crate::console::ConsoleKind::Mast => true,
                 crate::console::ConsoleKind::Beacon => st.owner != Some(p.team),
+                crate::console::ConsoleKind::Breaker => true,
             }
     }
 

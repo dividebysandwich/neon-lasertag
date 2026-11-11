@@ -50,6 +50,7 @@ pub fn kind_color(kind: ConsoleKind) -> Vec3 {
         ConsoleKind::Vault => Vec3::new(1.0, 0.75, 0.1),
         ConsoleKind::Mast => Vec3::new(0.2, 1.0, 0.55),
         ConsoleKind::Beacon => Vec3::new(0.7, 0.45, 1.0),
+        ConsoleKind::Breaker => Vec3::new(1.0, 0.35, 0.1),
     }
 }
 
@@ -67,6 +68,10 @@ pub fn solved_banner(kind: ConsoleKind) -> (&'static str, &'static str) {
         ConsoleKind::Beacon => (
             "FORWARD BEACON TAKEN",
             "YOUR TEAM RESPAWNS HERE WHILE NO ENEMY IS NEAR",
+        ),
+        ConsoleKind::Breaker => (
+            "BREAKER THROWN",
+            "THIS QUARTER OF THE ARENA GOES DARK FOR 20 S",
         ),
     }
 }
@@ -136,6 +141,9 @@ pub fn spawn(
     let beacon_core = meshes.add(Cylinder::new(0.05, 0.42));
     let beacon_ring = meshes.add(Torus::new(0.1, 0.125));
     let beam_mesh = meshes.add(Cylinder::new(0.035, 1.0));
+    let breaker_box = meshes.add(Cuboid::new(0.26, 0.3, 0.08));
+    let breaker_lever = meshes.add(Cuboid::new(0.04, 0.22, 0.04));
+    let breaker_knob = meshes.add(Cuboid::new(0.12, 0.05, 0.06));
     for (k, d) in defs.iter().enumerate() {
         let trim = accent(accents, Vec3::ONE, 4.0);
         let icon_mat = accent(accents, kind_color(d.kind), 4.0);
@@ -226,6 +234,22 @@ pub fn spawn(
                     );
                 }
                 icon_part(commands, &mast_tip, Transform::from_xyz(0.0, 0.28, 0.0));
+            }
+            ConsoleKind::Breaker => {
+                icon_part(commands, &breaker_box, Transform::IDENTITY);
+                let tilt = Quat::from_rotation_x(-0.6);
+                icon_part(
+                    commands,
+                    &breaker_lever,
+                    Transform::from_translation(tilt * Vec3::new(0.0, 0.1, 0.0) + Vec3::Z * 0.06)
+                        .with_rotation(tilt),
+                );
+                icon_part(
+                    commands,
+                    &breaker_knob,
+                    Transform::from_translation(tilt * Vec3::new(0.0, 0.21, 0.0) + Vec3::Z * 0.06)
+                        .with_rotation(tilt),
+                );
             }
             ConsoleKind::Beacon => {
                 icon_part(commands, &beacon_core, Transform::IDENTITY);

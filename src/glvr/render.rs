@@ -60,6 +60,7 @@ struct Program {
     pulse_colour: Option<glow::UniformLocation>,
     extra: Option<glow::UniformLocation>,
     shots: Option<glow::UniformLocation>,
+    zones: Option<glow::UniformLocation>,
     point_pos: Option<glow::UniformLocation>,
     point_colour: Option<glow::UniformLocation>,
     point_count: Option<glow::UniformLocation>,
@@ -218,6 +219,7 @@ fn compile(gl: &glow::Context, shader: &str, defines: &str, views: u32) -> Resul
             pulse_colour: at("u_pulse_colour"),
             extra: at("u_extra"),
             shots: at("u_shots"),
+            zones: at("u_zones"),
             point_pos: at("u_point_pos"),
             point_colour: at("u_point_colour"),
             point_count: at("u_point_count"),
@@ -710,6 +712,7 @@ impl Renderer {
                 gl.uniform_4_f32_slice(p.pulse_pos.as_ref(), &pulse_pos);
                 gl.uniform_4_f32_slice(p.pulse_colour.as_ref(), &pulse_colour);
                 gl.uniform_4_f32_slice(p.shots.as_ref(), &shots);
+                gl.uniform_4_f32_slice(p.zones.as_ref(), &n.zones.to_array());
             }
 
             gl.use_program(Some(progs.lit.program));

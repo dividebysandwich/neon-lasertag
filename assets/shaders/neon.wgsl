@@ -42,10 +42,22 @@ struct Neon {
     extra: vec4<f32>,
     // Shots near the eye: xyz, w strength (0: none). They light up the dimmed lights near them.
     shots: array<vec4<f32>, 8>,
+    // How dark each quarter of the arena is (a blackout breaker's): +x+z, +x-z, -x+z, -x-z.
+    zones: vec4<f32>,
 };
 
 // How much the shots light up a point (0..1): each within SHOT_REACH metres, more nearer.
 const SHOT_REACH: f32 = 4.5;
+// How bright the arena's lights are at `p` by the breakers' dark quarters (soft across the
+// centre lines).
+const ZONE_DIM: f32 = 0.015;
+fn zone_light(p: vec3<f32>) -> f32 {
+    let ax = smoothstep(-0.6, 0.6, p.x);
+    let az = smoothstep(-0.6, 0.6, p.z);
+    let w = vec4<f32>(ax * az, ax * (1.0 - az), (1.0 - ax) * az, (1.0 - ax) * (1.0 - az));
+    return mix(1.0, ZONE_DIM, clamp(dot(w, neon.zones), 0.0, 1.0));
+}
+
 fn shot_light(p: vec3<f32>) -> f32 {
     var l = 0.0;
     for (var i = 0; i < 8; i++) {
@@ -259,6 +271,9 @@ fn shade(in: VertexOutput) -> vec4<f32> {
     // (The arena's own lights dim in a blackout: extra.z marks them, extra.w is how bright.)
     // (Shots light them up again around them.)
     var lit = neon.extra.w;
+    if (neon.extra.z > 0.5) {
+        lit = min(lit, zone_light(in.world_position.xyz));
+    }
     if (neon.extra.z > 0.5 && lit < 0.99) {
         lit = max(lit, shot_light(in.world_position.xyz));
     }

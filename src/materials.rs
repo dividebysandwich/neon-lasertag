@@ -77,6 +77,9 @@ pub struct NeonUniform {
     pub extra: Vec4,
     /// Shots near the eye (xyz, w strength; 0: none): the dimmed lights brighten around them.
     pub shots: [Vec4; SHOT_LIGHTS],
+    /// How dark each quarter of the arena is (0..1; a blackout breaker's, `NeonGlobals::zones`),
+    /// in `lt_sim::console::quarter`'s order.
+    pub zones: Vec4,
 }
 
 impl NeonUniform {
@@ -147,6 +150,7 @@ impl NeonUniform {
             pulse_color: [Vec4::ZERO; PULSES],
             extra: Vec4::ZERO,
             shots: [Vec4::ZERO; SHOT_LIGHTS],
+            zones: Vec4::ZERO,
         }
     }
 
@@ -162,6 +166,7 @@ impl NeonUniform {
         self.blue = BLUE.extend(1.0);
         self.extra.w = g.dim;
         self.shots = g.shots;
+        self.zones = g.zones;
         for (i, p) in g.pulses.iter().enumerate() {
             self.pulse_pos[i] = p.0.extend(p.1);
             self.pulse_color[i] = p.2.extend(1.0);
@@ -309,6 +314,8 @@ pub struct NeonGlobals {
     /// Shots lighting up those around them (xyz, w strength): set every frame by
     /// src/actors.rs (`shot_lights`).
     pub shots: [Vec4; SHOT_LIGHTS],
+    /// How dark each quarter of the arena is (0..1): blackout breakers' (eased).
+    pub zones: Vec4,
 }
 
 impl Default for NeonGlobals {
@@ -320,6 +327,7 @@ impl Default for NeonGlobals {
             half_length: lt_sim::level::ArenaSize::Small.dims().half_length(),
             dim: 1.0,
             shots: [Vec4::ZERO; SHOT_LIGHTS],
+            zones: Vec4::ZERO,
         }
     }
 }
@@ -560,6 +568,20 @@ fn animate(
     };
     let k = 1.0 - (-time.delta_secs() / tau).exp();
     globals.dim += (want - globals.dim) * k;
+    // Blackout breakers: their quarters dark while they work (eased the same way).
+    let mut zones = [0.0f32; 4];
+    if let Some(game) = &game {
+        for (d, s) in crate::consoles::defs(game).iter().zip(&game.snap.consoles) {
+            if d.kind == lt_sim::console::ConsoleKind::Breaker && s.active > 0.0 {
+                zones[lt_sim::console::quarter(d.pos)] = 1.0;
+            }
+        }
+    }
+    for (i, want) in zones.into_iter().enumerate() {
+        let tau = if want > globals.zones[i] { 0.35 } else { 0.8 };
+        let k = 1.0 - (-time.delta_secs() / tau).exp();
+        globals.zones[i] += (want - globals.zones[i]) * k;
+    }
     if let Some(game) = game {
         globals.half_length = game.level.dims().half_length();
     }

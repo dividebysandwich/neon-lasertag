@@ -28,6 +28,18 @@ pub enum ConsoleKind {
     /// no enemy is within `BEACON_CLEAR`) until the other team takes it over with its puzzle.
     /// Not in Infection.
     Beacon,
+    /// A blackout breaker: for `BREAKER_TIME` the arena's lights go dark in the quarter it
+    /// stands in (`quarter`; as a blackout there: only shots, players and the like glow).
+    Breaker,
+}
+
+/// Seconds a blackout breaker keeps its quarter dark.
+pub const BREAKER_TIME: f32 = 20.0;
+
+/// The arena's quarter a point is in (by the centre lines): 0 at +x +z, 1 at +x -z, 2 at -x
+/// +z, 3 at -x -z.
+pub fn quarter(p: Vec3) -> usize {
+    (p.x < 0.0) as usize * 2 + (p.z < 0.0) as usize
 }
 
 /// How often a team respawns at its beacon rather than at its base, and how far enemies must
@@ -41,14 +53,19 @@ pub const MAST_RANGE: f32 = 18.0;
 
 impl ConsoleKind {
     /// The kinds standing in the arena (on pedestals).
-    pub const PEDESTALS: [ConsoleKind; 3] =
-        [ConsoleKind::Vault, ConsoleKind::Mast, ConsoleKind::Beacon];
+    pub const PEDESTALS: [ConsoleKind; 4] = [
+        ConsoleKind::Vault,
+        ConsoleKind::Mast,
+        ConsoleKind::Beacon,
+        ConsoleKind::Breaker,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             ConsoleKind::Vault => "supply vault",
             ConsoleKind::Mast => "sensor mast",
             ConsoleKind::Beacon => "forward beacon",
+            ConsoleKind::Breaker => "blackout breaker",
         }
     }
 
@@ -60,6 +77,7 @@ impl ConsoleKind {
             ConsoleKind::Mast => MAST_TIME + 20.0,
             // (A moment, so it doesn't flip back and forth.)
             ConsoleKind::Beacon => 5.0,
+            ConsoleKind::Breaker => BREAKER_TIME + 30.0,
         }
     }
 
@@ -69,6 +87,7 @@ impl ConsoleKind {
             ConsoleKind::Vault => "vault",
             ConsoleKind::Mast => "mast",
             ConsoleKind::Beacon => "beacon",
+            ConsoleKind::Breaker => "breaker",
         }
     }
 

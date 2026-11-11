@@ -63,6 +63,7 @@ pub struct NeonFrame {
     pub pulse_colour: [Vec4; PULSES],
     /// `NeonGlobals::shots`.
     pub shots: [Vec4; SHOT_LIGHTS],
+    pub zones: Vec4,
 }
 
 /// The prism lance's scope (src/scope.rs): the lens (world: centre, facing +Z, scaled to its
@@ -339,6 +340,7 @@ impl Extractor {
                 n.pulse_colour[i] = p.2.extend(1.0);
             }
             n.shots = g.shots;
+            n.zones = g.zones;
             list.neon = n;
         }
         let meshes = world.resource::<Assets<Mesh>>();
