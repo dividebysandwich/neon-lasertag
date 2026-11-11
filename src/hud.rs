@@ -2494,7 +2494,7 @@ pub fn pickup_banner(
         PickupKind::Lance => format!(
             "{}A SHOT THAT HITS AT ONCE - A HEAD HIT COUNTS {} ({} SHOTS)",
             match controls {
-                Controls::Keys => format!("HOLD {} TO ZOOM - ", key_hint(settings, Action::Zoom)),
+                Controls::Keys => format!("{} TO ZOOM - ", key_hint(settings, Action::Zoom)),
                 Controls::Vr => String::new(),
             },
             rules.lance_head_damage,

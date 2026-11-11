@@ -15,7 +15,7 @@ use lt_sim::{Hand, Pose, SimEvent, Weapon};
 
 use crate::assets::Models;
 use crate::game::{Game, GameEvent, InputSet, LocalCmd, Mover, PredictSet, alpha};
-use crate::settings::{Action, Inputs, Settings, WheelState};
+use crate::settings::{Action, Binding, Inputs, Settings, WheelState};
 
 #[derive(Component)]
 pub struct MainCamera;
@@ -33,6 +33,8 @@ pub struct Look {
     pub crouch_on: bool,
     /// Zooming in with the prism lance: 0 not at all, 1 all the way (eased).
     pub zoom: f32,
+    /// Zoomed in by toggle: the zoom key flips it, the wheel rolled up or down sets it.
+    pub zoom_on: bool,
     /// Dashing: 0 to 1 (eased), widening the view.
     pub dash: f32,
     /// The mouse wheel held as a button (rolled up, not down since: `WheelState`).
@@ -379,9 +381,10 @@ fn read_input(
         .me
         .and_then(|id| game.snap.players.iter().find(|p| p.id == id))
         .is_some_and(|p| p.weapon == Weapon::Lance && p.respawn.is_none());
-    // (A wheel held lets go with the lance, or out of the game: no zoom held over.)
+    // (Letting go of the lance, or out of the game: no zoom kept over.)
     if !grabbed || !lance {
         look.wheel = false;
+        look.zoom_on = false;
     }
     let dy = if grabbed { scroll.delta.y } else { 0.0 };
     let input = Inputs {
@@ -392,11 +395,17 @@ fn read_input(
     let on = |a: Action| settings.pressed(a, &input);
     let dt = real.delta_secs().clamp(1e-4, 0.05);
     let mut turned = Vec2::ZERO;
-    let zoom = if grabbed && lance && on(Action::Zoom) {
-        1.0
-    } else {
-        0.0
-    };
+    if grabbed && lance {
+        let wheel = settings.get(Action::Zoom).contains(&Some(Binding::Wheel));
+        if wheel && input.wheel.up {
+            look.zoom_on = true;
+        } else if wheel && input.wheel.down {
+            look.zoom_on = false;
+        } else if settings.just_pressed(Action::Zoom, &input) {
+            look.zoom_on = !look.zoom_on;
+        }
+    }
+    let zoom = if look.zoom_on { 1.0 } else { 0.0 };
     look.zoom += (zoom - look.zoom) * (1.0 - (-dt / ZOOM_TIME).exp());
     if grabbed {
         // (Slower zoomed in, as the view.)

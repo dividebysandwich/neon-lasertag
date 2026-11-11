@@ -221,7 +221,7 @@ summary of the rules.
 | Grenade | Hold B / Y, throw, let go | Hold G or right mouse button, let go |
 | Shield | Trigger of the free hand | Q |
 | Gadget (barrier ...) | Grip of the free hand | E |
-| Zoom (prism lance) | - | Hold Z, or roll the mouse wheel up (down to stop) |
+| Zoom (prism lance) | - | Z to toggle, or roll the mouse wheel up (down to stop) |
 | Scores | In-game menu, or look at your wrist | Hold Tab |
 | Menu | Menu button, or hold B / Y | Esc |
 
