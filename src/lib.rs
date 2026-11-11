@@ -5,7 +5,7 @@
 //!          [--host [PORT]] [--public] [--server-name NAME] [--connect HOST[:PORT]] [--autopilot]
 //!          [--difficulty easy|normal|hard] [--arena small|medium|large|random]
 //!          [--mode classic|megatarget|prism|infection]
-//!          [--secondary random|shoot|relay|circuit|lights]
+//!          [--secondary random|shoot|relay|circuit|lights|sequence]
 //!          [--left-handed] [--match-time SECS]
 //!          [--screenshot FILE --after SECS] [--quit-after SECS]
 //! ```
@@ -189,7 +189,9 @@ impl Args {
                     .and_then(lt_sim::rules::SecondaryKind::parse)
                 {
                     Some(k) => a.secondary = k,
-                    None => eprintln!("--secondary: random, shoot, relay, circuit or lights"),
+                    None => {
+                        eprintln!("--secondary: random, shoot, relay, circuit, lights or sequence")
+                    }
                 },
                 "--mode" => match next(&mut i)
                     .as_deref()

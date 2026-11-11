@@ -2457,6 +2457,32 @@ impl Bot {
                     return Some(r);
                 }
             }
+            // The lamps of one still to charge at: the sequence's next.
+            for side in (0..2).filter(|i| p.power.is_none() && p.mega_hits & (1 << i) == 0) {
+                if sim.secondary[side] != crate::rules::SecondaryKind::Sequence {
+                    continue;
+                }
+                let Some(g) = sim.gadgets.get(side) else {
+                    continue;
+                };
+                let seq = crate::gadgets::sequence(g.seed);
+                let Some(&l) = seq.get(g.state.first().copied().unwrap_or(0) as usize) else {
+                    continue;
+                };
+                let (r, n) = m.lamps[side][l as usize];
+                let open = |from: Vec3| {
+                    let d = (r - from).normalize_or_zero();
+                    sim.world.clear(from, r - d * crate::gadgets::PIECE_R)
+                };
+                if sim.gadget_ready(side, l as usize)
+                    && (eye - r).dot(n) > 0.0
+                    && r.distance(eye) < 18.0
+                    && open(eye)
+                    && open(muzzle)
+                {
+                    return Some(r);
+                }
+            }
             if self.plan != Plan::Mega {
                 return None;
             }

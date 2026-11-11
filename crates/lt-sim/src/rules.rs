@@ -225,15 +225,18 @@ pub enum SecondaryKind {
     Circuit,
     /// Solving a lights puzzle on it (`minigame::lights`).
     Lights,
+    /// Shooting the lamps in its pocket in the order they flash (`gadgets`).
+    Sequence,
 }
 
 impl SecondaryKind {
     /// The ways `Random` picks from.
-    pub const PICKS: [SecondaryKind; 4] = [
+    pub const PICKS: [SecondaryKind; 5] = [
         SecondaryKind::Shoot,
         SecondaryKind::Relay,
         SecondaryKind::Circuit,
         SecondaryKind::Lights,
+        SecondaryKind::Sequence,
     ];
 
     pub fn name(self) -> &'static str {
@@ -243,6 +246,7 @@ impl SecondaryKind {
             SecondaryKind::Relay => "relay",
             SecondaryKind::Circuit => "circuit",
             SecondaryKind::Lights => "lights",
+            SecondaryKind::Sequence => "sequence",
         }
     }
 

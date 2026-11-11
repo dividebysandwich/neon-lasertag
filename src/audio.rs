@@ -759,7 +759,23 @@ fn play_events(
                 if Some(by) == me { 1.0 } else { 0.7 },
                 1.2,
             ),
-            SimEvent::RelayAligned { pos, .. } => play(
+            // Sequence lamps: each its own note, a dull one out of turn.
+            SimEvent::LampShot { pos, lamp, ok, .. } => {
+                if ok {
+                    let speed = [0.85, 1.0, 1.15, 1.33][lamp as usize % 4];
+                    play(
+                        &mut commands,
+                        gain,
+                        &sounds.mirror_ping,
+                        Some(pos),
+                        1.0,
+                        speed,
+                    )
+                } else {
+                    play(&mut commands, gain, &sounds.deny, Some(pos), 1.0, 0.8)
+                }
+            }
+            SimEvent::RelayAligned { pos, .. } | SimEvent::SequenceDone { pos, .. } => play(
                 &mut commands,
                 gain,
                 &sounds.puzzle_solved,

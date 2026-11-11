@@ -909,6 +909,21 @@ pub enum SimEvent {
         by: PlayerId,
         pos: Vec3,
     },
+    /// Megatarget mode: a lamp in secondary target `side`'s pocket shot by `by` (at `pos`):
+    /// the sequence's next (`ok`), or out of turn (it starts over).
+    LampShot {
+        side: u8,
+        lamp: u8,
+        by: PlayerId,
+        pos: Vec3,
+        ok: bool,
+    },
+    /// Megatarget mode: the lamps in `side`'s pocket shot in order, the last by `by`.
+    SequenceDone {
+        side: u8,
+        by: PlayerId,
+        pos: Vec3,
+    },
     /// A console done resting: its puzzle can be clicked again.
     ConsoleReady {
         console: u8,

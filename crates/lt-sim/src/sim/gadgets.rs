@@ -6,14 +6,15 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use super::{Bolt, HAZARD, Sim, TICK};
-use crate::gadgets::{HOLD, LOCK, RELAYS, beam_reach, relay_start};
+use crate::gadgets::{HOLD, LAMPS, LOCK, RELAYS, STEPS, beam_reach, relay_start, sequence};
 use crate::rules::SecondaryKind;
 use crate::types::SimEvent;
 
 #[derive(Clone, Debug, Default)]
 pub struct GadgetState {
     pub seed: u32,
-    /// Each piece's state (relays: quarter turns off).
+    /// Each piece's state (relays: quarter turns off), or (lamps) the steps of the sequence
+    /// shot so far.
     pub state: Vec<u8>,
     /// Seconds left of the solved beam (no shots count; then a new puzzle).
     pub hold: f32,
@@ -31,13 +32,14 @@ pub struct GadgetSnap {
 
 impl GadgetState {
     fn new(kind: SecondaryKind, seed: u32) -> GadgetState {
-        let state = match kind {
-            SecondaryKind::Relay => relay_start(seed),
-            _ => Vec::new(),
+        let (state, pieces) = match kind {
+            SecondaryKind::Relay => (relay_start(seed), RELAYS),
+            SecondaryKind::Sequence => (vec![0], LAMPS),
+            _ => (Vec::new(), 0),
         };
         GadgetState {
             seed,
-            lock: vec![0.0; state.len()],
+            lock: vec![0.0; pieces],
             state,
             hold: 0.0,
         }
@@ -93,7 +95,29 @@ impl Sim {
             self.events.push(impact);
             return;
         }
-        if self.secondary[side] == SecondaryKind::Relay {
+        if self.secondary[side] == SecondaryKind::Sequence {
+            let seq = sequence(g.seed);
+            let step = g.state[0] as usize;
+            let ok = seq.get(step) == Some(&(i as u8));
+            g.lock[i] = LOCK;
+            g.state[0] = if ok { step as u8 + 1 } else { 0 };
+            self.events.push(SimEvent::LampShot {
+                side: side as u8,
+                lamp: i as u8,
+                by: b.owner,
+                pos: q,
+                ok,
+            });
+            if ok && step + 1 == STEPS {
+                g.hold = HOLD;
+                self.events.push(SimEvent::SequenceDone {
+                    side: side as u8,
+                    by: b.owner,
+                    pos: q,
+                });
+                self.gadget_solved(side, b.owner, q);
+            }
+        } else if self.secondary[side] == SecondaryKind::Relay {
             g.state[i] = (g.state[i] + 1) % 4;
             g.lock[i] = LOCK;
             self.events.push(SimEvent::RelayTurned {
@@ -234,5 +258,67 @@ mod tests {
             sim.step();
         }
         assert!(beam_reach(&sim.gadgets[0].state) < RELAYS);
+    }
+
+    #[test]
+    fn shooting_the_lamps_in_order_charges_and_a_wrong_one_starts_over() {
+        let rules = Rules {
+            match_time: 1000.0,
+            spawn_protect: 0.0,
+            pickup_pairs: 0,
+            powerup_pairs: 0,
+            turret_range: 0.0,
+            event_first: (5000.0, 5000.0),
+            mode: GameMode::Megatarget,
+            secondary: SecondaryKind::Sequence,
+            ..Rules::default()
+        };
+        let mut sim = Sim::new(9, rules);
+        let red = sim.add_player("red", Some(Team::Red), false).unwrap();
+        let blue = sim.add_player("blue", Some(Team::Blue), false).unwrap();
+        let (a, b) = sim.level.mega.as_ref().unwrap().pockets[0];
+        sim.teleport(red, (a + b) / 2.0, 0.0);
+        sim.step();
+        let lamp = |sim: &mut Sim, id: PlayerId, i: usize| {
+            let team = sim.player(id).unwrap().team;
+            let (p, n) = sim.level.mega.as_ref().unwrap().lamps[0][i];
+            let bolt = Bolt {
+                id: 0,
+                owner: id,
+                owner_team: team,
+                team: Some(team),
+                pos: p + n * 1.5,
+                vel: -n * 40.0,
+                life: 1.0,
+                extra: BoltExtra::default(),
+            };
+            let (side, j, q) = sim.gadget_hit(bolt.pos, p).expect("hits it");
+            assert_eq!((side, j), (0, i));
+            sim.gadget_shot(side, j, &bolt, q);
+            for _ in 0..(0.4 / TICK) as usize {
+                sim.step();
+            }
+        };
+        let seq = sequence(sim.gadgets[0].seed);
+        lamp(&mut sim, red, seq[0] as usize);
+        lamp(&mut sim, red, seq[1] as usize);
+        assert_eq!(sim.gadgets[0].state[0], 2);
+        // Blue shoots one out of turn: over again.
+        let wrong = (0..LAMPS).find(|&l| l as u8 != seq[2]).unwrap();
+        lamp(&mut sim, blue, wrong);
+        assert_eq!(sim.gadgets[0].state[0], 0);
+        sim.drain_events();
+        for &l in &seq {
+            lamp(&mut sim, red, l as usize);
+        }
+        let ev = sim.drain_events();
+        assert!(
+            ev.iter()
+                .any(|e| matches!(e, SimEvent::SequenceDone { side: 0, .. }))
+        );
+        assert!(
+            ev.iter()
+                .any(|e| matches!(e, SimEvent::SecondaryHit { by, side: 0, .. } if *by == red))
+        );
     }
 }

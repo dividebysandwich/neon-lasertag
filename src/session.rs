@@ -382,8 +382,17 @@ fn dev_script(
                         return;
                     };
                     let (a, b) = m.pockets[0];
-                    let feet = Vec3::new((a.x + b.x) / 2.0, 0.0, b.z - 1.0);
-                    let to = m.relay_route[0][2] - (feet + Vec3::Y * 1.65);
+                    // (A sequence puzzle's: by the outer wall, looking at the target.)
+                    let (feet, at) = if sim.secondary[0] == lt_sim::rules::SecondaryKind::Sequence {
+                        let feet = Vec3::new(a.x + 0.7, 0.0, (a.z + b.z) / 2.0);
+                        (feet, m.secondaries[0].centre() + Vec3::Y * 0.2)
+                    } else {
+                        (
+                            Vec3::new((a.x + b.x) / 2.0, 0.0, b.z - 1.0),
+                            m.relay_route[0][2],
+                        )
+                    };
+                    let to = at - (feet + Vec3::Y * 1.65);
                     let yaw = lt_sim::sim::yaw_of(to);
                     sim.teleport(me, feet, yaw);
                     (yaw, (to.y / to.length()).asin())

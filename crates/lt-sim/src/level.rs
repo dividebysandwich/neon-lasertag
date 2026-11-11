@@ -945,6 +945,10 @@ pub struct Mega {
     /// relays, the receiver over the target.
     #[serde(default)]
     pub relay_route: [[Vec3; crate::gadgets::RELAYS + 2]; 2],
+    /// Per pocket: the sequence puzzle's lamps (`crate::gadgets`) on its walls, and the ways
+    /// they face.
+    #[serde(default)]
+    pub lamps: [[(Vec3, Vec3); crate::gadgets::LAMPS]; 2],
 }
 
 /// Turrets' gun height and the megatarget's size.
@@ -1010,6 +1014,13 @@ impl Mega {
             Vec3::new(xo, y, 0.0),
             Vec3::new(back - 0.12, y, 0.0),
         ];
+        // The sequence puzzle's lamps: two on the outer wall, two on the target's either side.
+        let lamps = [
+            (Vec3::new(-hw + 0.08, 2.0, -0.9 * CELL), Vec3::X),
+            (Vec3::new(-hw + 0.08, 2.0, 0.9 * CELL), Vec3::X),
+            (Vec3::new(back - 0.08, 2.0, -0.65 * CELL), Vec3::NEG_X),
+            (Vec3::new(back - 0.08, 2.0, 0.65 * CELL), Vec3::NEG_X),
+        ];
         let (a, b) = (mirror_point(pocket.0), mirror_point(pocket.1));
         // The room, in the middle (its +z doorway Red's).
         let d = room.design();
@@ -1041,6 +1052,10 @@ impl Mega {
             inner: d.inner.clone(),
             shields: [shields[0], shields[1]],
             relay_route: [route, route.map(mirror_point)],
+            lamps: [
+                lamps,
+                lamps.map(|(p, n)| (mirror_point(p), mirror_point(n))),
+            ],
         }
     }
 

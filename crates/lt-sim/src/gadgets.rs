@@ -6,6 +6,10 @@
 //!   prism a quarter turn (anyone's: enemies can put it out again); with every one turned
 //!   right (state 0) the beam reaches the receiver and charges the shooter.
 //!
+//! - lamps (`SecondaryKind::Sequence`): `LAMPS` lamps on the pocket's walls flash a sequence
+//!   of `STEPS` (`sequence`, over and over while nobody's into it: `show`); shooting them in
+//!   that order charges the shooter; a lamp out of turn (anyone's) starts it over.
+//!
 //! Everything follows from a seed, as the consoles' puzzles: the sim sends the seed and the
 //! pieces' states.
 
@@ -23,12 +27,20 @@ pub const PIECE_R: f32 = 0.38;
 /// reaches the receiver (before the relays are scrambled again).
 pub const LOCK: f32 = 0.3;
 pub const HOLD: f32 = 1.5;
+/// Lamps in a pocket, and steps in their sequence.
+pub const LAMPS: usize = 4;
+pub const STEPS: usize = 5;
+/// The show: each step this long (lit for `SHOW_LIT` of it), then a pause.
+pub const SHOW_STEP: f32 = 0.7;
+pub const SHOW_LIT: f32 = 0.5;
+pub const SHOW_PAUSE: f32 = 1.6;
 
 /// The pieces bolts hit in secondary target `side`'s pocket, by its kind (none: not a shooting
 /// puzzle).
 pub fn pieces(m: &Mega, kind: SecondaryKind, side: usize) -> Vec<Vec3> {
     match kind {
         SecondaryKind::Relay => m.relay_route[side][1..=RELAYS].to_vec(),
+        SecondaryKind::Sequence => m.lamps[side].iter().map(|l| l.0).collect(),
         _ => Vec::new(),
     }
 }
@@ -80,6 +92,30 @@ pub fn relay_start(seed: u32) -> Vec<u8> {
     }
 }
 
+/// The lamps' sequence for `seed` (no lamp twice in a row).
+pub fn sequence(seed: u32) -> [u8; STEPS] {
+    let mut rng = ChaCha8Rng::seed_from_u64(seed as u64 ^ 0x5E9_0E9CE);
+    let mut s = [0u8; STEPS];
+    for i in 0..STEPS {
+        loop {
+            let l = rng.random_range(0..LAMPS as u8);
+            if i == 0 || s[i - 1] != l {
+                s[i] = l;
+                break;
+            }
+        }
+    }
+    s
+}
+
+/// The show at `secs` into the match: the lamp flashing then, if any.
+pub fn show(seq: &[u8; STEPS], secs: f32) -> Option<u8> {
+    let cycle = STEPS as f32 * SHOW_STEP + SHOW_PAUSE;
+    let t = secs.rem_euclid(cycle);
+    let step = (t / SHOW_STEP) as usize;
+    (step < STEPS && t - step as f32 * SHOW_STEP < SHOW_LIT).then(|| seq[step])
+}
+
 /// How far the beam gets: the relays turned right from the emitter on (all: it reaches the
 /// receiver).
 pub fn beam_reach(state: &[u8]) -> usize {
@@ -122,6 +158,40 @@ mod tests {
                     assert!(world.ray(eye, *p - d * PIECE_R).is_none(), "seed {seed}");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn lamps_hang_on_the_pocket_walls_in_sight() {
+        for seed in 0..12 {
+            let level = Level::generate_for(seed, ArenaSize::Medium, GameMode::Megatarget);
+            let m = level.mega.as_ref().unwrap();
+            let world = level.world();
+            for side in 0..2 {
+                let (a, b) = m.pockets[side];
+                let eye = (a + b) / 2.0 + Vec3::Y * 1.6;
+                for &(p, n) in &m.lamps[side] {
+                    // Against a wall right behind it, in sight from the pocket.
+                    assert!(world.ray(p, p - n * 0.3).is_some(), "seed {seed}: no wall");
+                    let d = (p - eye).normalize();
+                    assert!(world.ray(eye, p - d * PIECE_R).is_none(), "seed {seed}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn sequences_never_repeat_a_lamp_in_a_row_and_show_each_step() {
+        for seed in 0..100 {
+            let s = sequence(seed);
+            assert!(s.windows(2).all(|w| w[0] != w[1]));
+            let shown: Vec<u8> = (0..500)
+                .filter_map(|k| show(&s, k as f32 * 0.01))
+                .collect::<Vec<_>>()
+                .chunk_by(|a, b| a == b)
+                .map(|c| c[0])
+                .collect();
+            assert_eq!(shown, s.to_vec(), "seed {seed}");
         }
     }
 

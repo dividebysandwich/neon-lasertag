@@ -44,7 +44,7 @@ impl Plugin for MegaPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            (on_events, animate, animate_relays)
+            (on_events, animate, animate_relays, animate_lamps)
                 .chain()
                 .run_if(resource_exists::<Game>),
         );
@@ -118,6 +118,7 @@ pub fn spawn(
     spawn_core(commands, m, palette, meshes, accents, glows);
     spawn_secondaries(commands, m, secondary, palette, meshes, accents);
     spawn_relays(commands, m, secondary, palette, meshes, accents);
+    spawn_lamps(commands, m, secondary, palette, meshes, accents);
     spawn_turrets(commands, m, palette, meshes, accents);
     spawn_shields(commands, m, meshes, accents, glows, assets);
 }
@@ -461,6 +462,171 @@ fn spawn_relays(
             stub,
             receiver,
         });
+    }
+}
+
+/// The sequence puzzle's lamps' colours.
+const LAMP_COLORS: [Vec3; lt_sim::gadgets::LAMPS] = [
+    Vec3::new(0.1, 0.9, 1.0),
+    Vec3::new(1.0, 0.2, 0.85),
+    Vec3::new(1.0, 0.85, 0.1),
+    Vec3::new(0.25, 1.0, 0.3),
+];
+
+/// A secondary target that's a sequence puzzle: its lamps (flashing the sequence while nobody
+/// is into it) and the pips over the target counting the steps shot.
+#[derive(Component)]
+struct LampView {
+    side: usize,
+    lamps: [Handle<AccentMaterial>; lt_sim::gadgets::LAMPS],
+    pips: [Handle<AccentMaterial>; lt_sim::gadgets::STEPS],
+    /// The flash after a shot on each lamp (and whether it was the right one).
+    flash: [(f32, bool); lt_sim::gadgets::LAMPS],
+}
+
+fn spawn_lamps(
+    commands: &mut Commands,
+    m: &Mega,
+    secondary: [lt_sim::rules::SecondaryKind; 2],
+    palette: &Palette,
+    meshes: &mut Assets<Mesh>,
+    accents: &mut Assets<AccentMaterial>,
+) {
+    use lt_sim::gadgets::{LAMPS, PIECE_R, STEPS};
+    let disc = meshes.add(Cylinder::new(PIECE_R * 0.8, 0.05));
+    let back = meshes.add(Cylinder::new(PIECE_R + 0.04, 0.03));
+    let ring = meshes.add(Torus::new(PIECE_R * 0.85, PIECE_R + 0.02));
+    let pip = meshes.add(Cuboid::new(0.1, 0.1, 0.03));
+    for side in 0..2 {
+        if secondary[side] != lt_sim::rules::SecondaryKind::Sequence {
+            continue;
+        }
+        let root = commands
+            .spawn((
+                ArenaPart,
+                Transform::IDENTITY,
+                Visibility::default(),
+                Name::new("lamps"),
+            ))
+            .id();
+        let lamps: [Handle<AccentMaterial>; LAMPS] = std::array::from_fn(|i| {
+            let (p, n) = m.lamps[side][i];
+            let mat = accent(accents, LAMP_COLORS[i], 0.6);
+            // (Cylinders stand along y: turned to face out of the wall.)
+            let rot = Quat::from_rotation_arc(Vec3::Y, n);
+            commands.spawn((
+                Mesh3d(back.clone()),
+                MeshMaterial3d(palette.suit.clone()),
+                Transform::from_translation(p - n * 0.04).with_rotation(rot),
+                ChildOf(root),
+            ));
+            commands.spawn((
+                Mesh3d(disc.clone()),
+                MeshMaterial3d(mat.clone()),
+                Transform::from_translation(p).with_rotation(rot),
+                ChildOf(root),
+            ));
+            let frame = accent(accents, LAMP_COLORS[i], 3.0);
+            commands.spawn((
+                Mesh3d(ring.clone()),
+                MeshMaterial3d(frame),
+                Transform::from_translation(p + n * 0.01).with_rotation(rot),
+                ChildOf(root),
+            ));
+            mat
+        });
+        // The pips: a row over the target.
+        let t = m.secondaries[side];
+        let right = Vec3::Y.cross(t.normal);
+        let face = t.centre() + t.normal * 0.12 + Vec3::Y * 0.6;
+        let pips: [Handle<AccentMaterial>; STEPS] = std::array::from_fn(|k| {
+            let mat = accent(accents, TO_HIT, 0.5);
+            commands.spawn((
+                Mesh3d(pip.clone()),
+                MeshMaterial3d(mat.clone()),
+                Transform::from_translation(face + right * ((k as f32 - 2.0) * 0.16))
+                    .with_rotation(facing(t.normal)),
+                ChildOf(root),
+            ));
+            mat
+        });
+        commands.entity(root).insert(LampView {
+            side,
+            lamps,
+            pips,
+            flash: [(0.0, true); LAMPS],
+        });
+    }
+}
+
+fn animate_lamps(
+    time: Res<Time>,
+    game: Res<Game>,
+    mut events: MessageReader<GameEvent>,
+    mut views: Query<&mut LampView>,
+    mut accents: ResMut<Assets<AccentMaterial>>,
+) {
+    use lt_sim::gadgets::{LAMPS, STEPS, sequence, show};
+    let shots: Vec<(usize, usize, bool)> = events
+        .read()
+        .filter_map(|GameEvent(e)| match *e {
+            SimEvent::LampShot { side, lamp, ok, .. } => Some((side as usize, lamp as usize, ok)),
+            _ => None,
+        })
+        .collect();
+    let dt = time.delta_secs();
+    let t = time.elapsed_secs();
+    // (The show by the sim's clock, the same on every machine.)
+    let secs = game.snap.tick as f32 * lt_sim::TICK;
+    for mut v in &mut views {
+        let side = v.side;
+        let Some(g) = game.snap.gadgets.get(side) else {
+            continue;
+        };
+        for &(s, l, ok) in &shots {
+            if s == side && l < LAMPS {
+                v.flash[l] = (1.0, ok);
+            }
+        }
+        let seq = sequence(g.seed);
+        let done = g.state.first().copied().unwrap_or(0) as usize;
+        let lit = if g.hold <= 0.0 && done == 0 {
+            show(&seq, secs)
+        } else {
+            None
+        };
+        for i in 0..LAMPS {
+            let (f, ok) = v.flash[i];
+            v.flash[i].0 = (f - dt * 2.5).max(0.0);
+            let mut c = LAMP_COLORS[i];
+            let mut k = if lit == Some(i as u8) { 9.0 } else { 0.6 };
+            if g.hold > 0.0 {
+                k = 5.0 + 4.0 * (t * 12.0 + i as f32).sin();
+            }
+            if f > 0.0 {
+                c = c.lerp(
+                    if ok {
+                        Vec3::ONE
+                    } else {
+                        Vec3::new(1.0, 0.05, 0.05)
+                    },
+                    f,
+                );
+                k += 8.0 * f;
+            }
+            if let Some(mut m) = accents.get_mut(&v.lamps[i]) {
+                m.neon.color = c.extend(k);
+            }
+        }
+        for k in 0..STEPS {
+            if let Some(mut m) = accents.get_mut(&v.pips[k]) {
+                m.neon.color = if g.hold > 0.0 || k < done {
+                    DONE.extend(5.0)
+                } else {
+                    TO_HIT.extend(0.5)
+                };
+            }
+        }
     }
 }
 
