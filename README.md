@@ -62,9 +62,13 @@ Pick the mode in the Botmatch or host menu, or with `--mode`.
 | **Infection** (`infection`) | Phantoms against survivors: survive, or infect everyone. |
 
 **Megatarget.** The megatarget sits in a sealed room in the middle, behind forcefields that tag
-out anyone who walks in. Hit both secondary targets at the arena's edges to pass the
-forcefields for 60 s, then hit the megatarget. The secondary targets are guarded by turrets;
-shoot the yellow target above a turret to switch it off for 15 s.
+out anyone who walks in. Charge up at both secondary targets at the arena's edges to pass the
+forcefields for 60 s. Each secondary target has its own way of charging you, picked at random
+per arena: shoot it, align its relays, solve its circuit or pattern, or shoot its lamps in
+sequence (see [Puzzles and consoles](#puzzles-and-consoles); `--secondary` picks one for both).
+In the room, the megatarget is dormant until you solve the console under it; then hit it. The
+secondary targets are guarded by turrets; shoot the yellow target above a turret to switch it
+off for 15 s.
 
 **Classic.** Each team's targets hang under a roof deep in its half and can only be hit from
 behind or from the level around them.
@@ -101,6 +105,48 @@ they're in the game; infecting everyone ends the match and gives the phantoms 10
   piece with the index finger of a hand without a gun and pull that hand's trigger.
 
   <img width="1254" height="1085" alt="image" src="https://github.com/user-attachments/assets/8a8b9c01-1345-47b5-ab17-ff5e25e46b20" />
+
+### Puzzles and consoles
+
+Puzzles glow on their own, so they stay readable in a blackout. On the flat screen you aim at a
+puzzle within reach and click (the blaster holds fire). In VR you point with the index finger
+of your free hand and pull that hand's trigger. Team mates can carry on with each other's work.
+
+**Click puzzles**, on turret boxes, consoles, secondary targets and the megatarget's console:
+
+| | |
+|---|---|
+| <img src="docs/screenshots/slide.jpg" width="420"> | **Sliding puzzle.** Click a piece to slide it into the square from its side, and click it again to slide it back out. Fill the square. One piece or more is a key: slide it in too early and another can't get past it. |
+| <img src="docs/screenshots/circuit.jpg" width="420"> | **Circuit.** Click a tile to turn it a quarter turn. Connect the current from the cyan stub on the left to the yellow one on the right. Tiles with current glow. |
+| <img src="docs/screenshots/pattern.jpg" width="420"> | **Pattern.** Click a light to switch it on or off. Light exactly the framed cells. A lit cell glows green when it's framed and pink when it isn't. |
+
+**Shooting puzzles**, at secondary targets in Megatarget mode:
+
+| | |
+|---|---|
+| <img src="docs/screenshots/relay.jpg" width="420"> | **Relays.** Three mirrors hang over the pocket. Each shot turns a mirror a quarter turn, and anyone's shot counts, so enemies can put one out of line again. Line them all up (they turn cyan) so the beam reaches the receiver over the target. |
+| <img src="docs/screenshots/sequence.jpg" width="420"> | **Sequence.** Four coloured lamps flash a sequence of five. Shoot them in that order. A lamp shot out of turn, by anyone, starts it over. The pips over the target count your progress. |
+
+Solving a secondary target's puzzle, or shooting the last relay or lamp, charges you and your
+team mates standing in that pocket.
+
+**The megatarget's console.** It stands in the middle of the room under the megatarget. Only
+players with the power, inside the room, can click it. Solving it energizes the megatarget for
+you: it lights up and spins, and your hits count.
+
+<img src="docs/screenshots/core.jpg" width="420">
+
+**Consoles** stand in each half of every mode: two kinds in a small arena, three in a medium one,
+all five in a large one. Each shows a hologram of what it does over a click puzzle. Solve it
+and it works for your team; the bars along its top fill while it resets.
+
+| | |
+|---|---|
+| <img src="docs/screenshots/vault.jpg" width="420"> | **Supply vault.** Hands you a special weapon: shotgun, charge gun, ricochet rifle, prism lance or dual pistols. It then resets for a minute. |
+| <img src="docs/screenshots/mast.jpg" width="420"> | **Sensor mast.** For 20 s, every 2 s, it shows your team the enemies within 18 m, through walls, and strips their cloaks. Nobody can switch it off or take it over until it's done. |
+| <img src="docs/screenshots/beacon.jpg" width="420"> | **Forward beacon** (not in Infection). Your team respawns at it most of the time while no enemy is within 8 m. A column of light in your team's colour marks it. The other team takes it over by solving its puzzle. |
+| <img src="docs/screenshots/breaker.jpg" width="420"> | **Blackout breaker.** The quarter of the arena it stands in goes dark for 20 s. Only shots, players, pickups and puzzles glow there, and bots see less far. |
+| <img src="docs/screenshots/bridge.jpg" width="420"> | **Light bridge.** For 25 s a hard-light walkway stands a storey above the upper floor, from your half across the middle to the other. Its ramps lead up from the upper floor, and its low rails let you shoot down over the arena. Anyone can use it, and whoever is on it when it fades falls. |
 
 ### Arena events
 
