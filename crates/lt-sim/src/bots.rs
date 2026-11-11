@@ -3657,10 +3657,26 @@ mod tests {
         assert!(found > 3, "{found}");
     }
 
+    /// Runs `f` for each seed on its own thread. Bot play varies a lot from one level to the
+    /// next, so these tests pool many seeds rather than lean on a few lucky ones.
+    fn on_seeds<T: Send>(
+        seeds: impl IntoIterator<Item = u64>,
+        f: impl Fn(u64) -> T + Sync,
+    ) -> Vec<T> {
+        let f = &f;
+        std::thread::scope(|s| {
+            let hs: Vec<_> = seeds
+                .into_iter()
+                .map(|seed| s.spawn(move || f(seed)))
+                .collect();
+            hs.into_iter().map(|h| h.join().unwrap()).collect()
+        })
+    }
+
     #[test]
     fn bots_solve_turret_box_puzzles_and_switch_turrets_off() {
-        let (mut solved, mut off, mut turret_tags) = (0, 0, 0);
-        for seed in 1..=3 {
+        let runs = on_seeds(1..=6, |seed| {
+            let (mut solved, mut off, mut turret_tags) = (0, 0, 0);
             let mut sim = Sim::new(seed, Rules::default());
             assert!(!sim.level.boxes.is_empty(), "seed {seed}: no turret boxes");
             let mut bots = Bots::default();
@@ -3680,18 +3696,25 @@ mod tests {
                     }
                 }
             }
-        }
-        println!("solved {solved}, turrets off {off}, tagged out by turrets {turret_tags}");
-        assert!(solved >= 3, "solved {solved}");
-        assert!(off >= 1, "turrets off {off}");
+            println!(
+                "seed {seed}: solved {solved}, turrets off {off}, tagged out by turrets {turret_tags}"
+            );
+            (solved, off)
+        });
+        let solving = runs.iter().filter(|r| r.0 > 0).count();
+        let off: usize = runs.iter().map(|r| r.1).sum();
+        assert!(
+            solving * 3 >= runs.len() * 2,
+            "puzzles solved on too few seeds: {runs:?}"
+        );
+        assert!(off >= 3, "turrets off: {runs:?}");
     }
 
     #[test]
     fn bots_solve_consoles() {
-        let mut solved: std::collections::HashMap<crate::console::ConsoleKind, u32> =
-            Default::default();
-        let mut present = std::collections::HashSet::new();
-        for seed in 1..=4 {
+        use crate::console::ConsoleKind;
+        use std::collections::HashMap;
+        let runs = on_seeds(1..=10, |seed| {
             let mut sim = Sim::new(
                 seed,
                 Rules {
@@ -3700,7 +3723,10 @@ mod tests {
                 },
             );
             assert!(!sim.console_defs().is_empty(), "seed {seed}: no consoles");
-            present.extend(sim.console_defs().iter().map(|d| d.kind));
+            let mut n: HashMap<ConsoleKind, (u32, u32)> = HashMap::new();
+            for d in sim.console_defs() {
+                n.entry(d.kind).or_default().0 += 1;
+            }
             let mut bots = Bots::default();
             bots.fill(&mut sim, 8, 0.6);
             for _ in 0..(180.0 / TICK) as usize {
@@ -3708,16 +3734,28 @@ mod tests {
                 sim.step();
                 for e in sim.drain_events() {
                     if let SimEvent::ConsoleSolved { kind, .. } = e {
-                        *solved.entry(kind).or_default() += 1;
+                        n.entry(kind).or_default().1 += 1;
                     }
                 }
             }
+            n
+        });
+        // Per kind: (seeds it appeared on, seeds bots solved it on).
+        let mut seeds: HashMap<ConsoleKind, (usize, usize)> = HashMap::new();
+        for run in &runs {
+            for (kind, &(present, solved)) in run {
+                let e = seeds.entry(*kind).or_default();
+                e.0 += (present > 0) as usize;
+                e.1 += (solved > 0) as usize;
+            }
         }
-        println!("consoles solved {solved:?}");
-        for kind in present {
+        println!("console kinds (seeds present, seeds solved): {seeds:?}");
+        for (kind, (present, solved)) in seeds {
+            // Each kind goes unsolved on a fair share of single seeds; bots must still get to
+            // it on a good fraction of the levels it appears in.
             assert!(
-                solved.get(&kind).copied().unwrap_or(0) >= 1,
-                "{kind:?}: {solved:?}"
+                solved * 4 >= present,
+                "{kind:?}: solved on {solved} of {present} seeds"
             );
         }
     }
@@ -3903,8 +3941,7 @@ mod tests {
 
     fn bots_go_for_the_megatarget_with(secondary: crate::rules::SecondaryKind) {
         println!("secondary targets: {secondary:?}");
-        let mut totals = [0usize; 6];
-        for seed in [3u64, 8] {
+        let runs = on_seeds([3u64, 8, 11, 14], |seed| {
             let mut sim = Sim::new(
                 seed,
                 Rules {
@@ -3939,12 +3976,19 @@ mod tests {
                  turrets off {}, zapped {}, scores {:?}",
                 n[0], n[1], n[2], n[3], n[4], n[5], sim.scores
             );
+            n
+        });
+        let mut totals = [0usize; 6];
+        for n in &runs {
             for k in 0..6 {
                 totals[k] += n[k];
             }
         }
-        assert!(totals[0] >= 6, "secondaries hit: {totals:?}");
-        assert!(totals[2] >= 1, "the megatarget hit: {totals:?}");
+        // Secondaries get hit plenty on every level; the megatarget itself only a handful of
+        // times a match, and now and then not at all, hence the pooled seeds.
+        assert!(totals[0] >= 12 * runs.len(), "secondaries hit: {totals:?}");
+        let mega_seeds = runs.iter().filter(|n| n[2] > 0).count();
+        assert!(mega_seeds * 2 >= runs.len(), "the megatarget hit: {runs:?}");
         assert_eq!(totals[3], 0, "bots keep out of forcefields: {totals:?}");
     }
 }
