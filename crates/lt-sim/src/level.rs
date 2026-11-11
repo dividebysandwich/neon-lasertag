@@ -1558,9 +1558,22 @@ impl Level {
 
     /// The jump pad under feet standing at `feet`, if any.
     pub fn pad_at(&self, feet: Vec3) -> Option<&JumpPad> {
+        self.pad_crossed(feet, feet, PAD_RADIUS)
+    }
+
+    /// The jump pad feet moving from `from` to `to` (standing at `to`) crossed within `radius`
+    /// of its middle, if any: on the way, not only where they ended up, so how often the moves
+    /// are taken (the sim's ticks, the client's frames) doesn't change whether a pad is hit.
+    /// (A step longer than `MAX_STEP` is a jump to somewhere else: only where it ends counts.)
+    pub fn pad_crossed(&self, from: Vec3, to: Vec3, radius: f32) -> Option<&JumpPad> {
+        const MAX_STEP: f32 = 1.5;
+        let (a, b) = (glam::Vec2::new(from.x, from.z), glam::Vec2::new(to.x, to.z));
+        let a = if a.distance(b) > MAX_STEP { b } else { a };
         self.pads.iter().find(|p| {
-            (feet.y - p.pos.y).abs() < 0.2
-                && (feet.x - p.pos.x).powi(2) + (feet.z - p.pos.z).powi(2) < PAD_RADIUS * PAD_RADIUS
+            let c = glam::Vec2::new(p.pos.x, p.pos.z);
+            let ab = b - a;
+            let k = ((c - a).dot(ab) / ab.length_squared().max(1e-9)).clamp(0.0, 1.0);
+            (to.y - p.pos.y).abs() < 0.2 && (a + ab * k).distance_squared(c) < radius * radius
         })
     }
 
@@ -4436,6 +4449,21 @@ mod tests {
                 assert_eq!(a.mirrors, b.mirrors);
             }
         }
+    }
+
+    #[test]
+    fn walking_across_a_pads_edge_between_steps_hits_it() {
+        let (_, level) = seeds().find(|(_, l)| !l.pads.is_empty()).unwrap();
+        let p = level.pads[0];
+        // Past its middle 0.5 m off, in steps that start and end off the pad.
+        let side = Vec3::X * 0.5;
+        let (a, b) = (p.pos + side - Vec3::Z * 0.7, p.pos + side + Vec3::Z * 0.7);
+        assert!(level.pad_at(a).is_none() && level.pad_at(b).is_none());
+        assert!(level.pad_crossed(a, b, PAD_RADIUS).is_some());
+        assert!(level.pad_crossed(a, b, 0.4).is_none());
+        // (A jump across the arena isn't a walk over every pad on the way.)
+        let far = (p.pos - Vec3::Z * 5.0, p.pos + side + Vec3::Z * 5.0);
+        assert!(level.pad_crossed(far.0, far.1, PAD_RADIUS).is_none());
     }
 
     #[test]

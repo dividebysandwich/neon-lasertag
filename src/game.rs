@@ -753,10 +753,14 @@ fn predict(
     let Some(me) = game.me else { return };
     // (Where the sim put the player: the snapshot shown may not have them there yet, and the
     // prediction would walk them back.)
-    let respawned = events.read().fold(None, |at, e| match e.0 {
-        SimEvent::Respawned { player, pos } if player == me => Some(pos),
-        _ => at,
-    });
+    let (mut respawned, mut launched) = (None, None);
+    for e in events.read() {
+        match e.0 {
+            SimEvent::Respawned { player, pos } if player == me => respawned = Some(pos),
+            SimEvent::Launched { player, pos } if player == me => launched = Some(pos),
+            _ => {}
+        }
+    }
     mover.since_moved = if respawned.is_some() {
         0.0
     } else {
@@ -840,9 +844,22 @@ fn predict(
     let (feet, mut vy) = game.world.move_body_g(mover.feet, delta, vy, dt, g);
     let flying = mover.air != Vec2::ZERO;
     let mut air = mover.air;
-    if let Some((up, throw)) = lt_sim::sim::pad_step(&game.level, feet, vy, &mut air) {
+    if let Some((up, throw)) = lt_sim::sim::pad_step(
+        &game.level,
+        mover.feet,
+        feet,
+        lt_sim::sim::PREDICT_PAD_RADIUS,
+        vy,
+        &mut air,
+    ) {
         vy = up;
         air = throw;
+    } else if !flying && let Some(pad) = launched.and_then(|at| game.level.pad_crossed(at, at, 1.0))
+    {
+        // The sim threw the player from a pad's edge the prediction passed by: thrown too
+        // (else the sim's player flies off while the predicted one walks on, and the two part).
+        vy = pad.launch.y;
+        air = Vec2::new(pad.launch.x, pad.launch.z);
     }
     mover.air = air;
     // Walking into a wall stops the movement into it.

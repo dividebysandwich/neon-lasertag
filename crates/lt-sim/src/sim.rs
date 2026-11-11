@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::collide::{BODY_HEIGHT, BODY_RADIUS, GRAVITY, World};
 use crate::hitbox::first_hit;
-use crate::level::{GameMode, Ground, Level, MoverKind, Panel};
+use crate::level::{GameMode, Ground, Level, MoverKind, PAD_RADIUS, Panel};
 use crate::rules::Rules;
 use crate::shot::{BoltTarget, Contact, Gun, HitClaim, Shot, Trigger, bolt_contact, on_box};
 use crate::types::*;
@@ -1558,6 +1558,7 @@ impl Sim {
             }
             let p = &mut self.players[i];
             let fall = -p.vy;
+            let from = p.feet;
             p.feet = feet;
             p.vy = vy;
             if vy == 0.0 && fall > LAND_SPEED {
@@ -1568,7 +1569,7 @@ impl Sim {
                 });
             }
             // Jump pads: down again, and thrown up.
-            if let Some((vy, air)) = pad_step(&self.level, feet, vy, &mut p.air) {
+            if let Some((vy, air)) = pad_step(&self.level, from, feet, PAD_RADIUS, vy, &mut p.air) {
                 p.vy = vy;
                 p.air = air;
                 self.events.push(SimEvent::Launched {
@@ -3756,18 +3757,31 @@ pub fn air_control(air: Vec2) -> f32 {
     if air == Vec2::ZERO { 1.0 } else { 0.25 }
 }
 
-/// Jump pads, after a body's move (the sim's and the client's prediction alike): on landing
-/// the flight's horizontal velocity `air` is gone; standing on a pad, the vertical speed and
-/// horizontal velocity it throws the body with.
-pub fn pad_step(level: &Level, feet: Vec3, vy: f32, air: &mut Vec2) -> Option<(f32, Vec2)> {
+/// Jump pads, after a body's move from `from` to `feet` (the sim's and the client's prediction
+/// alike): on landing the flight's horizontal velocity `air` is gone; on the ground, having
+/// crossed a pad within `radius` of its middle, the vertical speed and horizontal velocity it
+/// throws the body with. The sim takes `PAD_RADIUS`, the client's prediction
+/// [`PREDICT_PAD_RADIUS`]: a little less, so that whenever it throws the player the sim does too
+/// (it follows the predicted feet but samples them only every tick).
+pub fn pad_step(
+    level: &Level,
+    from: Vec3,
+    feet: Vec3,
+    radius: f32,
+    vy: f32,
+    air: &mut Vec2,
+) -> Option<(f32, Vec2)> {
     if vy != 0.0 {
         return None;
     }
     *air = Vec2::ZERO;
     level
-        .pad_at(feet)
+        .pad_crossed(from, feet, radius)
         .map(|p| (p.launch.y, Vec2::new(p.launch.x, p.launch.z)))
 }
+
+/// The client's prediction's jump pad radius (see [`pad_step`]).
+pub const PREDICT_PAD_RADIUS: f32 = crate::level::PAD_RADIUS - 0.15;
 
 /// Yaw (0 = facing -Z) of a horizontal direction.
 pub fn yaw_of(dir: Vec3) -> f32 {
