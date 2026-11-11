@@ -455,6 +455,26 @@ pub struct Mover {
     /// Seconds since the sim last put the player somewhere (`SimEvent::Respawned`): the
     /// snapshots shown catch up only a little later.
     since_moved: f32,
+    /// Where the prediction had the feet lately (when, feet), newest last: the server's
+    /// position comes a round trip late, so it's checked against these, not the newest.
+    trail: std::collections::VecDeque<(f32, Vec3)>,
+}
+
+/// How far back the prediction's trail goes (s): a round trip and the server's queue fit.
+const TRAIL_TIME: f32 = 1.0;
+/// How far the server may have the player from everywhere the prediction had them lately
+/// before the prediction starts over from the server's position (m).
+const TRAIL_SLACK: f32 = 2.0;
+
+impl Mover {
+    /// Whether the sim's `feet` are far from everywhere the prediction had them lately.
+    fn lost(&self, feet: Vec3) -> bool {
+        (self.feet - feet).length() > TRAIL_SLACK
+            && self
+                .trail
+                .iter()
+                .all(|(_, f)| (*f - feet).length() > TRAIL_SLACK)
+    }
 }
 
 /// Drawing the actors (after the prediction and the VR poses).
@@ -786,7 +806,7 @@ fn predict(
         || mover.seed != game.level.seed
         || p.respawn.is_some()
         || respawned.is_some()
-        || (mover.feet - p.feet).length() > 2.0 && mover.since_moved > 0.5
+        || mover.lost(p.feet) && mover.since_moved > 0.5
     {
         mover.feet = respawned.unwrap_or(p.feet);
         mover.vy = 0.0;
@@ -799,6 +819,7 @@ fn predict(
         };
         mover.valid = true;
         mover.seed = game.level.seed;
+        mover.trail.clear();
     }
     if p.respawn.is_some() {
         local.cmd.feet = None;
@@ -878,6 +899,15 @@ fn predict(
     }
     mover.feet = feet;
     mover.vy = vy;
+    let now = time.elapsed_secs();
+    while mover
+        .trail
+        .front()
+        .is_some_and(|(t, _)| now - *t > TRAIL_TIME)
+    {
+        mover.trail.pop_front();
+    }
+    mover.trail.push_back((now, feet));
     local.cmd.feet = Some(feet);
 }
 
@@ -980,6 +1010,19 @@ pub fn alpha(time: &Time<Fixed>) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_late_server_position_isnt_a_desync() {
+        // A dash at 12 m/s: the server's position, a quarter second late, is 3 m behind.
+        let mut m = Mover::default();
+        for k in 0..=60 {
+            m.feet = Vec3::new(k as f32 * 0.2, 0.0, 0.0);
+            m.trail.push_back((k as f32 / 60.0, m.feet));
+        }
+        assert!(!m.lost(Vec3::new(9.0, 0.0, 0.0)));
+        // Somewhere the prediction never went is.
+        assert!(m.lost(Vec3::new(9.0, 0.0, 5.0)));
+    }
 
     fn snap(tick: u64, x: f32) -> Snapshot {
         thread_local!(static PLAYER: PlayerSnap = {
