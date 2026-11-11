@@ -40,6 +40,9 @@ const DARK: Vec3 = Vec3::new(0.05, 0.05, 0.06);
 /// Circuit wires with current through them, and without.
 const WIRE_ON: Vec3 = Vec3::new(0.15, 1.0, 0.9);
 const WIRE_OFF: Vec3 = Vec3::new(0.35, 0.4, 0.75);
+/// Lights on, and off.
+const LIGHT_ON: Vec3 = Vec3::new(1.0, 0.25, 0.8);
+const LIGHT_OFF: Vec3 = Vec3::new(0.3, 0.32, 0.45);
 
 /// The colour of what a console does (its hologram).
 pub fn kind_color(kind: ConsoleKind) -> Vec3 {
@@ -393,6 +396,7 @@ fn spawn_puzzle(
                     e.color = WIRE_OFF;
                 }
                 // The current's way in (left edge) and out (right edge): fixed stubs.
+                // (Spawned once per face, below.)
                 let stub = meshes.add(Cuboid::new(cell * 0.6, 0.04, 0.014));
                 let ends = [
                     (at(-0.8, cc.source as f32), LEFT, WIRE_ON),
@@ -410,6 +414,21 @@ fn spawn_puzzle(
                         Transform::from_translation(pos + Vec3::Z * 0.016),
                         ChildOf(face_root),
                     ));
+                }
+            }
+            Minigame::Lights(_) => {
+                for (i, e) in elems.iter_mut().enumerate() {
+                    let (c, r) = (i % n, i / n);
+                    let t = commands
+                        .spawn((
+                            Mesh3d(tile.clone()),
+                            MeshMaterial3d(e.mat.clone()),
+                            Transform::from_translation(at(c as f32, r as f32) + Vec3::Z * 0.014),
+                            ChildOf(face_root),
+                        ))
+                        .id();
+                    e.roots.push(t);
+                    e.color = LIGHT_OFF;
                 }
             }
         }
@@ -564,6 +583,15 @@ fn animate(
                     } else {
                         e.color = WIRE_OFF;
                         lit = 0.9;
+                    }
+                }
+                Minigame::Lights(_) => {
+                    if state != 0 {
+                        e.color = LIGHT_ON;
+                        lit = 3.5;
+                    } else {
+                        e.color = LIGHT_OFF;
+                        lit = 0.3;
                     }
                 }
             }
