@@ -1457,7 +1457,10 @@ impl Sim {
             };
             if respawn_now {
                 let team = self.players[i].team;
-                let s = self.pick_spawn(team);
+                let s = match self.beacon_spawn(team) {
+                    Some(s) => s,
+                    None => self.pick_spawn(team),
+                };
                 let p = &mut self.players[i];
                 p.respawn = None;
                 p.hits = 0;
@@ -3425,7 +3428,7 @@ impl Sim {
     }
 
     /// Tags player `pi` out without a shooter (a forcefield, the room's timer).
-    fn zap(&mut self, pi: usize, how: TagHow) {
+    pub(crate) fn zap(&mut self, pi: usize, how: TagHow) {
         let (team, feet) = (self.players[pi].team, self.players[pi].feet);
         let wait = self.respawn_time(team, feet);
         let p = &mut self.players[pi];

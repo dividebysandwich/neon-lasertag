@@ -1765,6 +1765,7 @@ impl Bot {
                 crate::console::ConsoleKind::Vault => p.weapon == crate::types::Weapon::Blaster,
                 // (Locked while it works: open, it's anyone's.)
                 crate::console::ConsoleKind::Mast => true,
+                crate::console::ConsoleKind::Beacon => st.owner != Some(p.team),
             }
     }
 

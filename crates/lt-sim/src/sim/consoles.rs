@@ -248,7 +248,38 @@ impl Sim {
                 st.active = MAST_TIME;
                 st.next_pulse = 0.0;
             }
+            ConsoleKind::Beacon => self.consoles[k].owner = Some(team),
         }
+    }
+
+    /// Where a player of `team` respawns at one of its beacons, if it does this time: in front of
+    /// one of its sides (facing away), `BEACON_SHARE` of the time, while no enemy is near.
+    pub(super) fn beacon_spawn(&mut self, team: Team) -> Option<crate::level::Spawn> {
+        let beacons: Vec<ConsoleDef> = self
+            .console_defs
+            .iter()
+            .zip(&self.consoles)
+            .filter(|(d, s)| d.kind == ConsoleKind::Beacon && s.owner == Some(team))
+            .map(|(d, _)| *d)
+            .filter(|d| {
+                !self.players.iter().any(|p| {
+                    p.alive()
+                        && p.team != team
+                        && p.feet.distance(d.pos) < crate::console::BEACON_CLEAR
+                })
+            })
+            .collect();
+        if beacons.is_empty() || self.rng.random::<f32>() >= crate::console::BEACON_SHARE {
+            return None;
+        }
+        let d = beacons[self.rng.random_range(0..beacons.len())];
+        let f = d.faces()[self.rng.random_range(0..d.nfaces)];
+        let mut pos = f.centre + f.normal * 1.0;
+        pos.y = d.floor;
+        Some(crate::level::Spawn {
+            pos,
+            yaw: super::yaw_of(f.normal),
+        })
     }
 
     /// The consoles' puzzles in play (`console_defs`).
@@ -447,5 +478,44 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn teams_respawn_at_their_beacon_until_the_other_takes_it() {
+        let (mut sim, k, red, blue) = console_sim(ConsoleKind::Beacon, GameMode::Classic);
+        let at = sim.console_defs()[k].pos;
+        to_console(&mut sim, k, red);
+        let i = sim.consoles[k].game.hint(&sim.consoles[k].state).unwrap();
+        click(&mut sim, red, k, i);
+        solve(&mut sim, red, k);
+        assert_eq!(sim.consoles[k].owner, Some(Team::Red));
+        // Red tagged out over and over (Blue far away): mostly back at the beacon.
+        sim.teleport(red, sim.level.base_centre(Team::Blue), 0.0);
+        let mut there = 0;
+        for _ in 0..20 {
+            let pi = sim.players.iter().position(|p| p.id == red).unwrap();
+            sim.zap(pi, crate::types::TagHow::Field);
+            run(&mut sim, 16.0);
+            let p = sim.player(red).unwrap();
+            assert!(p.alive());
+            there += (p.feet.distance(at) < 2.0) as usize;
+            sim.teleport(red, sim.level.base_centre(Team::Blue), 0.0);
+        }
+        assert!((6..=18).contains(&there), "at the beacon {there} of 20");
+        // Blue takes it over (after its rest).
+        run(&mut sim, 5.0);
+        to_console(&mut sim, k, blue);
+        let i = sim.consoles[k].game.hint(&sim.consoles[k].state).unwrap();
+        click(&mut sim, blue, k, i);
+        solve(&mut sim, blue, k);
+        assert_eq!(sim.consoles[k].owner, Some(Team::Blue));
+    }
+
+    #[test]
+    fn no_beacons_in_infection() {
+        for seed in 0..12 {
+            let level = Level::generate_for(seed, ArenaSize::Large, GameMode::Infection);
+            assert!(!level.consoles.iter().any(|c| c.kind == ConsoleKind::Beacon));
+        }
     }
 }

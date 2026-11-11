@@ -49,6 +49,7 @@ pub fn kind_color(kind: ConsoleKind) -> Vec3 {
     match kind {
         ConsoleKind::Vault => Vec3::new(1.0, 0.75, 0.1),
         ConsoleKind::Mast => Vec3::new(0.2, 1.0, 0.55),
+        ConsoleKind::Beacon => Vec3::new(0.7, 0.45, 1.0),
     }
 }
 
@@ -63,6 +64,10 @@ pub fn solved_banner(kind: ConsoleKind) -> (&'static str, &'static str) {
             "SENSOR MAST ONLINE",
             "ENEMIES NEAR IT SHOW THROUGH WALLS FOR 20 S",
         ),
+        ConsoleKind::Beacon => (
+            "FORWARD BEACON TAKEN",
+            "YOUR TEAM RESPAWNS HERE WHILE NO ENEMY IS NEAR",
+        ),
     }
 }
 
@@ -76,6 +81,8 @@ struct ConsoleView {
     /// solved).
     charge: Vec<Entity>,
     charge_mat: Handle<AccentMaterial>,
+    /// A forward beacon's column of light up from it (in its team's colour while it has one).
+    beam: Option<(Entity, Handle<AccentMaterial>)>,
     /// The puzzle shown (its seed), its root on each face and its elements.
     seed: Option<u32>,
     roots: Vec<Entity>,
@@ -126,6 +133,9 @@ pub fn spawn(
     let mast_pole = meshes.add(Cylinder::new(0.02, 0.5));
     let mast_dish = meshes.add(Torus::new(0.11, 0.14));
     let mast_tip = meshes.add(Sphere::new(0.04).mesh().ico(2).unwrap());
+    let beacon_core = meshes.add(Cylinder::new(0.05, 0.42));
+    let beacon_ring = meshes.add(Torus::new(0.1, 0.125));
+    let beam_mesh = meshes.add(Cylinder::new(0.035, 1.0));
     for (k, d) in defs.iter().enumerate() {
         let trim = accent(accents, Vec3::ONE, 4.0);
         let icon_mat = accent(accents, kind_color(d.kind), 4.0);
@@ -217,10 +227,37 @@ pub fn spawn(
                 }
                 icon_part(commands, &mast_tip, Transform::from_xyz(0.0, 0.28, 0.0));
             }
+            ConsoleKind::Beacon => {
+                icon_part(commands, &beacon_core, Transform::IDENTITY);
+                for y in [-0.12, 0.0, 0.12] {
+                    icon_part(commands, &beacon_ring, Transform::from_xyz(0.0, y, 0.0));
+                }
+            }
         }
         if !pedestal {
             commands.entity(icon).insert(Visibility::Hidden);
         }
+        // A beacon's column of light, up to 8 m.
+        let beam = (d.kind == ConsoleKind::Beacon).then(|| {
+            // (Up to the ceiling, if there's one.)
+            let from = d.pos + Vec3::Y * (CONSOLE_H + 0.7);
+            let len = game
+                .world
+                .ray(from, from + Vec3::Y * 8.0)
+                .map_or(8.0, |h| h.0 * 8.0);
+            let m = accent(accents, kind_color(d.kind), 0.0);
+            let e = commands
+                .spawn((
+                    Mesh3d(beam_mesh.clone()),
+                    MeshMaterial3d(m.clone()),
+                    Transform::from_xyz(0.0, CONSOLE_H + 0.7 + len / 2.0, 0.0)
+                        .with_scale(Vec3::new(1.0, len, 1.0)),
+                    Visibility::Hidden,
+                    ChildOf(root),
+                ))
+                .id();
+            (e, m)
+        });
         // The reset bars: along the top's +z and -z edges, over the puzzles.
         let charge_mat = accent(accents, kind_color(d.kind), 3.0);
         let charge: Vec<Entity> = if pedestal {
@@ -247,6 +284,7 @@ pub fn spawn(
             icon_mat,
             charge,
             charge_mat,
+            beam,
             seed: None,
             roots: Vec::new(),
             elems: Vec::new(),
@@ -550,15 +588,29 @@ fn animate(
             tr.rotation = Quat::from_rotation_y((t * 0.9 + k as f32) % TAU);
         }
         if let Some(mut m) = accents.get_mut(&v.icon_mat) {
+            // (Its team's colour while it works for one: a beacon always does once taken.)
+            let works = s.owner.is_some() && (s.active > 0.0 || d.kind == ConsoleKind::Beacon);
             let c = match s.owner {
-                Some(team) if s.active > 0.0 => team_color(Some(team)),
+                Some(team) if works => team_color(Some(team)),
                 _ => kind_color(d.kind),
             };
-            m.neon.color = if open || s.active > 0.0 {
+            m.neon.color = if open || works {
                 c.extend(4.0 + 1.5 * (t * 3.0).sin())
             } else {
                 c.extend(0.6)
             };
+        }
+        if let Some((e, m)) = &v.beam {
+            if let Ok(mut vis) = shown.get_mut(*e) {
+                vis.set_if_neq(if s.owner.is_some() {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                });
+            }
+            if let Some(mut m) = accents.get_mut(m) {
+                m.neon.color = team_color(s.owner).extend(2.5 + 0.8 * (t * 2.0).sin());
+            }
         }
         let g = puzzles.game(s.seed).clone();
         let poke = (lt_sim::console::CONSOLE_POKE as usize + k, 0);

@@ -1369,7 +1369,7 @@ impl Level {
 
     /// The arena for `seed`, `size` and `mode` (the same on every machine).
     pub fn generate_for(seed: u64, size: ArenaSize, mode: GameMode) -> Level {
-        let mut level = Self::generate_layout(seed, size, mode.layout());
+        let mut level = Self::generate_layout(seed, size, mode.layout(), mode);
         level.mode = mode;
         if matches!(mode, GameMode::Prism | GameMode::Infection) {
             // No targets: in prism mode each team's first one's alcove is its prism's home,
@@ -1396,7 +1396,8 @@ impl Level {
         level
     }
 
-    fn generate_layout(seed: u64, size: ArenaSize, mode: GameMode) -> Level {
+    /// The arena for `mode` (a layout: `GameMode::layout`), with the consoles `played` gets.
+    fn generate_layout(seed: u64, size: ArenaSize, mode: GameMode, played: GameMode) -> Level {
         let dm = size.dims_for(mode);
         for attempt in 0..500u64 {
             let mut rng =
@@ -1418,7 +1419,7 @@ impl Level {
                         &mut grid,
                         &movers,
                         crate::console::consoles_per_half(size),
-                        mode,
+                        played,
                         seed ^ attempt.rotate_left(29),
                     );
                     let mirrors = place_mirrors(&grid, mode, &mut rng);

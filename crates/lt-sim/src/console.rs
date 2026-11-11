@@ -24,7 +24,16 @@ pub enum ConsoleKind {
     /// within `MAST_RANGE` through walls (as a pulse sensor, further); nothing switches it off
     /// before then, and nobody can take it over.
     Mast,
+    /// A forward beacon: the solver's team respawns at it (`BEACON_SHARE` of the time, while
+    /// no enemy is within `BEACON_CLEAR`) until the other team takes it over with its puzzle.
+    /// Not in Infection.
+    Beacon,
 }
+
+/// How often a team respawns at its beacon rather than at its base, and how far enemies must
+/// be from it (m).
+pub const BEACON_SHARE: f32 = 0.6;
+pub const BEACON_CLEAR: f32 = 8.0;
 
 /// Seconds a sensor mast works for its team, and how far its pulses reach (m).
 pub const MAST_TIME: f32 = 20.0;
@@ -32,12 +41,14 @@ pub const MAST_RANGE: f32 = 18.0;
 
 impl ConsoleKind {
     /// The kinds standing in the arena (on pedestals).
-    pub const PEDESTALS: [ConsoleKind; 2] = [ConsoleKind::Vault, ConsoleKind::Mast];
+    pub const PEDESTALS: [ConsoleKind; 3] =
+        [ConsoleKind::Vault, ConsoleKind::Mast, ConsoleKind::Beacon];
 
     pub fn name(self) -> &'static str {
         match self {
             ConsoleKind::Vault => "supply vault",
             ConsoleKind::Mast => "sensor mast",
+            ConsoleKind::Beacon => "forward beacon",
         }
     }
 
@@ -47,6 +58,8 @@ impl ConsoleKind {
             ConsoleKind::Vault => 60.0,
             // (Locked while it works, and a while after.)
             ConsoleKind::Mast => MAST_TIME + 20.0,
+            // (A moment, so it doesn't flip back and forth.)
+            ConsoleKind::Beacon => 5.0,
         }
     }
 
@@ -55,12 +68,13 @@ impl ConsoleKind {
         match self {
             ConsoleKind::Vault => "vault",
             ConsoleKind::Mast => "mast",
+            ConsoleKind::Beacon => "beacon",
         }
     }
 
     /// Whether the arena gets this kind in `mode`.
-    pub fn in_mode(self, _mode: GameMode) -> bool {
-        true
+    pub fn in_mode(self, mode: GameMode) -> bool {
+        !(self == ConsoleKind::Beacon && mode == GameMode::Infection)
     }
 }
 
