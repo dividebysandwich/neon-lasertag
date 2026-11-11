@@ -20,15 +20,24 @@ use crate::level::{
 pub enum ConsoleKind {
     /// A supply vault: hands the solver a special weapon, then resets for a minute.
     Vault,
+    /// A sensor mast: for `MAST_TIME` it pulses for the solver's team, showing the enemies
+    /// within `MAST_RANGE` through walls (as a pulse sensor, further); nothing switches it off
+    /// before then, and nobody can take it over.
+    Mast,
 }
+
+/// Seconds a sensor mast works for its team, and how far its pulses reach (m).
+pub const MAST_TIME: f32 = 20.0;
+pub const MAST_RANGE: f32 = 18.0;
 
 impl ConsoleKind {
     /// The kinds standing in the arena (on pedestals).
-    pub const PEDESTALS: [ConsoleKind; 1] = [ConsoleKind::Vault];
+    pub const PEDESTALS: [ConsoleKind; 2] = [ConsoleKind::Vault, ConsoleKind::Mast];
 
     pub fn name(self) -> &'static str {
         match self {
             ConsoleKind::Vault => "supply vault",
+            ConsoleKind::Mast => "sensor mast",
         }
     }
 
@@ -36,6 +45,8 @@ impl ConsoleKind {
     pub fn rest(self) -> f32 {
         match self {
             ConsoleKind::Vault => 60.0,
+            // (Locked while it works, and a while after.)
+            ConsoleKind::Mast => MAST_TIME + 20.0,
         }
     }
 
@@ -43,6 +54,7 @@ impl ConsoleKind {
     pub fn id(self) -> &'static str {
         match self {
             ConsoleKind::Vault => "vault",
+            ConsoleKind::Mast => "mast",
         }
     }
 
@@ -229,7 +241,7 @@ pub(crate) fn place_consoles(g: &mut Grid, movers: &[Mover], n: usize, mode: Gam
         let good: Vec<(usize, usize)> = cells
             .iter()
             .copied()
-            .filter(|c| apart(c) >= far * 0.8)
+            .filter(|c| apart(c) >= (far * 0.8).max(4.0))
             .collect();
         if good.is_empty() {
             break;
@@ -248,6 +260,7 @@ mod tests {
 
     #[test]
     fn arenas_get_mirrored_consoles_open_in_front() {
+        let (mut full, mut arenas) = (0, 0);
         for seed in 0..24u64 {
             for (size, mode) in [
                 (ArenaSize::Small, GameMode::Classic),
@@ -263,7 +276,14 @@ mod tests {
                         .filter(|k| k.in_mode(mode))
                         .count(),
                 );
-                assert_eq!(level.consoles.len(), 2 * want, "seed {seed} {size:?}");
+                // (Fewer where the arena has no room for them all, far enough apart.)
+                let n = level.consoles.len();
+                assert!(
+                    n >= 2 && n <= 2 * want && n % 2 == 0,
+                    "seed {seed} {size:?}: {n}"
+                );
+                full += (n == 2 * want) as usize;
+                arenas += 1;
                 for c in &level.consoles {
                     assert!(c.kind.in_mode(mode));
                     assert!(
@@ -283,5 +303,6 @@ mod tests {
                 }
             }
         }
+        assert!(full * 10 >= arenas * 8, "all of them in {full} of {arenas}");
     }
 }

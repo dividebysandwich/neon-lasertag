@@ -1763,6 +1763,8 @@ impl Bot {
             && match def.kind {
                 // (Not with a special weapon in hand already.)
                 crate::console::ConsoleKind::Vault => p.weapon == crate::types::Weapon::Blaster,
+                // (Locked while it works: open, it's anyone's.)
+                crate::console::ConsoleKind::Mast => true,
             }
     }
 

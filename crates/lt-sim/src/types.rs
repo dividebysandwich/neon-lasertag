@@ -595,6 +595,10 @@ pub enum SimEvent {
         team: Team,
         pos: Vec3,
         seen: u64,
+        /// How far it reached (0: a pulse sensor's, `Rules::sensor_range`; a sensor mast's
+        /// is further).
+        #[serde(default)]
+        range: f32,
     },
     SensorDown {
         id: u32,

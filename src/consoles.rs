@@ -48,6 +48,7 @@ const LIGHT_OFF: Vec3 = Vec3::new(0.3, 0.32, 0.45);
 pub fn kind_color(kind: ConsoleKind) -> Vec3 {
     match kind {
         ConsoleKind::Vault => Vec3::new(1.0, 0.75, 0.1),
+        ConsoleKind::Mast => Vec3::new(0.2, 1.0, 0.55),
     }
 }
 
@@ -57,6 +58,10 @@ pub fn solved_banner(kind: ConsoleKind) -> (&'static str, &'static str) {
         ConsoleKind::Vault => (
             "SUPPLY VAULT CRACKED",
             "A SPECIAL WEAPON IS YOURS - IT RESETS FOR A MINUTE",
+        ),
+        ConsoleKind::Mast => (
+            "SENSOR MAST ONLINE",
+            "ENEMIES NEAR IT SHOW THROUGH WALLS FOR 20 S",
         ),
     }
 }
@@ -118,6 +123,9 @@ pub fn spawn(
     let vault = meshes.add(Cuboid::new(0.28, 0.2, 0.2));
     let vault_band = meshes.add(Cuboid::new(0.3, 0.035, 0.22));
     let charge_bar = meshes.add(Cuboid::new(1.0, 0.03, 0.03));
+    let mast_pole = meshes.add(Cylinder::new(0.02, 0.5));
+    let mast_dish = meshes.add(Torus::new(0.11, 0.14));
+    let mast_tip = meshes.add(Sphere::new(0.04).mesh().ico(2).unwrap());
     for (k, d) in defs.iter().enumerate() {
         let trim = accent(accents, Vec3::ONE, 4.0);
         let icon_mat = accent(accents, kind_color(d.kind), 4.0);
@@ -195,6 +203,19 @@ pub fn spawn(
                 for y in [-0.07, 0.07] {
                     icon_part(commands, &vault_band, Transform::from_xyz(0.0, y, 0.0));
                 }
+            }
+            ConsoleKind::Mast => {
+                icon_part(commands, &mast_pole, Transform::IDENTITY);
+                for (y, s) in [(0.05, 1.0), (0.2, 0.7)] {
+                    icon_part(
+                        commands,
+                        &mast_dish,
+                        Transform::from_xyz(0.0, y, 0.0)
+                            .with_rotation(Quat::from_rotation_x(0.5))
+                            .with_scale(Vec3::splat(s)),
+                    );
+                }
+                icon_part(commands, &mast_tip, Transform::from_xyz(0.0, 0.28, 0.0));
             }
         }
         if !pedestal {

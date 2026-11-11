@@ -2689,7 +2689,7 @@ impl Sim {
     fn step_sensors(&mut self) {
         let gravity = self.gravity();
         let rules = &self.rules;
-        let infection = self.infection();
+        let mut pulses = Vec::new();
         let mut i = 0;
         while i < self.sensors.len() {
             let s = &mut self.sensors[i];
@@ -2718,31 +2718,7 @@ impl Sim {
                 s.next_pulse -= TICK;
                 if s.next_pulse <= 0.0 && s.left > 0.0 {
                     s.next_pulse = rules.sensor_every;
-                    let (pos, team) = (s.pos, s.team);
-                    let mut seen = 0u64;
-                    for p in &mut self.players {
-                        if p.team != team
-                            && p.alive()
-                            && p.chest().distance(pos) <= rules.sensor_range
-                        {
-                            p.revealed = rules.sensor_reveal;
-                            seen |= 1u64 << (p.id % 64);
-                            // (A cloak in range is gone for good; not a phantom's, which is
-                            // what it is.)
-                            let phantom = infection && p.team == Team::Red;
-                            if p.cloak > 0.0 && !phantom {
-                                p.cloak = 0.0;
-                                p.decloak = 0.0;
-                                self.events.push(SimEvent::Uncloaked { player: p.id });
-                            }
-                        }
-                    }
-                    self.events.push(SimEvent::Pulse {
-                        id: s.id,
-                        team,
-                        pos,
-                        seen,
-                    });
+                    pulses.push((s.id, s.team, s.pos));
                 }
             }
             let s = self.sensors[i];
@@ -2756,6 +2732,39 @@ impl Sim {
                 i += 1;
             }
         }
+        let range = self.rules.sensor_range;
+        for (id, team, pos) in pulses {
+            self.pulse(id, team, pos, range, 0.0);
+        }
+    }
+
+    /// A pulse (a sensor's, `id`, or a sensor mast's) of `team`'s from `pos`: the enemies within
+    /// `range` show to the team (through walls) and lose their cloaks. `shown`: the range the
+    /// clients draw (0: a sensor's, `Rules::sensor_range`).
+    pub(crate) fn pulse(&mut self, id: u32, team: Team, pos: Vec3, range: f32, shown: f32) {
+        let infection = self.infection();
+        let reveal = self.rules.sensor_reveal;
+        let mut seen = 0u64;
+        for p in &mut self.players {
+            if p.team != team && p.alive() && p.chest().distance(pos) <= range {
+                p.revealed = reveal;
+                seen |= 1u64 << (p.id % 64);
+                // (A cloak in range is gone for good; not a phantom's, which is what it is.)
+                let phantom = infection && p.team == Team::Red;
+                if p.cloak > 0.0 && !phantom {
+                    p.cloak = 0.0;
+                    p.decloak = 0.0;
+                    self.events.push(SimEvent::Uncloaked { player: p.id });
+                }
+            }
+        }
+        self.events.push(SimEvent::Pulse {
+            id,
+            team,
+            pos,
+            seen,
+            range: shown,
+        });
     }
 
     /// Med beams held: on the team mate nearest the aim (within its cone and reach, in sight),

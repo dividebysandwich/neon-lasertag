@@ -7,7 +7,9 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use super::Sim;
-use crate::console::{ConsoleDef, ConsoleKind, console_defs};
+use glam::Vec3;
+
+use crate::console::{ConsoleDef, ConsoleKind, MAST_RANGE, MAST_TIME, console_defs};
 use crate::minigame::Minigame;
 use crate::types::{PickupKind, PlayerId, SimEvent, Team};
 
@@ -32,6 +34,8 @@ pub struct ConsoleState {
     /// Seconds left of what it does, and of its rest (no clicks until 0).
     pub active: f32,
     pub cooldown: f32,
+    /// A sensor mast's seconds to its next pulse.
+    next_pulse: f32,
 }
 
 impl ConsoleState {
@@ -44,6 +48,7 @@ impl ConsoleState {
             owner: None,
             active: 0.0,
             cooldown: 0.0,
+            next_pulse: 0.0,
         }
     }
 
@@ -88,9 +93,22 @@ impl Sim {
             .collect();
     }
 
-    /// Once a tick: the consoles' timers.
+    /// Once a tick: the consoles' timers, and what they do while they work.
     pub(super) fn step_consoles(&mut self) {
         for k in 0..self.consoles.len() {
+            let def = self.console_defs[k];
+            let st = &mut self.consoles[k];
+            if st.active > 0.0
+                && let Some(team) = st.owner
+                && def.kind == ConsoleKind::Mast
+            {
+                st.next_pulse -= super::TICK;
+                if st.next_pulse <= 0.0 {
+                    st.next_pulse = self.rules.sensor_every;
+                    let top = def.pos + Vec3::Y * (crate::console::CONSOLE_H + 1.0);
+                    self.pulse(u32::MAX - k as u32, team, top, MAST_RANGE, MAST_RANGE);
+                }
+            }
             let st = &mut self.consoles[k];
             st.active = (st.active - super::TICK).max(0.0);
             if st.cooldown > 0.0 {
@@ -171,6 +189,7 @@ impl Sim {
         *st = ConsoleState {
             owner: st.owner,
             active: st.active,
+            next_pulse: st.next_pulse,
             ..ConsoleState::new(seed)
         };
     }
@@ -188,6 +207,7 @@ impl Sim {
             owner: self.consoles[k].owner,
             active: self.consoles[k].active,
             cooldown: self.consoles[k].cooldown,
+            next_pulse: self.consoles[k].next_pulse,
             ..ConsoleState::new(seed)
         };
         self.consoles[k].cooldown = def.kind.rest();
@@ -221,6 +241,12 @@ impl Sim {
                     pos: face.centre + face.normal * 0.3,
                     kind,
                 });
+            }
+            ConsoleKind::Mast => {
+                let st = &mut self.consoles[k];
+                st.owner = Some(team);
+                st.active = MAST_TIME;
+                st.next_pulse = 0.0;
             }
         }
     }
@@ -371,5 +397,55 @@ mod tests {
             |e| matches!(e, SimEvent::ConsoleReady { console, .. } if *console as usize == k)
         ));
         assert!(sim.consoles[k].open());
+    }
+
+    #[test]
+    fn a_solved_mast_shows_enemies_and_cannot_be_taken_or_switched_off() {
+        let (mut sim, k, red, blue) = console_sim(ConsoleKind::Mast, GameMode::Classic);
+        to_console(&mut sim, k, red);
+        // Blue a little way off, behind cover or not: shown.
+        let def = sim.console_defs()[k];
+        let near = def.pos - def.faces[0].normal * 5.0;
+        sim.teleport(blue, near, 0.0);
+        sim.drain_events();
+        let i = sim.consoles[k].game.hint(&sim.consoles[k].state).unwrap();
+        click(&mut sim, red, k, i);
+        solve(&mut sim, red, k);
+        assert_eq!(sim.consoles[k].owner, Some(Team::Red));
+        let ev = run(&mut sim, 3.0);
+        assert!(ev.iter().any(
+            |e| matches!(e, SimEvent::Pulse { team: Team::Red, seen, range, .. }
+            if *seen != 0 && *range == MAST_RANGE)
+        ));
+        assert!(sim.player(blue).unwrap().revealed > 0.0);
+        // Blue can't take it over while it works: locked.
+        to_console(&mut sim, k, blue);
+        let before = sim.consoles[k].state.clone();
+        let i = sim.consoles[k].game.hint(&before).unwrap();
+        click(&mut sim, blue, k, i);
+        assert_eq!(sim.consoles[k].state, before);
+        // Shot all over: still pulsing until its time is up.
+        let ev = run(&mut sim, MAST_TIME - 5.0);
+        assert!(
+            ev.iter()
+                .filter(|e| matches!(
+                    e,
+                    SimEvent::Pulse {
+                        team: Team::Red,
+                        ..
+                    }
+                ))
+                .count()
+                >= 6
+        );
+        run(&mut sim, 3.0);
+        let ev = run(&mut sim, 3.0);
+        assert!(!ev.iter().any(|e| matches!(
+            e,
+            SimEvent::Pulse {
+                team: Team::Red,
+                ..
+            }
+        )));
     }
 }
