@@ -223,8 +223,8 @@ pub enum SecondaryKind {
     Relay,
     /// Solving a circuit puzzle on it (`minigame::circuit`).
     Circuit,
-    /// Solving a lights puzzle on it (`minigame::lights`).
-    Lights,
+    /// Solving a pattern puzzle on it (`minigame::pattern`).
+    Pattern,
     /// Shooting the lamps in its pocket in the order they flash (`gadgets`).
     Sequence,
 }
@@ -235,7 +235,7 @@ impl SecondaryKind {
         SecondaryKind::Shoot,
         SecondaryKind::Relay,
         SecondaryKind::Circuit,
-        SecondaryKind::Lights,
+        SecondaryKind::Pattern,
         SecondaryKind::Sequence,
     ];
 
@@ -245,7 +245,7 @@ impl SecondaryKind {
             SecondaryKind::Shoot => "shoot",
             SecondaryKind::Relay => "relay",
             SecondaryKind::Circuit => "circuit",
-            SecondaryKind::Lights => "lights",
+            SecondaryKind::Pattern => "pattern",
             SecondaryKind::Sequence => "sequence",
         }
     }
@@ -260,7 +260,7 @@ impl SecondaryKind {
     pub fn minigame(self) -> Option<crate::minigame::MinigameKind> {
         match self {
             SecondaryKind::Circuit => Some(crate::minigame::MinigameKind::Circuit),
-            SecondaryKind::Lights => Some(crate::minigame::MinigameKind::Lights),
+            SecondaryKind::Pattern => Some(crate::minigame::MinigameKind::Pattern),
             _ => None,
         }
     }

@@ -644,7 +644,7 @@ mod tests {
     #[test]
     fn solved_secondary_puzzles_charge_the_solver_and_team_mates_in_the_pocket() {
         use crate::rules::SecondaryKind;
-        for kind in [SecondaryKind::Circuit, SecondaryKind::Lights] {
+        for kind in [SecondaryKind::Circuit, SecondaryKind::Pattern] {
             let rules = Rules {
                 match_time: 1000.0,
                 spawn_protect: 0.0,

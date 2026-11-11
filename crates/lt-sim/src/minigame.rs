@@ -9,9 +9,9 @@
 use serde::{Deserialize, Serialize};
 
 pub mod circuit;
-pub mod lights;
+pub mod pattern;
 use circuit::Circuit;
-use lights::Lights;
+use pattern::Pattern;
 
 use crate::puzzle::{Puzzle, Slide};
 use crate::types::PuzzleSlide;
@@ -22,15 +22,15 @@ pub enum MinigameKind {
     Slide,
     /// Wire tiles to turn until the current gets through (`circuit`).
     Circuit,
-    /// Lights to switch off, each click switching its neighbours too (`lights`).
-    Lights,
+    /// Lights to switch on or off to match a pattern (`pattern`).
+    Pattern,
 }
 
 impl MinigameKind {
     pub const ALL: [MinigameKind; 3] = [
         MinigameKind::Slide,
         MinigameKind::Circuit,
-        MinigameKind::Lights,
+        MinigameKind::Pattern,
     ];
 
     /// The kind a seed makes.
@@ -49,7 +49,7 @@ impl MinigameKind {
         match self {
             MinigameKind::Slide => "slide",
             MinigameKind::Circuit => "circuit",
-            MinigameKind::Lights => "lights",
+            MinigameKind::Pattern => "pattern",
         }
     }
 
@@ -57,7 +57,7 @@ impl MinigameKind {
         match self {
             MinigameKind::Slide => "sliding puzzle",
             MinigameKind::Circuit => "circuit",
-            MinigameKind::Lights => "lights out",
+            MinigameKind::Pattern => "pattern",
         }
     }
 }
@@ -70,7 +70,7 @@ pub const GRID_CELL: f32 = 0.17;
 pub enum Minigame {
     Slide(Puzzle),
     Circuit(Circuit),
-    Lights(Lights),
+    Pattern(Pattern),
 }
 
 impl Minigame {
@@ -79,7 +79,7 @@ impl Minigame {
         match MinigameKind::of(seed) {
             MinigameKind::Slide => Minigame::Slide(Puzzle::generate(seed)),
             MinigameKind::Circuit => Minigame::Circuit(Circuit::generate(seed)),
-            MinigameKind::Lights => Minigame::Lights(Lights::generate(seed)),
+            MinigameKind::Pattern => Minigame::Pattern(Pattern::generate(seed)),
         }
     }
 
@@ -87,7 +87,7 @@ impl Minigame {
         match self {
             Minigame::Slide(_) => MinigameKind::Slide,
             Minigame::Circuit(_) => MinigameKind::Circuit,
-            Minigame::Lights(_) => MinigameKind::Lights,
+            Minigame::Pattern(_) => MinigameKind::Pattern,
         }
     }
 
@@ -96,7 +96,7 @@ impl Minigame {
         match self {
             Minigame::Slide(p) => p.start(),
             Minigame::Circuit(c) => c.start(),
-            Minigame::Lights(l) => l.start(),
+            Minigame::Pattern(l) => l.start(),
         }
     }
 
@@ -113,7 +113,7 @@ impl Minigame {
                 c.poke(at, i);
                 PuzzleSlide::In
             }
-            Minigame::Lights(l) => {
+            Minigame::Pattern(l) => {
                 l.poke(at, i);
                 // (A higher sound switching on.)
                 if at.get(i) == Some(&1) {
@@ -129,7 +129,7 @@ impl Minigame {
         match self {
             Minigame::Slide(p) => p.solved(at),
             Minigame::Circuit(c) => c.solved(at),
-            Minigame::Lights(l) => l.solved(at),
+            Minigame::Pattern(l) => l.solved(at),
         }
     }
 
@@ -138,7 +138,7 @@ impl Minigame {
         match self {
             Minigame::Slide(p) => p.hint(at),
             Minigame::Circuit(c) => c.hint(at),
-            Minigame::Lights(l) => l.hint(at),
+            Minigame::Pattern(l) => l.hint(at),
         }
     }
 
@@ -147,7 +147,7 @@ impl Minigame {
         match self {
             Minigame::Slide(p) => p.pieces.len(),
             Minigame::Circuit(_) => circuit::N * circuit::N,
-            Minigame::Lights(_) => lights::N * lights::N,
+            Minigame::Pattern(_) => pattern::N * pattern::N,
         }
     }
 
@@ -155,7 +155,7 @@ impl Minigame {
     pub fn element_at(&self, at: &[u8], c: i8, r: i8) -> Option<usize> {
         match self {
             Minigame::Slide(p) => p.piece_at(at, c, r),
-            Minigame::Circuit(_) | Minigame::Lights(_) => {
+            Minigame::Circuit(_) | Minigame::Pattern(_) => {
                 let n = self.n() as i8;
                 ((0..n).contains(&c) && (0..n).contains(&r)).then(|| (c + r * n) as usize)
             }
@@ -169,7 +169,7 @@ impl Minigame {
             Minigame::Slide(_) => {
                 -(crate::puzzle::DEPTH as i8)..(crate::puzzle::N + crate::puzzle::DEPTH) as i8
             }
-            Minigame::Circuit(_) | Minigame::Lights(_) => 0..self.n() as i8,
+            Minigame::Circuit(_) | Minigame::Pattern(_) => 0..self.n() as i8,
         }
     }
 
@@ -177,7 +177,7 @@ impl Minigame {
     pub fn cell(&self) -> f32 {
         match self {
             Minigame::Slide(_) => crate::level::PUZZLE_CELL,
-            Minigame::Circuit(_) | Minigame::Lights(_) => GRID_CELL,
+            Minigame::Circuit(_) | Minigame::Pattern(_) => GRID_CELL,
         }
     }
 
@@ -186,7 +186,7 @@ impl Minigame {
         match self {
             Minigame::Slide(_) => crate::puzzle::N,
             Minigame::Circuit(_) => circuit::N,
-            Minigame::Lights(_) => lights::N,
+            Minigame::Pattern(_) => pattern::N,
         }
     }
 }

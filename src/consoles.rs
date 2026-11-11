@@ -40,9 +40,11 @@ const DARK: Vec3 = Vec3::new(0.05, 0.05, 0.06);
 /// Circuit wires with current through them, and without.
 const WIRE_ON: Vec3 = Vec3::new(0.15, 1.0, 0.9);
 const WIRE_OFF: Vec3 = Vec3::new(0.35, 0.4, 0.75);
-/// Lights on, and off.
-const LIGHT_ON: Vec3 = Vec3::new(1.0, 0.25, 0.8);
-const LIGHT_OFF: Vec3 = Vec3::new(0.3, 0.32, 0.45);
+/// Pattern lights: on where marked (right), on where not (wrong), off; the marks' frames.
+const PATTERN_RIGHT: Vec3 = Vec3::new(0.25, 1.0, 0.35);
+const PATTERN_WRONG: Vec3 = Vec3::new(1.0, 0.2, 0.8);
+const PATTERN_OFF: Vec3 = Vec3::new(0.3, 0.32, 0.45);
+const PATTERN_MARK: Vec3 = Vec3::new(0.9, 0.95, 1.0);
 
 /// The colour of what a console does (its hologram).
 pub fn kind_color(kind: ConsoleKind) -> Vec3 {
@@ -657,7 +659,29 @@ fn spawn_puzzle(
                     ));
                 }
             }
-            Minigame::Lights(_) => {
+            Minigame::Pattern(pt) => {
+                // The marked cells' frames.
+                let mark = accent(accents, PATTERN_MARK, 3.0);
+                let bar_h = meshes.add(Cuboid::new(cell - 0.01, 0.014, 0.01));
+                let bar_v = meshes.add(Cuboid::new(0.014, cell - 0.01, 0.01));
+                for (i, _) in pt.marked.iter().enumerate().filter(|m| *m.1) {
+                    let p = at((i % n) as f32, (i / n) as f32) + Vec3::Z * 0.026;
+                    let h = (cell - 0.012) / 2.0;
+                    for s in [-1.0, 1.0] {
+                        commands.spawn((
+                            Mesh3d(bar_h.clone()),
+                            MeshMaterial3d(mark.clone()),
+                            Transform::from_translation(p + Vec3::Y * s * h),
+                            ChildOf(face_root),
+                        ));
+                        commands.spawn((
+                            Mesh3d(bar_v.clone()),
+                            MeshMaterial3d(mark.clone()),
+                            Transform::from_translation(p + Vec3::X * s * h),
+                            ChildOf(face_root),
+                        ));
+                    }
+                }
                 for (i, e) in elems.iter_mut().enumerate() {
                     let (c, r) = (i % n, i / n);
                     let t = commands
@@ -669,7 +693,7 @@ fn spawn_puzzle(
                         ))
                         .id();
                     e.roots.push(t);
-                    e.color = LIGHT_OFF;
+                    e.color = PATTERN_OFF;
                 }
             }
         }
@@ -865,12 +889,16 @@ fn animate(
                         lit = 0.9;
                     }
                 }
-                Minigame::Lights(_) => {
+                Minigame::Pattern(pt) => {
                     if state != 0 {
-                        e.color = LIGHT_ON;
-                        lit = 3.5;
+                        e.color = if pt.marked.get(j) == Some(&true) {
+                            PATTERN_RIGHT
+                        } else {
+                            PATTERN_WRONG
+                        };
+                        lit = 2.2;
                     } else {
-                        e.color = LIGHT_OFF;
+                        e.color = PATTERN_OFF;
                         lit = 0.3;
                     }
                 }

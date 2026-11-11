@@ -5,7 +5,7 @@
 //!          [--host [PORT]] [--public] [--server-name NAME] [--connect HOST[:PORT]] [--autopilot]
 //!          [--difficulty easy|normal|hard] [--arena small|medium|large|random]
 //!          [--mode classic|megatarget|prism|infection]
-//!          [--secondary random|shoot|relay|circuit|lights|sequence]
+//!          [--secondary random|shoot|relay|circuit|pattern|sequence]
 //!          [--left-handed] [--match-time SECS]
 //!          [--screenshot FILE --after SECS] [--quit-after SECS]
 //! ```
@@ -190,7 +190,7 @@ impl Args {
                 {
                     Some(k) => a.secondary = k,
                     None => {
-                        eprintln!("--secondary: random, shoot, relay, circuit, lights or sequence")
+                        eprintln!("--secondary: random, shoot, relay, circuit, pattern or sequence")
                     }
                 },
                 "--mode" => match next(&mut i)

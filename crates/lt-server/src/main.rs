@@ -4,7 +4,7 @@
 //!     lt-server [--port 27420] [--name NAME] [--seed N] [--bots 8] [--difficulty normal]
 //!               [--arena small|medium|large|random] [--mode classic|megatarget|prism|infection]
 //!               [--master URL] [--private] [--no-lan] [--lock-teams]
-//!               [--secondary random|shoot|relay|circuit|lights|sequence]
+//!               [--secondary random|shoot|relay|circuit|pattern|sequence]
 
 use std::time::{Duration, Instant};
 
@@ -78,7 +78,9 @@ fn args() -> Args {
             {
                 Some(k) => a.secondary = k,
                 None => {
-                    eprintln!("--secondary takes random, shoot, relay, circuit, lights or sequence")
+                    eprintln!(
+                        "--secondary takes random, shoot, relay, circuit, pattern or sequence"
+                    )
                 }
             },
             "--master" => a.master = it.next().unwrap_or(a.master),
@@ -97,7 +99,7 @@ fn args() -> Args {
                 println!(
                     "lt-server [--port N] [--name NAME] [--seed N] [--bots N] [--difficulty easy|normal|hard] \
                      [--arena small|medium|large|random] [--mode classic|megatarget|prism|infection] [--master URL] [--private] [--no-lan] [--lock-teams] \
-                     [--modifiers dark,lowgrav,mirror] [--secondary random|shoot|relay|circuit|lights|sequence]"
+                     [--modifiers dark,lowgrav,mirror] [--secondary random|shoot|relay|circuit|pattern|sequence]"
                 );
                 std::process::exit(0);
             }
