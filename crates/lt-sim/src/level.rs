@@ -949,6 +949,10 @@ pub struct Mega {
     /// they face.
     #[serde(default)]
     pub lamps: [[(Vec3, Vec3); crate::gadgets::LAMPS]; 2],
+    /// The megatarget's console in the middle of the room (the middle of its foot): its
+    /// puzzle energizes the megatarget for the solver (`console::ConsoleKind::Core`).
+    #[serde(default)]
+    pub core_console: Vec3,
 }
 
 /// Turrets' gun height and the megatarget's size.
@@ -1056,6 +1060,7 @@ impl Mega {
                 lamps,
                 lamps.map(|(p, n)| (mirror_point(p), mirror_point(n))),
             ],
+            core_console: Vec3::new((lo.x + hi.x) / 2.0, 0.0, (lo.y + hi.y) / 2.0),
         }
     }
 
@@ -1108,6 +1113,12 @@ impl Mega {
         let b = |min: Vec3, max: Vec3| Collider::Box { min, max };
         let mut out: Vec<Collider> = self.secondaries.iter().map(|p| b(p.min, p.max)).collect();
         out.push(b(self.core.min, self.core.max));
+        let c = crate::console::Console {
+            pos: self.core_console,
+            kind: crate::console::ConsoleKind::Core,
+        };
+        let (min, max) = c.bounds();
+        out.push(b(min, max));
         for t in &self.turrets {
             out.push(b(t.switch.min, t.switch.max));
             out.push(b(t.body.0, t.body.1));

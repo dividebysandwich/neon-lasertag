@@ -53,6 +53,7 @@ pub fn kind_color(kind: ConsoleKind) -> Vec3 {
         ConsoleKind::Breaker => Vec3::new(1.0, 0.35, 0.1),
         ConsoleKind::Bridge => Vec3::new(0.1, 0.85, 1.0),
         ConsoleKind::Secondary(_) => Vec3::new(1.0, 0.5, 0.05),
+        ConsoleKind::Core => Vec3::new(1.0, 0.1, 0.85),
     }
 }
 
@@ -61,6 +62,7 @@ pub fn kind_color(kind: ConsoleKind) -> Vec3 {
 pub fn solved_banner(kind: ConsoleKind) -> Option<(&'static str, &'static str)> {
     Some(match kind {
         ConsoleKind::Secondary(_) => return None,
+        ConsoleKind::Core => ("MEGATARGET ENERGIZED", "SHOOT IT NOW - IT HANGS ABOVE YOU"),
         ConsoleKind::Vault => (
             "SUPPLY VAULT CRACKED",
             "A SPECIAL WEAPON IS YOURS - IT RESETS FOR A MINUTE",
@@ -257,6 +259,16 @@ pub fn spawn(
                 icon_part(commands, &mast_tip, Transform::from_xyz(0.0, 0.28, 0.0));
             }
             ConsoleKind::Secondary(_) => {}
+            ConsoleKind::Core => {
+                icon_part(commands, &mast_tip, Transform::from_scale(Vec3::splat(2.5)));
+                for y in [-0.1, 0.1] {
+                    icon_part(
+                        commands,
+                        &mast_dish,
+                        Transform::from_xyz(0.0, y, 0.0).with_scale(Vec3::splat(0.9)),
+                    );
+                }
+            }
             ConsoleKind::Bridge => {
                 icon_part(commands, &bridge_icon, Transform::from_xyz(0.0, 0.08, 0.0));
                 for x in [-0.17, 0.17] {

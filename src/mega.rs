@@ -55,6 +55,13 @@ impl Plugin for MegaPlugin {
 struct CoreView {
     core: Entity,
     rings: [Entity; 2],
+    /// The core's and its rings' materials: dim while it's dormant (not energized for the
+    /// local player: its console unsolved).
+    bright: Handle<AccentMaterial>,
+    trim: Handle<AccentMaterial>,
+    /// How awake it's shown (0..1), and its rings' turn so far.
+    live: f32,
+    turn: f32,
     shaft: Handle<GlowMaterial>,
     floor: Handle<GlowMaterial>,
     since_hit: f32,
@@ -239,6 +246,10 @@ fn spawn_core(
         Transform::from_xyz(c.x, 0.02, c.z),
     ));
     commands.entity(root).insert(CoreView {
+        bright: bright.clone(),
+        trim: trim.clone(),
+        live: 0.0,
+        turn: 0.0,
         core,
         rings,
         shaft: shaft_mat,
@@ -1102,20 +1113,32 @@ fn animate(
         .and_then(|p| p.power)
         .filter(|_| me.is_some_and(|p| p.respawn.is_none()));
 
+    let live = me.is_some_and(|p| p.core_live);
     for mut c in &mut cores {
         c.since_hit += dt;
         let flash = (1.0 - c.since_hit / 1.2).max(0.0);
+        // Dormant: dim, its rings barely turning; energized: blazing, spinning fast.
+        let want = if live { 1.0 } else { 0.0 };
+        c.live += (want - c.live) * (1.0 - (-dt * 4.0).exp());
+        c.turn += dt * (0.15 + 2.2 * c.live);
+        let turn = c.turn;
         if let Ok(mut tr) = parts.get_mut(c.core) {
             tr.scale = Vec3::splat(1.0 + 0.1 * (t * 3.0).sin() + flash * 1.2);
-            tr.rotation = Quat::from_rotation_y(t * 0.8);
+            tr.rotation = Quat::from_rotation_y(turn * 1.3);
         }
         for (k, r) in c.rings.iter().enumerate() {
             if let Ok(mut tr) = parts.get_mut(*r) {
                 let s = if k == 0 { 1.0 } else { -0.7 };
-                tr.rotation = Quat::from_rotation_y(t * 0.6 * s)
+                tr.rotation = Quat::from_rotation_y(turn * s)
                     * Quat::from_rotation_x(1.1 * s + 0.25 * (t * 0.5 + k as f32).sin());
                 tr.scale = Vec3::splat(1.0 + flash * 0.6);
             }
+        }
+        if let Some(mut mat) = accents.get_mut(&c.bright) {
+            mat.neon.color.w = 2.0 + 14.0 * c.live + 10.0 * flash;
+        }
+        if let Some(mut mat) = accents.get_mut(&c.trim) {
+            mat.neon.color.w = 1.2 + 4.8 * c.live;
         }
         // The shaft breathes, brighter for whoever may come in to shoot, blazing after a hit.
         let want = if powered.is_some() { 1.5 } else { 0.9 };

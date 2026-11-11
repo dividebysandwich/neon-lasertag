@@ -39,6 +39,10 @@ pub enum ConsoleKind {
     /// `rules::SecondaryKind`), on the target's wall. Solving it charges the solver and their
     /// team mates in its pocket as a hit on the target does.
     Secondary(u8),
+    /// Megatarget mode: the megatarget's console in its room (`Mega::core_console`). Only a
+    /// player with the power, in the room, can click it; solving it energizes the megatarget
+    /// for them (`Player::core_live`): it counts their hits from then on.
+    Core,
 }
 
 /// Seconds a light bridge stands.
@@ -265,6 +269,7 @@ impl ConsoleKind {
             ConsoleKind::Breaker => "blackout breaker",
             ConsoleKind::Bridge => "light bridge",
             ConsoleKind::Secondary(_) => "secondary target",
+            ConsoleKind::Core => "megatarget console",
         }
     }
 
@@ -278,7 +283,7 @@ impl ConsoleKind {
             ConsoleKind::Beacon => 5.0,
             ConsoleKind::Breaker => BREAKER_TIME + 30.0,
             ConsoleKind::Bridge => BRIDGE_TIME + 10.0,
-            ConsoleKind::Secondary(_) => 0.0,
+            ConsoleKind::Secondary(_) | ConsoleKind::Core => 0.0,
         }
     }
 
@@ -292,6 +297,7 @@ impl ConsoleKind {
             ConsoleKind::Bridge => "bridge",
             ConsoleKind::Secondary(0) => "secondary0",
             ConsoleKind::Secondary(_) => "secondary1",
+            ConsoleKind::Core => "core",
         }
     }
 
@@ -449,7 +455,7 @@ pub fn secondary_kinds(level: &Level, rules: &crate::rules::Rules) -> [Secondary
 }
 
 /// The puzzles of a match on `level` with `rules`, in the order the sim has them: the arena's
-/// consoles, then the secondary targets' puzzles (Megatarget mode).
+/// consoles, then (Megatarget mode) the secondary targets' puzzles and the megatarget's.
 pub fn console_defs(level: &Level, rules: &crate::rules::Rules) -> Vec<ConsoleDef> {
     let mut defs: Vec<ConsoleDef> = level.consoles.iter().map(ConsoleDef::pedestal).collect();
     if let Some(m) = &level.mega {
@@ -458,6 +464,10 @@ pub fn console_defs(level: &Level, rules: &crate::rules::Rules) -> Vec<ConsoleDe
                 defs.push(ConsoleDef::secondary(m, side, game));
             }
         }
+        defs.push(ConsoleDef::pedestal(&Console {
+            pos: m.core_console,
+            kind: ConsoleKind::Core,
+        }));
     }
     defs
 }

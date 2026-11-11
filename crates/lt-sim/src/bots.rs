@@ -1759,7 +1759,7 @@ impl Bot {
     /// targets'.
     fn free_for_console(&self, kind: crate::console::ConsoleKind) -> bool {
         match kind {
-            crate::console::ConsoleKind::Secondary(_) => {
+            crate::console::ConsoleKind::Secondary(_) | crate::console::ConsoleKind::Core => {
                 matches!(self.plan, Plan::Hold | Plan::Engage | Plan::Mega)
             }
             _ => matches!(self.plan, Plan::Hold | Plan::Engage),
@@ -1804,6 +1804,12 @@ impl Bot {
                 // (Not that bots walk over it: it's for the players.)
                 crate::console::ConsoleKind::Bridge => true,
                 // (Not with the power already, nor charged there already.)
+                // (The megatarget's: with the power, in the room, not energized yet.)
+                crate::console::ConsoleKind::Core => {
+                    p.power.is_some()
+                        && !p.core_live
+                        && sim.level.mega.as_ref().is_some_and(|m| m.in_room(p.feet))
+                }
                 crate::console::ConsoleKind::Secondary(side) => {
                     p.power.is_none() && p.mega_hits & (1 << side) == 0
                 }
@@ -2422,6 +2428,10 @@ impl Bot {
                 hits_box(&sim.world, eye, min, max) && hits_box(&sim.world, muzzle, min, max)
             };
             if p.power.is_some() && m.in_room(p.feet) {
+                // (Only once it's energized for them: its console first.)
+                if !p.core_live {
+                    return None;
+                }
                 return seen(m.core.min, m.core.max).then(|| m.core.centre());
             }
             if let Some(t) = (0..2)
@@ -2674,7 +2684,17 @@ impl Controller for Bot {
                 self.route_goal = None;
                 self.plan = Plan::Mega;
             }
-            self.errand = None;
+            // (But the megatarget's console's puzzle: below.)
+            let core = self.errand.is_some_and(|e| match e {
+                Errand::Puzzle { k, .. } => k
+                    .checked_sub(crate::console::CONSOLE_POKE)
+                    .and_then(|c| sim.console_defs().get(c as usize))
+                    .is_some_and(|d| d.kind == crate::console::ConsoleKind::Core),
+                _ => false,
+            });
+            if !core {
+                self.errand = None;
+            }
             self.plan_left = self.plan_left.max(1.0);
         }
         if self.plan_left <= 0.0 {
@@ -2699,14 +2719,55 @@ impl Controller for Bot {
                 })
             })
         });
-        let dest = if doorway.is_some() { None } else { dest };
+        // In the room with the power, the megatarget not energized yet: straight to its
+        // console's nearer side, and its puzzle (as an errand: the clicking below).
+        let core = sim.level.mega.as_ref().and_then(|m| {
+            if p.power.is_none() || p.core_live || !m.in_room(feet) {
+                return None;
+            }
+            let k = sim
+                .console_defs()
+                .iter()
+                .position(|d| d.kind == crate::console::ConsoleKind::Core)?;
+            let d = sim.console_defs()[k];
+            let f = d
+                .faces()
+                .iter()
+                .min_by(|a, b| a.centre.distance(feet).total_cmp(&b.centre.distance(feet)))?;
+            let mut pos = f.centre + f.normal * 0.55;
+            pos.y = d.floor;
+            Some((crate::console::CONSOLE_POKE + k as u8, pos, f.centre))
+        });
+        if let Some((k, pos, at)) = core {
+            if !matches!(self.errand, Some(Errand::Puzzle { k: e, .. }) if e == k) {
+                self.errand = Some(Errand::Puzzle {
+                    k,
+                    node: 0,
+                    pos,
+                    at,
+                });
+                self.errand_time = 0.0;
+                self.poke_t = 0.8;
+            }
+            let to = Vec2::new(pos.x - feet.x, pos.z - feet.z);
+            if to.length() > 0.3 {
+                move_dir = to.normalize_or_zero();
+            }
+            self.route.clear();
+            self.route_goal = None;
+        }
+        let dest = if doorway.is_some() || core.is_some() {
+            None
+        } else {
+            dest
+        };
         if let Some(d) = doorway {
             move_dir = d;
             self.route.clear();
             self.route_goal = None;
         }
         match dest {
-            None if doorway.is_some() => {}
+            None if doorway.is_some() || core.is_some() => {}
             Some((node, end)) => {
                 let arrive = if self.errand.is_none() && self.plan != Plan::Engage {
                     1.0

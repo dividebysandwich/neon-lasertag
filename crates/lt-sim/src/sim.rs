@@ -137,6 +137,9 @@ pub struct Player {
     /// both are, the seconds left to get into the megatarget's room.
     pub mega_hits: u8,
     pub power: Option<f32>,
+    /// Megatarget mode: the megatarget energized for this player (its console solved; until
+    /// they hit it or lose the power).
+    pub core_live: bool,
     /// Powerups: rapid fire (until tagged out), shields carried, and the seconds left of the
     /// shield in use (0: none).
     pub rapid: bool,
@@ -692,9 +695,11 @@ pub struct PlayerSnap {
     pub defends: u32,
     pub grenade_tags: u32,
     pub cloak_tags: u32,
-    /// Megatarget mode (`Player::mega_hits`, `Player::power`).
+    /// Megatarget mode (`Player::mega_hits`, `Player::power`, `Player::core_live`).
     pub mega_hits: u8,
     pub power: Option<f32>,
+    #[serde(default)]
+    pub core_live: bool,
     /// Powerups (`Player::rapid`, `shields`, `shield`, `weapon`).
     pub rapid: bool,
     pub shields: u8,
@@ -984,6 +989,7 @@ impl Sim {
             claim_block: 0,
             mega_hits: 0,
             power: None,
+            core_live: false,
             rapid: false,
             shields: 0,
             shield: 0.0,
@@ -2388,6 +2394,7 @@ impl Sim {
             p.cmd.fire = false;
             p.mega_hits = 0;
             p.power = None;
+            p.core_live = false;
             p.lose_powerups();
             let how = if b.owner == HAZARD {
                 // (A gate's bolt stands still.)
@@ -3288,6 +3295,7 @@ impl Sim {
                 if *t <= 0.0 {
                     p.power = None;
                     p.mega_hits = 0;
+                    p.core_live = false;
                     self.events.push(SimEvent::PowerLost { player: id });
                     // Still in the room (or its doorway) without having hit the megatarget.
                     zap = mega.in_room(feet) || mega.touching_shield(feet).is_some();
@@ -3471,6 +3479,7 @@ impl Sim {
         p.cmd.fire = false;
         p.mega_hits = 0;
         p.power = None;
+        p.core_live = false;
         p.lose_powerups();
         self.events.push(SimEvent::TaggedOut {
             player: p.id,
@@ -3494,6 +3503,7 @@ impl Sim {
         p.reloading = None;
         p.mega_hits = 0;
         p.power = None;
+        p.core_live = false;
         p.feet = s.pos;
         p.vy = 0.0;
         p.air = Vec2::ZERO;
@@ -3549,7 +3559,7 @@ impl Sim {
             let p = &self.players[pi];
             match side {
                 Some(i) => p.power.is_none() && p.mega_hits & (1 << i) == 0,
-                None => p.power.is_some() && in_room(p),
+                None => p.power.is_some() && in_room(p) && p.core_live,
             }
         });
         if !counts {
@@ -3659,6 +3669,7 @@ impl Sim {
                     cloak_tags: p.cloak_tags,
                     mega_hits: p.mega_hits,
                     power: p.power,
+                    core_live: p.core_live,
                     rapid: p.rapid,
                     shields: p.shields,
                     shield: p.shield,
@@ -6746,12 +6757,34 @@ mod tests {
         let p = sim.player(a).unwrap();
         assert!(p.alive() && m.in_room(p.feet), "{}", p.feet);
         sim.drain_events();
+        // Dormant until its console is solved: a hit does nothing.
+        fire_at(&mut sim, a, m.core.centre());
+        assert!(
+            !sim.drain_events()
+                .iter()
+                .any(|e| matches!(e, SimEvent::MegaHit { .. }))
+        );
+        assert_eq!(sim.scores, [200, 0]);
+        // Its console solved (from in front of it): energized for them.
+        let k = sim
+            .console_defs()
+            .iter()
+            .position(|d| d.kind == crate::console::ConsoleKind::Core)
+            .unwrap();
+        let f = sim.console_defs()[k].faces[0];
+        let mut stand = f.centre + f.normal * 0.6;
+        stand.y = 0.0;
+        sim.players[i].feet = stand;
+        sim.dev_console_poke(a, k, None, true);
+        assert!(sim.player(a).unwrap().core_live);
+        sim.drain_events();
         fire_at(&mut sim, a, m.core.centre());
         let ev = sim.drain_events();
         assert!(
             ev.iter()
                 .any(|e| matches!(e, SimEvent::MegaHit { by, .. } if *by == a))
         );
+        assert!(!sim.player(a).unwrap().core_live, "spent");
         let p = sim.player(a).unwrap();
         assert_eq!(sim.scores, [1200, 0]);
         assert!(p.power.is_none() && p.mega_hits == 0 && p.ammo == sim.rules.ammo);

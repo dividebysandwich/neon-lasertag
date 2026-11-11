@@ -1122,7 +1122,9 @@ fn update(
             Some(p) if p.power.is_some() => {
                 let left = p.power.unwrap_or(0.0).ceil();
                 let inside = game.level.mega.as_ref().is_some_and(|m| m.in_room(p.feet));
-                let s = if inside {
+                let s = if inside && !p.core_live {
+                    format!("SOLVE THE CONSOLE TO ENERGIZE THE MEGATARGET  {left:.0}")
+                } else if inside {
                     format!("SHOOT THE MEGATARGET ABOVE YOU!  {left:.0}")
                 } else {
                     format!("GET INTO THE MEGATARGET ROOM  {left:.0}")
@@ -2735,7 +2737,7 @@ pub fn mega_banner_for(e: &SimEvent, game: &Game) -> Option<Banner> {
         } if by == me => Some(banner(
             "ROOM OPEN",
             format!(
-                "ENTER ROOM WITHIN {:.0} S - SHOOT THE MEGATARGET",
+                "ENTER ROOM WITHIN {:.0} S - SOLVE ITS CONSOLE, SHOOT THE MEGATARGET",
                 r.power_time
             ),
             neonui::GREEN,

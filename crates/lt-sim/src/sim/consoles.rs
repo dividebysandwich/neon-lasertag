@@ -145,7 +145,13 @@ impl Sim {
         let (Some(def), Some(st)) = (self.console_defs.get(k), self.consoles.get(k)) else {
             return false;
         };
-        st.open() && def.in_reach(self.players[pi].feet)
+        let p = &self.players[pi];
+        // (The megatarget's: only for those with the power, in the room, not energized yet.)
+        let core_ok = def.kind != ConsoleKind::Core
+            || p.power.is_some()
+                && !p.core_live
+                && self.level.mega.as_ref().is_some_and(|m| m.in_room(p.feet));
+        st.open() && core_ok && def.in_reach(p.feet)
     }
 
     /// Player `pi` clicked element `i` of console `k`'s puzzle.
@@ -287,6 +293,9 @@ impl Sim {
                         }
                     }
                 }
+            }
+            ConsoleKind::Core => {
+                self.players[pi].core_live = true;
             }
             ConsoleKind::Secondary(side) => {
                 // The solver, and their team mates in the pocket.
