@@ -2434,6 +2434,29 @@ impl Bot {
             {
                 return Some(t.centre());
             }
+            // The relays of a secondary target still to charge at: the first one out of line
+            // (once it's done turning from the last shot).
+            for side in (0..2).filter(|i| p.power.is_none() && p.mega_hits & (1 << i) == 0) {
+                if sim.secondary[side] != crate::rules::SecondaryKind::Relay {
+                    continue;
+                }
+                let Some(g) = sim.gadgets.get(side) else {
+                    continue;
+                };
+                let Some(i) = g.state.iter().position(|&k| k != 0) else {
+                    continue;
+                };
+                let r = m.relay_route[side][i + 1];
+                // (Not a collider: in sight of the eyes and the muzzle.)
+                let open = |from: Vec3| {
+                    let d = (r - from).normalize_or_zero();
+                    sim.world.clear(from, r - d * crate::gadgets::PIECE_R)
+                };
+                if sim.gadget_ready(side, i) && r.distance(eye) < 18.0 && open(eye) && open(muzzle)
+                {
+                    return Some(r);
+                }
+            }
             if self.plan != Plan::Mega {
                 return None;
             }

@@ -219,6 +219,8 @@ pub enum SecondaryKind {
     Random,
     /// Shooting it.
     Shoot,
+    /// Shooting the relays in its pocket round until a beam reaches it (`gadgets`).
+    Relay,
     /// Solving a circuit puzzle on it (`minigame::circuit`).
     Circuit,
     /// Solving a lights puzzle on it (`minigame::lights`).
@@ -227,8 +229,9 @@ pub enum SecondaryKind {
 
 impl SecondaryKind {
     /// The ways `Random` picks from.
-    pub const PICKS: [SecondaryKind; 3] = [
+    pub const PICKS: [SecondaryKind; 4] = [
         SecondaryKind::Shoot,
+        SecondaryKind::Relay,
         SecondaryKind::Circuit,
         SecondaryKind::Lights,
     ];
@@ -237,6 +240,7 @@ impl SecondaryKind {
         match self {
             SecondaryKind::Random => "random",
             SecondaryKind::Shoot => "shoot",
+            SecondaryKind::Relay => "relay",
             SecondaryKind::Circuit => "circuit",
             SecondaryKind::Lights => "lights",
         }

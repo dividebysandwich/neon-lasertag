@@ -4,7 +4,7 @@
 //!     lt-server [--port 27420] [--name NAME] [--seed N] [--bots 8] [--difficulty normal]
 //!               [--arena small|medium|large|random] [--mode classic|megatarget|prism|infection]
 //!               [--master URL] [--private] [--no-lan] [--lock-teams]
-//!               [--secondary random|shoot|circuit|lights]
+//!               [--secondary random|shoot|relay|circuit|lights]
 
 use std::time::{Duration, Instant};
 
@@ -77,7 +77,7 @@ fn args() -> Args {
                 .and_then(lt_sim::rules::SecondaryKind::parse)
             {
                 Some(k) => a.secondary = k,
-                None => eprintln!("--secondary takes random, shoot, circuit or lights"),
+                None => eprintln!("--secondary takes random, shoot, relay, circuit or lights"),
             },
             "--master" => a.master = it.next().unwrap_or(a.master),
             "--private" => a.private = true,
@@ -95,7 +95,7 @@ fn args() -> Args {
                 println!(
                     "lt-server [--port N] [--name NAME] [--seed N] [--bots N] [--difficulty easy|normal|hard] \
                      [--arena small|medium|large|random] [--mode classic|megatarget|prism|infection] [--master URL] [--private] [--no-lan] [--lock-teams] \
-                     [--modifiers dark,lowgrav,mirror] [--secondary random|shoot|circuit|lights]"
+                     [--modifiers dark,lowgrav,mirror] [--secondary random|shoot|relay|circuit|lights]"
                 );
                 std::process::exit(0);
             }

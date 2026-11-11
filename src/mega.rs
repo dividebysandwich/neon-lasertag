@@ -44,7 +44,9 @@ impl Plugin for MegaPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            (on_events, animate).chain().run_if(resource_exists::<Game>),
+            (on_events, animate, animate_relays)
+                .chain()
+                .run_if(resource_exists::<Game>),
         );
     }
 }
@@ -115,6 +117,7 @@ pub fn spawn(
     let Some(m) = &level.mega else { return };
     spawn_core(commands, m, palette, meshes, accents, glows);
     spawn_secondaries(commands, m, secondary, palette, meshes, accents);
+    spawn_relays(commands, m, secondary, palette, meshes, accents);
     spawn_turrets(commands, m, palette, meshes, accents);
     spawn_shields(commands, m, meshes, accents, glows, assets);
 }
@@ -323,6 +326,244 @@ fn disc(m: &mut MeshData, c: Vec3, r0: f32, r1: f32, seg: usize) {
 }
 
 /// A rotation turning +Z to `n` (level).
+/// The relay puzzles' beam (and its stub off a relay turned wrong).
+const BEAM: Vec3 = Vec3::new(0.2, 1.0, 0.95);
+
+/// A secondary target that's a relay puzzle: its relays (turned as the snapshot has them),
+/// the beam's pieces from the emitter on (shown as far as it gets), and the receiver.
+#[derive(Component)]
+struct RelayView {
+    side: usize,
+    relays: [Entity; lt_sim::gadgets::RELAYS],
+    /// Each relay's shown quarter turns off (eased), and its flash after a shot.
+    shown: [f32; lt_sim::gadgets::RELAYS],
+    flash: [f32; lt_sim::gadgets::RELAYS],
+    frames: [Handle<AccentMaterial>; lt_sim::gadgets::RELAYS],
+    beams: Vec<Entity>,
+    stub: Entity,
+    receiver: Handle<AccentMaterial>,
+}
+
+fn spawn_relays(
+    commands: &mut Commands,
+    m: &Mega,
+    secondary: [lt_sim::rules::SecondaryKind; 2],
+    palette: &Palette,
+    meshes: &mut Assets<Mesh>,
+    accents: &mut Assets<AccentMaterial>,
+) {
+    use lt_sim::gadgets::{PIECE_R, RELAYS};
+    let plate = meshes.add(Cuboid::new(0.58, 0.58, 0.05));
+    let cage = meshes.add(Torus::new(PIECE_R - 0.03, PIECE_R));
+    let hub = meshes.add(Cylinder::new(0.035, 0.6));
+    let beam = meshes.add(Cylinder::new(0.035, 1.0));
+    let emitter = meshes.add(Cuboid::new(0.22, 0.22, 0.12));
+    let ring = meshes.add(Torus::new(0.14, 0.2));
+    let beam_mat = accent(accents, BEAM, 6.0);
+    for side in 0..2 {
+        if secondary[side] != lt_sim::rules::SecondaryKind::Relay {
+            continue;
+        }
+        let route = m.relay_route[side];
+        let root = commands
+            .spawn((
+                ArenaPart,
+                Transform::IDENTITY,
+                Visibility::default(),
+                Name::new("relays"),
+            ))
+            .id();
+        let part = |commands: &mut Commands, mesh: &Handle<Mesh>, mat, t: Transform| {
+            commands
+                .spawn((Mesh3d(mesh.clone()), mat, t, ChildOf(root)))
+                .id()
+        };
+        // The emitter, on the end wall, facing along the beam.
+        let out = (route[1] - route[0]).normalize();
+        part(
+            commands,
+            &emitter,
+            MeshMaterial3d(accent(accents, BEAM, 4.0)),
+            Transform::from_translation(route[0])
+                .with_rotation(Quat::from_rotation_arc(Vec3::Z, out)),
+        );
+        // The receiver over the target.
+        let receiver = accent(accents, TO_HIT, 3.0);
+        let into = (route[RELAYS + 1] - route[RELAYS]).normalize();
+        part(
+            commands,
+            &ring,
+            MeshMaterial3d(receiver.clone()),
+            Transform::from_translation(route[RELAYS + 1])
+                .with_rotation(Quat::from_rotation_arc(Vec3::Y, into)),
+        );
+        let mut relays = [Entity::PLACEHOLDER; RELAYS];
+        let frames: [Handle<AccentMaterial>; RELAYS] =
+            std::array::from_fn(|_| accent(accents, TO_HIT, 4.0));
+        for i in 0..RELAYS {
+            let r = commands
+                .spawn((
+                    Transform::from_translation(route[i + 1]),
+                    Visibility::default(),
+                    ChildOf(root),
+                ))
+                .id();
+            // A mirror plate (its face along local +z), in a ring, on a short hanger.
+            commands.spawn((
+                Mesh3d(plate.clone()),
+                MeshMaterial3d(palette.suit.clone()),
+                Transform::IDENTITY,
+                ChildOf(r),
+            ));
+            commands.spawn((
+                Mesh3d(meshes.add(Cuboid::new(0.5, 0.5, 0.02))),
+                MeshMaterial3d(accent(accents, Vec3::new(0.8, 0.95, 1.0), 4.0)),
+                Transform::from_xyz(0.0, 0.0, 0.03),
+                ChildOf(r),
+            ));
+            commands.spawn((
+                Mesh3d(cage.clone()),
+                MeshMaterial3d(frames[i].clone()),
+                Transform::from_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+                ChildOf(r),
+            ));
+            commands.spawn((
+                Mesh3d(hub.clone()),
+                MeshMaterial3d(palette.suit.clone()),
+                Transform::from_xyz(0.0, 0.45, 0.0),
+                ChildOf(r),
+            ));
+            relays[i] = r;
+        }
+        let beams: Vec<Entity> = (0..=RELAYS)
+            .map(|_| {
+                part(
+                    commands,
+                    &beam,
+                    MeshMaterial3d(beam_mat.clone()),
+                    Transform::IDENTITY,
+                )
+            })
+            .collect();
+        let stub = part(
+            commands,
+            &beam,
+            MeshMaterial3d(beam_mat.clone()),
+            Transform::IDENTITY,
+        );
+        commands.entity(root).insert(RelayView {
+            side,
+            relays,
+            shown: [0.0; RELAYS],
+            flash: [0.0; RELAYS],
+            frames,
+            beams,
+            stub,
+            receiver,
+        });
+    }
+}
+
+/// A beam piece (a unit cylinder along y) from `a` to `b`.
+fn beam_between(a: Vec3, b: Vec3) -> Transform {
+    let d = b - a;
+    let len = d.length().max(0.001);
+    Transform::from_translation((a + b) / 2.0)
+        .with_rotation(Quat::from_rotation_arc(Vec3::Y, d / len))
+        .with_scale(Vec3::new(1.0, len, 1.0))
+}
+
+fn animate_relays(
+    time: Res<Time>,
+    game: Res<Game>,
+    mut events: MessageReader<GameEvent>,
+    mut views: Query<&mut RelayView>,
+    mut parts: Query<(&mut Transform, &mut Visibility), Without<RelayView>>,
+    mut accents: ResMut<Assets<AccentMaterial>>,
+) {
+    use lt_sim::gadgets::{RELAYS, beam_reach, relay_turn};
+    let flashes: Vec<(usize, usize)> = events
+        .read()
+        .filter_map(|GameEvent(e)| match *e {
+            SimEvent::RelayTurned { side, relay, .. } => Some((side as usize, relay as usize)),
+            _ => None,
+        })
+        .collect();
+    let Some(m) = game.level.mega.as_ref() else {
+        return;
+    };
+    let dt = time.delta_secs();
+    let t = time.elapsed_secs();
+    for mut v in &mut views {
+        let side = v.side;
+        let Some(g) = game.snap.gadgets.get(side) else {
+            continue;
+        };
+        let route = m.relay_route[side];
+        for &(s, i) in &flashes {
+            if s == side && i < RELAYS {
+                v.flash[i] = 1.0;
+            }
+        }
+        for i in 0..RELAYS {
+            // Turning clockwise (seen from above) a quarter at a time, eased.
+            let want = g.state.get(i).copied().unwrap_or(0) as f32;
+            if want < v.shown[i] - 0.5 {
+                v.shown[i] -= 4.0;
+            }
+            v.shown[i] = (v.shown[i] + dt * 6.0).min(want);
+            v.flash[i] = (v.flash[i] - dt * 3.0).max(0.0);
+            let (a, b) = relay_turn(&route, i);
+            let right = Quat::from_rotation_arc(Vec3::Z, (b - a).normalize_or(Vec3::Z));
+            let rot = Quat::from_rotation_y(-v.shown[i] * std::f32::consts::FRAC_PI_2) * right;
+            if let Ok((mut tr, _)) = parts.get_mut(v.relays[i]) {
+                tr.rotation = rot;
+            }
+            let ok = g.state.get(i) == Some(&0);
+            if let Some(mut mat) = accents.get_mut(&v.frames[i]) {
+                let c = if ok { BEAM } else { TO_HIT };
+                mat.neon.color = c.lerp(Vec3::ONE, v.flash[i]).extend(4.0 + 6.0 * v.flash[i]);
+            }
+        }
+        // The beam: as far as the relays are turned right, then off the first one turned
+        // wrong (a stub its wrong way).
+        let reach = beam_reach(&g.state);
+        let solved = g.hold > 0.0 || reach == RELAYS;
+        for (j, &e) in v.beams.iter().enumerate() {
+            if let Ok((mut tr, mut vis)) = parts.get_mut(e) {
+                let on = solved || j <= reach;
+                *vis = if on {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                };
+                if on {
+                    *tr = beam_between(route[j], route[j + 1]);
+                }
+            }
+        }
+        if let Ok((mut tr, mut vis)) = parts.get_mut(v.stub) {
+            if solved || reach >= RELAYS {
+                *vis = Visibility::Hidden;
+            } else {
+                let (_, out) = relay_turn(&route, reach);
+                let k = g.state.get(reach).copied().unwrap_or(0) as f32;
+                let wrong = Quat::from_rotation_y(-k * std::f32::consts::FRAC_PI_2) * out;
+                let p = route[reach + 1];
+                *tr = beam_between(p, p + wrong * 0.9);
+                *vis = Visibility::Inherited;
+            }
+        }
+        if let Some(mut mat) = accents.get_mut(&v.receiver) {
+            mat.neon.color = if solved {
+                BEAM.extend(12.0 + 4.0 * (t * 20.0).sin())
+            } else {
+                TO_HIT.extend(3.0 + (t * 3.0).sin())
+            };
+        }
+    }
+}
+
 fn facing(n: Vec3) -> Quat {
     Quat::from_rotation_arc(Vec3::Z, n.normalize_or(Vec3::Z))
 }

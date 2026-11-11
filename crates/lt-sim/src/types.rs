@@ -894,6 +894,21 @@ pub enum SimEvent {
         team: Team,
         pos: Vec3,
     },
+    /// Megatarget mode: a relay in secondary target `side`'s pocket turned a quarter by `by`'s
+    /// shot (at `pos`).
+    RelayTurned {
+        side: u8,
+        relay: u8,
+        by: PlayerId,
+        pos: Vec3,
+    },
+    /// Megatarget mode: the relay beam in `side`'s pocket reaches its receiver (at `pos`) by
+    /// `by`'s shot.
+    RelayAligned {
+        side: u8,
+        by: PlayerId,
+        pos: Vec3,
+    },
     /// A console done resting: its puzzle can be clicked again.
     ConsoleReady {
         console: u8,

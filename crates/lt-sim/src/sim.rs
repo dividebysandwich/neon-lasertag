@@ -23,10 +23,12 @@ use crate::types::*;
 
 mod boxes;
 mod consoles;
+mod gadgets;
 pub use boxes::{
     BoxPhase, BoxSnap, BoxState, LID_TIME, POKE_REACH, RISE_TIME, box_motion, head_hit,
 };
 pub use consoles::{ConsoleSnap, ConsoleState, VAULT_KINDS};
+pub use gadgets::{GadgetSnap, GadgetState};
 
 pub const TICK: f32 = 1.0 / 60.0;
 pub const MAX_PLAYERS: usize = 32;
@@ -621,6 +623,9 @@ pub struct Snapshot {
     /// The consoles (as `console::console_defs`).
     #[serde(default)]
     pub consoles: Vec<ConsoleSnap>,
+    /// Megatarget mode: the secondary targets' shooting puzzles (`crate::gadgets`).
+    #[serde(default)]
+    pub gadgets: Vec<GadgetSnap>,
     /// Barriers standing.
     pub barriers: Vec<Barrier>,
     /// Pulse sensors thrown.
@@ -792,6 +797,8 @@ pub struct Sim {
     pub consoles: Vec<ConsoleState>,
     /// Megatarget mode: how each secondary target charges players (`console::secondary_kinds`).
     pub secondary: [crate::rules::SecondaryKind; 2],
+    /// Megatarget mode: the secondary targets' shooting puzzles, per side.
+    pub gadgets: Vec<GadgetState>,
     console_defs: Arc<Vec<crate::console::ConsoleDef>>,
     /// Barriers standing.
     pub barriers: Vec<Barrier>,
@@ -890,6 +897,7 @@ impl Sim {
             consoles: Vec::new(),
             console_defs: Arc::new(Vec::new()),
             secondary,
+            gadgets: Vec::new(),
             barriers: Vec::new(),
             sensors: Vec::new(),
             decoys: Vec::new(),
@@ -914,6 +922,7 @@ impl Sim {
         sim.next_event = sim.rng.random_range(lo..=hi.max(lo));
         sim.init_boxes();
         sim.init_consoles();
+        sim.init_gadgets();
         sim
     }
 
@@ -1202,6 +1211,7 @@ impl Sim {
         self.step_pokes();
         self.step_boxes();
         self.step_consoles();
+        self.step_gadgets();
         self.step_bolts();
         self.step_grenades();
         self.step_barriers();
@@ -2005,6 +2015,17 @@ impl Sim {
             | Contact::Mirror { at, .. } => at,
             Contact::Arena { q, .. } => q,
         };
+        if let Some((side, i, q)) = self.gadget_hit(b.pos, end) {
+            if b.extra.lance {
+                self.events.push(SimEvent::Streak {
+                    player: b.owner,
+                    from: b.pos,
+                    to: q,
+                });
+            }
+            self.gadget_shot(side, i, b, q);
+            return true;
+        }
         if let Some((k, q)) = self.box_head_hit(b.pos, end) {
             if b.extra.lance {
                 self.events.push(SimEvent::Streak {
@@ -3695,6 +3716,7 @@ impl Sim {
                 .collect(),
             boxes: self.boxes.iter().map(|b| b.snap()).collect(),
             consoles: self.consoles.iter().map(|c| c.snap()).collect(),
+            gadgets: self.gadgets.iter().map(|g| g.snap()).collect(),
             barriers: self.barriers.clone(),
             sensors: self.sensors.clone(),
             decoys: self.decoys.iter().map(|d| d.snap()).collect(),

@@ -272,6 +272,8 @@ impl Shots {
             .iter()
             .map(|b| lt_sim::sim::box_motion(b.phase, b.t).1)
             .collect();
+        // So do the relays of the secondary targets that are relay puzzles.
+        let kinds = lt_sim::console::secondary_kinds(level, rules);
         let mut i = 0;
         while i < bolts.len() {
             let f = &mut bolts[i];
@@ -292,7 +294,14 @@ impl Shots {
                     | Contact::Mirror { at, .. } => at,
                     Contact::Arena { q, .. } => q,
                 };
-                if let Some((_, q)) = lt_sim::sim::head_hit(level, &rises, f.bolt.pos, end) {
+                let piece = level
+                    .mega
+                    .as_ref()
+                    .and_then(|m| lt_sim::gadgets::hit(m, kinds, f.bolt.pos, end))
+                    .map(|(_, _, q)| q);
+                if let Some(q) = piece
+                    .or_else(|| lt_sim::sim::head_hit(level, &rises, f.bolt.pos, end).map(|h| h.1))
+                {
                     if f.bolt.extra.lance {
                         out.push(SimEvent::Streak {
                             player: f.bolt.owner,

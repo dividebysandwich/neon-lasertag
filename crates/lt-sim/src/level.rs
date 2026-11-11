@@ -941,6 +941,10 @@ pub struct Mega {
     pub room: (Vec3, Vec3),
     pub inner: Vec<glam::Vec2>,
     pub shields: [Shield; 2],
+    /// Per pocket (as `secondaries`): a relay beam's way (`crate::gadgets`): the emitter, the
+    /// relays, the receiver over the target.
+    #[serde(default)]
+    pub relay_route: [[Vec3; crate::gadgets::RELAYS + 2]; 2],
 }
 
 /// Turrets' gun height and the megatarget's size.
@@ -995,6 +999,17 @@ impl Mega {
             Vec3::new(-hw, 0.0, -2.0 * CELL),
             Vec3::new(wall_x, 0.0, 2.0 * CELL),
         );
+        // A relay beam's way, over heads: from the pocket's -z end wall along the target's
+        // wall, across the pocket, along the outer wall and back across into the receiver
+        // over the target.
+        let (y, xi, xo) = (2.6, back - 0.9, -hw + 0.9);
+        let route = [
+            Vec3::new(xi, y, -2.0 * CELL + 0.15),
+            Vec3::new(xi, y, -1.1 * CELL),
+            Vec3::new(xo, y, -1.1 * CELL),
+            Vec3::new(xo, y, 0.0),
+            Vec3::new(back - 0.12, y, 0.0),
+        ];
         let (a, b) = (mirror_point(pocket.0), mirror_point(pocket.1));
         // The room, in the middle (its +z doorway Red's).
         let d = room.design();
@@ -1025,6 +1040,7 @@ impl Mega {
             room: (Vec3::new(lo.x, 0.0, lo.y), Vec3::new(hi.x, ceiling, hi.y)),
             inner: d.inner.clone(),
             shields: [shields[0], shields[1]],
+            relay_route: [route, route.map(mirror_point)],
         }
     }
 

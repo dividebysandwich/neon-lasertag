@@ -366,6 +366,34 @@ fn dev_script(
                 face(w, yaw);
             });
         }
+        // Local games, Megatarget mode: in the first pocket, looking up at its middle relay
+        // (`warp-relays`).
+        "warp-relays" => {
+            commands.queue(|w: &mut World| {
+                let look = {
+                    let Some(mut game) = w.get_resource_mut::<Game>() else {
+                        return;
+                    };
+                    let Some(me) = game.me else { return };
+                    let Source::Local { sim, .. } = &mut game.source else {
+                        return;
+                    };
+                    let Some(m) = sim.level.mega.clone() else {
+                        return;
+                    };
+                    let (a, b) = m.pockets[0];
+                    let feet = Vec3::new((a.x + b.x) / 2.0, 0.0, b.z - 1.0);
+                    let to = m.relay_route[0][2] - (feet + Vec3::Y * 1.65);
+                    let yaw = lt_sim::sim::yaw_of(to);
+                    sim.teleport(me, feet, yaw);
+                    (yaw, (to.y / to.length()).asin())
+                };
+                if let Some(mut l) = w.get_resource_mut::<crate::desktop::Look>() {
+                    l.yaw = look.0;
+                    l.pitch = look.1;
+                }
+            });
+        }
         // Local games, consoles: in front of console K's first puzzle (`warp-console=K`), of
         // the first one of a kind (`warp-console=vault`, ...), or of the nearest one
         // (`warp-console`), facing it; clicking the nearest one's hint (`console-hint`, or

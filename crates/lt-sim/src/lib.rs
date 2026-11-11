@@ -5,6 +5,7 @@
 pub mod bots;
 pub mod collide;
 pub mod console;
+pub mod gadgets;
 pub mod hitbox;
 pub mod kit;
 pub mod level;

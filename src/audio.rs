@@ -750,6 +750,23 @@ fn play_events(
                 };
                 play(&mut commands, gain, sound, Some(pos), volume, speed)
             }
+            // Megatarget relays: a ping as one turns, the solve sound as the beam gets through.
+            SimEvent::RelayTurned { pos, by, .. } => play(
+                &mut commands,
+                gain,
+                &sounds.mirror_ping,
+                Some(pos),
+                if Some(by) == me { 1.0 } else { 0.7 },
+                1.2,
+            ),
+            SimEvent::RelayAligned { pos, .. } => play(
+                &mut commands,
+                gain,
+                &sounds.puzzle_solved,
+                Some(pos),
+                1.0,
+                0.9,
+            ),
             SimEvent::ConsoleReady { pos, .. } => play(
                 &mut commands,
                 gain,
