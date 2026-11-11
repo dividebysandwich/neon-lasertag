@@ -19,7 +19,7 @@
 //! one (`warp-box-all`, hosting), clicking its puzzle (`box-hint=N`, `box-poke=J`, and
 //! `box-click`, which works in a remote game too) or solving it at once (`solve-box`); consoles:
 //! in front of one (`warp-console`, `warp-console=K`, `warp-console=vault`), at a light
-//! bridge's end (`warp-bridge`), clicking the
+//! bridge's end (`warp-bridge`) or on its deck (`warp-deck`), clicking the
 //! nearest one's puzzle (`console-hint=N`), giving it a puzzle of a kind (`console-game=circuit`)
 //! or solving it (`solve-console`); arena events (`blackout`, `overdrive`) and the last
 //! minute's double points (`double`); freezing the game (`freeze`), the free camera
@@ -372,6 +372,7 @@ fn dev_script(
         // `console-hint=N` N times) or solving it at once (`solve-console`).
         a if a == "warp-console"
             || a == "warp-bridge"
+            || a == "warp-deck"
             || a.starts_with("warp-console=")
             || a.starts_with("console-hint")
             || a.starts_with("console-game=")
@@ -420,20 +421,36 @@ fn dev_script(
                         }
                         return;
                     }
-                    if a == "warp-bridge" {
-                        // Behind the nearest light bridge's end, on the upper floor, facing over it.
-                        let Some(b) = sim
-                            .level
-                            .bridges
+                    if a == "warp-bridge" || a == "warp-deck" {
+                        // Behind a light bridge's end (one that's up, else the nearest), on the upper floor, facing over it.
+                        // (One that's up, if any is.)
+                        let up = defs
                             .iter()
-                            .min_by(|a, b| a.mid().distance(at).total_cmp(&b.mid().distance(at)))
-                            .copied()
-                        else {
+                            .zip(&sim.consoles)
+                            .filter(|(_, s)| s.active > 0.0)
+                            .find_map(|(d, _)| lt_sim::console::bridge_for(&sim.level, d));
+                        let Some(b) = up.or_else(|| {
+                            sim.level
+                                .bridges
+                                .iter()
+                                .min_by(|a, b| {
+                                    a.mid().distance(at).total_cmp(&b.mid().distance(at))
+                                })
+                                .copied()
+                        }) else {
                             return;
                         };
                         let dir = (b.ends[1] - b.ends[0]).normalize_or(Vec3::X);
                         let yaw = lt_sim::sim::yaw_of(dir);
-                        sim.teleport(me, b.ends[0] - dir * 1.0, yaw);
+                        // (Or on its deck, at the near end: `warp-deck`.)
+                        let feet = if a == "warp-deck" {
+                            let m = b.mid();
+                            let half = (b.max - b.min).dot(dir.abs()) / 2.0;
+                            Vec3::new(m.x, b.max.y + 0.05, m.z) - dir * (half - 1.0)
+                        } else {
+                            b.ends[0] - dir * 1.0
+                        };
+                        sim.teleport(me, feet, yaw);
                         yaw
                     } else {
                         let k = match a.strip_prefix("warp-console=") {

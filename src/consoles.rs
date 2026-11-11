@@ -79,7 +79,7 @@ pub fn solved_banner(kind: ConsoleKind) -> Option<(&'static str, &'static str)> 
         ),
         ConsoleKind::Bridge => (
             "LIGHT BRIDGE UP",
-            "A WALKWAY OVER THE ARENA FOR 25 S - SHOOT DOWN FROM IT (ANYONE CAN USE IT)",
+            "A WALKWAY HIGH OVER THE ARENA TO THE OTHER SIDE FOR 25 S - ANYONE CAN USE IT",
         ),
     })
 }
@@ -96,8 +96,8 @@ struct ConsoleView {
     charge_mat: Handle<AccentMaterial>,
     /// A forward beacon's column of light up from it (in its team's colour while it has one).
     beam: Option<(Entity, Handle<AccentMaterial>)>,
-    /// A light bridge's bridge (scaled along its length as it comes and goes), its surface's
-    /// and its edges' materials, and how far out it's shown (0..1).
+    /// A light bridge's bridge, its surface's and its edges' materials, and how far it's
+    /// come up (0..1).
     bridge: Option<BridgeView>,
     /// The puzzle shown (its seed), its root on each face and its elements.
     seed: Option<u32>,
@@ -312,80 +312,113 @@ pub fn spawn(
         });
         // A light bridge's bridge: a slab of hard light with bright edges (hidden until up).
         let bridge = lt_sim::console::bridge_for(&game.level, d).map(|b| {
-            let size = b.max - b.min;
-            let along_x = size.x >= size.z;
-            let (len, w) = if along_x {
-                (size.x, size.z)
-            } else {
-                (size.z, size.x)
-            };
             let surface = accent(accents, kind_color(d.kind), 0.0);
             let edges = accent(accents, kind_color(d.kind), 0.0);
-            let rot = if along_x {
-                Quat::IDENTITY
-            } else {
-                Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)
-            };
             let root = commands
                 .spawn((
                     ArenaPart,
-                    Transform::from_translation(b.mid()).with_rotation(rot),
+                    Transform::from_translation(b.mid()),
                     Visibility::Hidden,
                     Name::new("light bridge"),
                 ))
                 .id();
-            let slab = meshes.add(Cuboid::new(len, size.y, w));
-            commands.spawn((
-                Mesh3d(slab),
-                MeshMaterial3d(surface.clone()),
-                Transform::IDENTITY,
-                ChildOf(root),
-            ));
-            // Its sides: an edge strip, and a low rail on posts (`BRIDGE_RAIL`, to shoot down
-            // over).
-            let rail = meshes.add(Cuboid::new(len, 0.05, 0.05));
-            let post = meshes.add(Cuboid::new(0.04, lt_sim::console::BRIDGE_RAIL, 0.04));
-            let posts = (len / 1.5).round().max(1.0) as usize;
-            for s in [-1.0, 1.0] {
-                let z = s * (w / 2.0 - 0.03);
-                for y in [
-                    size.y / 2.0 + 0.02,
-                    size.y / 2.0 + lt_sim::console::BRIDGE_RAIL,
-                ] {
-                    commands.spawn((
-                        Mesh3d(rail.clone()),
-                        MeshMaterial3d(edges.clone()),
-                        Transform::from_xyz(0.0, y, z),
-                        ChildOf(root),
-                    ));
-                }
-                for i in 0..=posts {
-                    commands.spawn((
-                        Mesh3d(post.clone()),
-                        MeshMaterial3d(edges.clone()),
-                        Transform::from_xyz(
-                            (i as f32 / posts as f32 - 0.5) * (len - 0.05),
-                            size.y / 2.0 + lt_sim::console::BRIDGE_RAIL / 2.0,
-                            z,
-                        ),
-                        ChildOf(root),
-                    ));
-                }
-            }
-            // Crossbars every metre or so.
-            let bar = meshes.add(Cuboid::new(0.04, 0.02, w - 0.1));
-            let n = (len / 1.0).round().max(1.0) as usize;
-            for i in 0..=n {
+            let mid = b.mid();
+            let part = |commands: &mut Commands,
+                        meshes: &mut Assets<Mesh>,
+                        size: Vec3,
+                        t: Transform,
+                        mat: &Handle<AccentMaterial>| {
                 commands.spawn((
-                    Mesh3d(bar.clone()),
-                    MeshMaterial3d(edges.clone()),
-                    Transform::from_xyz(
-                        (i as f32 / n as f32 - 0.5) * (len - 0.1),
-                        size.y / 2.0 + 0.012,
-                        0.0,
-                    ),
+                    Mesh3d(meshes.add(Cuboid::from_size(size))),
+                    MeshMaterial3d(mat.clone()),
+                    t,
                     ChildOf(root),
                 ));
+            };
+            let rail_h = lt_sim::console::BRIDGE_RAIL;
+            // The deck: a slab of hard light, an edge strip and a low rail on posts either side,
+            // a crossbar every metre or so.
+            let size = b.max - b.min;
+            let along = if b.along_x() { Vec3::X } else { Vec3::Z };
+            let across = Vec3::Y.cross(along).abs();
+            let len = size.dot(along);
+            let w = size.dot(across);
+            part(commands, meshes, size, Transform::IDENTITY, &surface);
+            let top = size.y / 2.0;
+            for sgn in [-1.0, 1.0] {
+                let side = across * sgn * (w / 2.0 - 0.03);
+                for y in [top + 0.02, top + rail_h] {
+                    part(
+                        commands,
+                        meshes,
+                        along * len + (Vec3::ONE - along) * 0.05,
+                        Transform::from_translation(side + Vec3::Y * y),
+                        &edges,
+                    );
+                }
+                let posts = (len / 1.5).round().max(1.0) as usize;
+                for i in 0..=posts {
+                    let at = along * ((i as f32 / posts as f32 - 0.5) * (len - 0.05));
+                    part(
+                        commands,
+                        meshes,
+                        Vec3::new(0.04, rail_h, 0.04),
+                        Transform::from_translation(side + at + Vec3::Y * (top + rail_h / 2.0)),
+                        &edges,
+                    );
+                }
+            }
+            let bars = (len / 1.0).round().max(1.0) as usize;
+            for i in 0..=bars {
+                let at = along * ((i as f32 / bars as f32 - 0.5) * (len - 0.1));
+                part(
+                    commands,
+                    meshes,
+                    across * (w - 0.1) + along * 0.04 + Vec3::Y * 0.02,
+                    Transform::from_translation(at + Vec3::Y * (top + 0.012)),
+                    &edges,
+                );
+            }
+            // The ramps: sloping slabs with edge strips.
+            for &(rmin, rmax, dir) in &b.ramps {
+                let climb = match dir {
+                    0 => Vec3::Z,
+                    1 => Vec3::X,
+                    2 => Vec3::NEG_Z,
+                    _ => Vec3::NEG_X,
+                };
+                let run = (rmax - rmin).dot(climb.abs());
+                let rise = rmax.y - rmin.y;
+                let slope_len = (run * run + rise * rise).sqrt();
+                let centre = Vec3::new(
+                    (rmin.x + rmax.x) / 2.0,
+                    (rmin.y + rmax.y) / 2.0,
+                    (rmin.z + rmax.z) / 2.0,
+                ) - mid;
+                // Its length along the climb, tilted up by the slope.
+                let tilt =
+                    Quat::from_rotation_arc(climb, (climb * run + Vec3::Y * rise) / slope_len);
+                let rw = (rmax - rmin).dot(Vec3::Y.cross(climb).abs());
+                let slab =
+                    climb.abs() * slope_len + Vec3::Y.cross(climb).abs() * rw + Vec3::Y * 0.08;
+                part(
+                    commands,
+                    meshes,
+                    slab,
+                    Transform::from_translation(centre - Vec3::Y * 0.04).with_rotation(tilt),
+                    &surface,
+                );
+                for sgn in [-1.0, 1.0] {
+                    let side = Vec3::Y.cross(climb).abs() * sgn * (rw / 2.0 - 0.03);
+                    part(
+                        commands,
+                        meshes,
+                        climb.abs() * slope_len + (Vec3::ONE - climb.abs()) * 0.05,
+                        Transform::from_translation(centre + tilt * side + Vec3::Y * 0.02)
+                            .with_rotation(tilt),
+                        &edges,
+                    );
+                }
             }
             BridgeView {
                 root,
@@ -738,15 +771,14 @@ fn animate(
             };
         }
         if let Some(b) = &mut v.bridge {
-            // Coming out from the middle in a moment, going the same way; flickering for the
-            // last two seconds.
+            // Coming and going in a moment, flickering, and for its last two seconds.
             let up = s.active > 0.0;
             b.shown = if up {
                 (b.shown + dt * 3.0).min(1.0)
             } else {
                 (b.shown - dt * 4.0).max(0.0)
             };
-            let flicker = up && s.active < 2.0 && (t * 18.0).sin() < -0.2;
+            let flicker = (up && s.active < 2.0 || b.shown < 0.9) && (t * 18.0).sin() < -0.2;
             if let Ok(mut vis) = shown.get_mut(b.root) {
                 vis.set_if_neq(if b.shown > 0.001 && !flicker {
                     Visibility::Inherited
@@ -754,15 +786,13 @@ fn animate(
                     Visibility::Hidden
                 });
             }
-            if let Ok(mut tr) = transforms.get_mut(b.root) {
-                tr.scale.x = b.shown.max(0.001);
-            }
+            // (Materialising: flickering in, brightening.)
             let c = kind_color(d.kind);
             if let Some(mut m) = accents.get_mut(&b.surface) {
-                m.neon.color = c.extend(0.35 + 0.1 * (t * 3.0).sin());
+                m.neon.color = c.extend((0.35 + 0.1 * (t * 3.0).sin()) * b.shown);
             }
             if let Some(mut m) = accents.get_mut(&b.edges) {
-                m.neon.color = c.extend(4.0);
+                m.neon.color = c.extend(4.0 * b.shown);
             }
         }
         if let Some((e, m)) = &v.beam {

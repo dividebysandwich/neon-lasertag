@@ -3603,15 +3603,19 @@ fn place_pads(level: &Level, mode: GameMode, rng: &mut ChaCha8Rng) -> Vec<JumpPa
     for iz in rows {
         for ix in 0..dm.w {
             let i = dm.idx(ix, iz);
-            // (Not under a light bridge or by its ends: thrown up into it.)
+            // (Not under a light bridge's ramps or by them: thrown up into them.)
             let c = dm.cell_centre(ix, iz);
-            let under_bridge = level.bridges.iter().any(|b| {
-                let gap = glam::Vec2::new(
-                    (b.min.x - c.x).max(c.x - b.max.x).max(0.0),
-                    (b.min.z - c.z).max(c.z - b.max.z).max(0.0),
-                );
-                gap.length() < 3.0
-            });
+            let under_bridge = level
+                .bridges
+                .iter()
+                .flat_map(|b| b.ramps)
+                .any(|(min, max, _)| {
+                    let gap = glam::Vec2::new(
+                        (min.x - c.x).max(c.x - max.x).max(0.0),
+                        (min.z - c.z).max(c.z - max.z).max(0.0),
+                    );
+                    gap.length() < 3.0
+                });
             if g.ground[i] != Ground::Open
                 || g.upper[i]
                 || level.on_track(ix, iz)

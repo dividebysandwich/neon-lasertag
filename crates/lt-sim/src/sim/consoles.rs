@@ -273,6 +273,20 @@ impl Sim {
                 let st = &mut self.consoles[k];
                 st.owner = Some(team);
                 st.active = crate::console::BRIDGE_TIME;
+                // Whoever it comes up through stands on it.
+                if let Some(b) = crate::console::bridge_for(&self.level, &def) {
+                    let low = crate::kit::STOREY.min(b.min.y);
+                    for p in self.players.iter_mut().filter(|p| p.alive()) {
+                        if let Some(y) = b.surface(p.feet.x, p.feet.z)
+                            && p.feet.y < y
+                            && p.feet.y + crate::collide::BODY_HEIGHT > low + 0.05
+                            && p.feet.y > low - 0.5
+                        {
+                            p.feet.y = y + 0.01;
+                            p.vy = 0.0;
+                        }
+                    }
+                }
             }
             ConsoleKind::Secondary(side) => {
                 // The solver, and their team mates in the pocket.
@@ -615,7 +629,7 @@ mod tests {
         // Gone: down to the floor below.
         run(&mut sim, crate::console::BRIDGE_TIME);
         let y = sim.player(red).unwrap().feet.y;
-        assert!(y < 0.5, "still up at {y}");
+        assert!(y < crate::console::DECK_Y - 1.0, "still up at {y}");
     }
 
     #[test]
@@ -685,5 +699,32 @@ mod tests {
         for k in SecondaryKind::PICKS {
             assert!(seen.contains(&k), "{k:?} never");
         }
+    }
+
+    #[test]
+    fn light_bridges_lead_up_ramps_across_the_middle() {
+        let (mut sim, k, red, _) = console_sim(ConsoleKind::Bridge, GameMode::Classic);
+        let def = sim.console_defs()[k];
+        let b = crate::console::bridge_for(&sim.level, &def).expect("its bridge");
+        // Across the middle, a storey over the upper floor, its ends on the upper floor in
+        // either half.
+        assert!(b.min.z < 0.0 && b.max.z > 0.0);
+        assert_eq!(b.max.y, crate::console::DECK_Y);
+        assert!(b.ends[0].z * b.ends[1].z < 0.0);
+        // Standing on its ramp, half way up, as it comes up: lifted onto it, and stays there.
+        let (rmin, rmax, _) = b.ramps[0];
+        let mid = (rmin + rmax) / 2.0;
+        sim.teleport(red, Vec3::new(mid.x, crate::kit::STOREY, mid.z), 0.0);
+        run(&mut sim, 0.2);
+        sim.dev_console_poke(red, k, None, true);
+        // (Too far to click: put it up as a solve would.)
+        if sim.consoles[k].active <= 0.0 {
+            let pi = sim.players.iter().position(|p| p.id == red).unwrap();
+            sim.console_solved(k, pi);
+        }
+        run(&mut sim, 0.5);
+        let y = sim.player(red).unwrap().feet.y;
+        let want = b.surface(mid.x, mid.z).unwrap();
+        assert!((y - want).abs() < 0.15, "at {y}, the ramp at {want}");
     }
 }
