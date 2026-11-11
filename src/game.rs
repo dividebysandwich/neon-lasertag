@@ -653,9 +653,15 @@ fn step_game(
             }
         }
     }
-    // The doors and panels where they are in the tick shown, for the prediction and aiming.
-    if !game.level.movers.is_empty() {
-        let colliders = game.level.mover_colliders(game.snap.tick);
+    // The doors and panels where they are in the tick shown, and the light bridges standing,
+    // for the prediction and aiming.
+    let bridges =
+        lt_sim::console::bridge_colliders(&game.level, &crate::consoles::defs(&game), |k| {
+            game.snap.consoles.get(k).is_some_and(|s| s.active > 0.0)
+        });
+    if !game.level.movers.is_empty() || !bridges.is_empty() || !game.world.dynamic.is_empty() {
+        let mut colliders = game.level.mover_colliders(game.snap.tick);
+        colliders.extend(bridges);
         Arc::make_mut(&mut game.world).set_dynamic(colliders);
     }
 }

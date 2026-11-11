@@ -1770,6 +1770,8 @@ impl Bot {
                 crate::console::ConsoleKind::Mast => true,
                 crate::console::ConsoleKind::Beacon => st.owner != Some(p.team),
                 crate::console::ConsoleKind::Breaker => true,
+                // (Not that bots walk over it: it's for the players.)
+                crate::console::ConsoleKind::Bridge => true,
             }
     }
 
@@ -3540,6 +3542,7 @@ mod tests {
     fn bots_solve_consoles() {
         let mut solved: std::collections::HashMap<crate::console::ConsoleKind, u32> =
             Default::default();
+        let mut present = std::collections::HashSet::new();
         for seed in 1..=3 {
             let mut sim = Sim::new(
                 seed,
@@ -3549,6 +3552,7 @@ mod tests {
                 },
             );
             assert!(!sim.console_defs().is_empty(), "seed {seed}: no consoles");
+            present.extend(sim.console_defs().iter().map(|d| d.kind));
             let mut bots = Bots::default();
             bots.fill(&mut sim, 8, 0.6);
             for _ in 0..(180.0 / TICK) as usize {
@@ -3562,7 +3566,7 @@ mod tests {
             }
         }
         println!("consoles solved {solved:?}");
-        for kind in crate::console::ConsoleKind::PEDESTALS {
+        for kind in present {
             assert!(
                 solved.get(&kind).copied().unwrap_or(0) >= 1,
                 "{kind:?}: {solved:?}"

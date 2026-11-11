@@ -1287,12 +1287,18 @@ impl Sim {
     /// player's own move resolves sideways). Doors rising under a player push them out of the
     /// doorway in the player's move.
     fn step_movers(&mut self) {
+        // (The light bridges standing are moving pieces too.)
+        let bridges = self.bridge_colliders();
         if self.level.movers.is_empty() {
+            if !bridges.is_empty() || !self.world.dynamic.is_empty() {
+                self.world.set_dynamic(bridges);
+            }
             return;
         }
         let level = self.level.clone();
         let tick = self.tick;
-        let all = level.mover_colliders(tick);
+        let mut all = level.mover_colliders(tick);
+        all.extend(bridges.iter().cloned());
         for (i, m) in level.movers.iter().enumerate() {
             if m.kind != MoverKind::Panel {
                 continue;
@@ -1311,6 +1317,7 @@ impl Sim {
                 .enumerate()
                 .filter(|&(j, _)| j != i)
                 .flat_map(|(_, o)| o.colliders(o.fraction(tick)))
+                .chain(bridges.iter().cloned())
                 .collect();
             self.world.set_dynamic(others);
             for p in self.players.iter_mut().filter(|p| p.alive()) {

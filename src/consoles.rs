@@ -51,6 +51,7 @@ pub fn kind_color(kind: ConsoleKind) -> Vec3 {
         ConsoleKind::Mast => Vec3::new(0.2, 1.0, 0.55),
         ConsoleKind::Beacon => Vec3::new(0.7, 0.45, 1.0),
         ConsoleKind::Breaker => Vec3::new(1.0, 0.35, 0.1),
+        ConsoleKind::Bridge => Vec3::new(0.1, 0.85, 1.0),
     }
 }
 
@@ -73,6 +74,10 @@ pub fn solved_banner(kind: ConsoleKind) -> (&'static str, &'static str) {
             "BREAKER THROWN",
             "THIS QUARTER OF THE ARENA GOES DARK FOR 20 S",
         ),
+        ConsoleKind::Bridge => (
+            "LIGHT BRIDGE UP",
+            "IT SPANS THE GAP IN THE UPPER FLOOR FOR 25 S - FOR EVERYONE",
+        ),
     }
 }
 
@@ -88,10 +93,21 @@ struct ConsoleView {
     charge_mat: Handle<AccentMaterial>,
     /// A forward beacon's column of light up from it (in its team's colour while it has one).
     beam: Option<(Entity, Handle<AccentMaterial>)>,
+    /// A light bridge's bridge (scaled along its length as it comes and goes), its surface's
+    /// and its edges' materials, and how far out it's shown (0..1).
+    bridge: Option<BridgeView>,
     /// The puzzle shown (its seed), its root on each face and its elements.
     seed: Option<u32>,
     roots: Vec<Entity>,
     elems: Vec<ElemView>,
+}
+
+struct BridgeView {
+    root: Entity,
+    /// Along x or z (its root's local x is along it).
+    surface: Handle<AccentMaterial>,
+    edges: Handle<AccentMaterial>,
+    shown: f32,
 }
 
 struct ElemView {
@@ -142,6 +158,8 @@ pub fn spawn(
     let beacon_ring = meshes.add(Torus::new(0.1, 0.125));
     let beam_mesh = meshes.add(Cylinder::new(0.035, 1.0));
     let breaker_box = meshes.add(Cuboid::new(0.26, 0.3, 0.08));
+    let bridge_icon = meshes.add(Cuboid::new(0.4, 0.04, 0.14));
+    let bridge_pier = meshes.add(Cuboid::new(0.05, 0.16, 0.05));
     let breaker_lever = meshes.add(Cuboid::new(0.04, 0.22, 0.04));
     let breaker_knob = meshes.add(Cuboid::new(0.12, 0.05, 0.06));
     for (k, d) in defs.iter().enumerate() {
@@ -235,6 +253,12 @@ pub fn spawn(
                 }
                 icon_part(commands, &mast_tip, Transform::from_xyz(0.0, 0.28, 0.0));
             }
+            ConsoleKind::Bridge => {
+                icon_part(commands, &bridge_icon, Transform::from_xyz(0.0, 0.08, 0.0));
+                for x in [-0.17, 0.17] {
+                    icon_part(commands, &bridge_pier, Transform::from_xyz(x, -0.04, 0.0));
+                }
+            }
             ConsoleKind::Breaker => {
                 icon_part(commands, &breaker_box, Transform::IDENTITY);
                 let tilt = Quat::from_rotation_x(-0.6);
@@ -282,6 +306,68 @@ pub fn spawn(
                 .id();
             (e, m)
         });
+        // A light bridge's bridge: a slab of hard light with bright edges (hidden until up).
+        let bridge = lt_sim::console::bridge_for(&game.level, d).map(|b| {
+            let size = b.max - b.min;
+            let along_x = size.x >= size.z;
+            let (len, w) = if along_x {
+                (size.x, size.z)
+            } else {
+                (size.z, size.x)
+            };
+            let surface = accent(accents, kind_color(d.kind), 0.0);
+            let edges = accent(accents, kind_color(d.kind), 0.0);
+            let rot = if along_x {
+                Quat::IDENTITY
+            } else {
+                Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)
+            };
+            let root = commands
+                .spawn((
+                    ArenaPart,
+                    Transform::from_translation(b.mid()).with_rotation(rot),
+                    Visibility::Hidden,
+                    Name::new("light bridge"),
+                ))
+                .id();
+            let slab = meshes.add(Cuboid::new(len, size.y, w));
+            commands.spawn((
+                Mesh3d(slab),
+                MeshMaterial3d(surface.clone()),
+                Transform::IDENTITY,
+                ChildOf(root),
+            ));
+            let rail = meshes.add(Cuboid::new(len, 0.05, 0.05));
+            for s in [-1.0, 1.0] {
+                commands.spawn((
+                    Mesh3d(rail.clone()),
+                    MeshMaterial3d(edges.clone()),
+                    Transform::from_xyz(0.0, size.y / 2.0 + 0.02, s * (w / 2.0 - 0.03)),
+                    ChildOf(root),
+                ));
+            }
+            // Crossbars every metre or so.
+            let bar = meshes.add(Cuboid::new(0.04, 0.02, w - 0.1));
+            let n = (len / 1.0).round().max(1.0) as usize;
+            for i in 0..=n {
+                commands.spawn((
+                    Mesh3d(bar.clone()),
+                    MeshMaterial3d(edges.clone()),
+                    Transform::from_xyz(
+                        (i as f32 / n as f32 - 0.5) * (len - 0.1),
+                        size.y / 2.0 + 0.012,
+                        0.0,
+                    ),
+                    ChildOf(root),
+                ));
+            }
+            BridgeView {
+                root,
+                surface,
+                edges,
+                shown: 0.0,
+            }
+        });
         // The reset bars: along the top's +z and -z edges, over the puzzles.
         let charge_mat = accent(accents, kind_color(d.kind), 3.0);
         let charge: Vec<Entity> = if pedestal {
@@ -309,6 +395,7 @@ pub fn spawn(
             charge,
             charge_mat,
             beam,
+            bridge,
             seed: None,
             roots: Vec::new(),
             elems: Vec::new(),
@@ -623,6 +710,34 @@ fn animate(
             } else {
                 c.extend(0.6)
             };
+        }
+        if let Some(b) = &mut v.bridge {
+            // Coming out from the middle in a moment, going the same way; flickering for the
+            // last two seconds.
+            let up = s.active > 0.0;
+            b.shown = if up {
+                (b.shown + dt * 3.0).min(1.0)
+            } else {
+                (b.shown - dt * 4.0).max(0.0)
+            };
+            let flicker = up && s.active < 2.0 && (t * 18.0).sin() < -0.2;
+            if let Ok(mut vis) = shown.get_mut(b.root) {
+                vis.set_if_neq(if b.shown > 0.001 && !flicker {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                });
+            }
+            if let Ok(mut tr) = transforms.get_mut(b.root) {
+                tr.scale.x = b.shown.max(0.001);
+            }
+            let c = kind_color(d.kind);
+            if let Some(mut m) = accents.get_mut(&b.surface) {
+                m.neon.color = c.extend(0.35 + 0.1 * (t * 3.0).sin());
+            }
+            if let Some(mut m) = accents.get_mut(&b.edges) {
+                m.neon.color = c.extend(4.0);
+            }
         }
         if let Some((e, m)) = &v.beam {
             if let Ok(mut vis) = shown.get_mut(*e) {

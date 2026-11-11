@@ -254,6 +254,11 @@ impl Sim {
                 st.owner = Some(team);
                 st.active = crate::console::BREAKER_TIME;
             }
+            ConsoleKind::Bridge => {
+                let st = &mut self.consoles[k];
+                st.owner = Some(team);
+                st.active = crate::console::BRIDGE_TIME;
+            }
         }
     }
 
@@ -284,6 +289,13 @@ impl Sim {
         Some(crate::level::Spawn {
             pos,
             yaw: super::yaw_of(f.normal),
+        })
+    }
+
+    /// The light bridges standing now, as colliders.
+    pub(super) fn bridge_colliders(&self) -> Vec<crate::collide::Collider> {
+        crate::console::bridge_colliders(&self.level, &self.console_defs, |k| {
+            self.consoles[k].active > 0.0
         })
     }
 
@@ -547,5 +559,31 @@ mod tests {
         run(&mut sim, crate::console::BREAKER_TIME + 0.5);
         assert!(!sim.dark_at(at));
         assert!(!sim.consoles[k].open(), "still resetting");
+    }
+
+    #[test]
+    fn a_light_bridge_holds_players_while_it_stands() {
+        let (mut sim, k, red, _) = console_sim(ConsoleKind::Bridge, GameMode::Classic);
+        let def = sim.console_defs()[k];
+        let b = crate::console::bridge_for(&sim.level, &def).expect("its bridge");
+        to_console(&mut sim, k, red);
+        let i = sim.consoles[k].game.hint(&sim.consoles[k].state).unwrap();
+        click(&mut sim, red, k, i);
+        solve(&mut sim, red, k);
+        run(&mut sim, 0.1);
+        // On it, over the gap: stays up.
+        let top = Vec3::new(b.mid().x, b.max.y + 0.02, b.mid().z);
+        sim.teleport(red, top, 0.0);
+        run(&mut sim, 1.0);
+        let y = sim.player(red).unwrap().feet.y;
+        assert!(
+            (y - b.max.y).abs() < 0.1,
+            "stood at {y}, bridge at {}",
+            b.max.y
+        );
+        // Gone: down to the floor below.
+        run(&mut sim, crate::console::BRIDGE_TIME);
+        let y = sim.player(red).unwrap().feet.y;
+        assert!(y < 0.5, "still up at {y}");
     }
 }

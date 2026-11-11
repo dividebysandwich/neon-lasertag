@@ -448,13 +448,13 @@ pub fn mirror_point(p: Vec3) -> Vec3 {
 
 /// An edge of the grid: horizontal line (constant z) or vertical line (constant x).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Edge {
+pub(crate) enum Edge {
     H { l: usize, ix: usize },
     V { l: usize, iz: usize },
 }
 
 /// The edge between a cell and its neighbour in `dir`.
-fn edge(ix: usize, iz: usize, dir: u8) -> Edge {
+pub(crate) fn edge(ix: usize, iz: usize, dir: u8) -> Edge {
     match dir % 4 {
         0 => Edge::H { l: iz + 1, ix },
         1 => Edge::V { l: ix + 1, iz },
@@ -527,7 +527,7 @@ impl Grid {
         self.upper_block[dm.idx(mx, mz)] = v;
     }
 
-    fn set_wall(&mut self, floor: usize, e: Edge, w: Wall) {
+    pub(crate) fn set_wall(&mut self, floor: usize, e: Edge, w: Wall) {
         let dm = self.dims;
         match e {
             Edge::H { l, ix } => {
@@ -1347,6 +1347,9 @@ pub struct Level {
     /// The consoles, in mirrored pairs (`Ground::Console` cells).
     #[serde(default)]
     pub consoles: Vec<crate::console::Console>,
+    /// The light bridges (standing while their consoles have them up), Red's and Blue's.
+    #[serde(default)]
+    pub bridges: Vec<crate::console::Bridge>,
 }
 
 impl Level {
@@ -1415,7 +1418,7 @@ impl Level {
                         boxes_per_half(size),
                         seed ^ attempt.rotate_left(17),
                     );
-                    crate::console::place_consoles(
+                    let bridges = crate::console::place_consoles(
                         &mut grid,
                         &movers,
                         crate::console::consoles_per_half(size),
@@ -1436,6 +1439,7 @@ impl Level {
                     let mut level = build_level(seed, grid, nav, movers, mode);
                     level.mirrors = mirrors;
                     level.gates = gates;
+                    level.bridges = bridges;
                     level.pads = place_pads(&level, mode, &mut rng);
                     for (i, p) in level.pads.iter().enumerate() {
                         if let (Some(a), Some(b)) =
@@ -3599,11 +3603,21 @@ fn place_pads(level: &Level, mode: GameMode, rng: &mut ChaCha8Rng) -> Vec<JumpPa
     for iz in rows {
         for ix in 0..dm.w {
             let i = dm.idx(ix, iz);
+            // (Not under a light bridge or by its ends: thrown up into it.)
+            let c = dm.cell_centre(ix, iz);
+            let under_bridge = level.bridges.iter().any(|b| {
+                let gap = glam::Vec2::new(
+                    (b.min.x - c.x).max(c.x - b.max.x).max(0.0),
+                    (b.min.z - c.z).max(c.z - b.max.z).max(0.0),
+                );
+                gap.length() < 3.0
+            });
             if g.ground[i] != Ground::Open
                 || g.upper[i]
                 || level.on_track(ix, iz)
                 || busy(ix, iz)
                 || g.near_struct(ix, iz)
+                || under_bridge
             {
                 continue;
             }
@@ -3915,6 +3929,7 @@ fn build_level(seed: u64, g: Grid, nav: Nav, movers: Vec<Mover>, mode: GameMode)
         prisms: None,
         boxes,
         consoles,
+        bridges: Vec::new(),
     }
 }
 

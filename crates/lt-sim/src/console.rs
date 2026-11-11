@@ -31,6 +31,106 @@ pub enum ConsoleKind {
     /// A blackout breaker: for `BREAKER_TIME` the arena's lights go dark in the quarter it
     /// stands in (`quarter`; as a blackout there: only shots, players and the like glow).
     Breaker,
+    /// A light bridge's switch: for `BRIDGE_TIME` a bridge of hard light (`Level::bridges`, the
+    /// one nearest it) spans a gap between two parts of the upper floor, for anyone to cross.
+    Bridge,
+}
+
+/// Seconds a light bridge stands.
+pub const BRIDGE_TIME: f32 = 25.0;
+/// How far from its bridge's middle (m) a light bridge's console stands at most.
+const BRIDGE_NEAR: f32 = 9.0;
+
+/// A light bridge over a gap in the upper floor (1 to 3 cells, open floor below): the slab it
+/// is while it stands, and its ends (feet on the floor either side).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Bridge {
+    pub min: Vec3,
+    pub max: Vec3,
+    pub ends: [Vec3; 2],
+}
+
+impl Bridge {
+    pub fn mid(&self) -> Vec3 {
+        (self.min + self.max) / 2.0
+    }
+
+    fn mirrored(&self) -> Bridge {
+        let (a, b) = (mirror_point(self.min), mirror_point(self.max));
+        Bridge {
+            min: a.min(b),
+            max: a.max(b),
+            ends: self.ends.map(mirror_point),
+        }
+    }
+}
+
+/// The gaps a light bridge could span in Red's half: straight across 1 to 3 cells with no upper
+/// floor (and open ground below), between upper floor walkable at both ends, with nothing on
+/// the upper floor's edges in the way.
+fn bridge_spans(g: &Grid) -> Vec<Bridge> {
+    use crate::kit::{CELL, STOREY};
+    let dm = g.dims;
+    let walk = |ix: usize, iz: usize| {
+        let i = dm.idx(ix, iz);
+        g.upper[i] && !g.upper_block[i]
+    };
+    let gap = |ix: usize, iz: usize| {
+        let i = dm.idx(ix, iz);
+        !g.upper[i] && g.ground[i] == Ground::Open
+    };
+    let mut out = Vec::new();
+    for iz in dm.half() + 1..dm.h - 2 {
+        for ix in 0..dm.w {
+            if !walk(ix, iz) {
+                continue;
+            }
+            // Along +x (dir 1) and +z (dir 0).
+            for dir in [1u8, 0] {
+                for len in 1..=3 {
+                    let Some(end) = dm.step(ix, iz, dir, len + 1) else {
+                        continue;
+                    };
+                    let cells: Vec<(usize, usize)> =
+                        (1..=len).filter_map(|k| dm.step(ix, iz, dir, k)).collect();
+                    if cells.len() != len as usize
+                        || !walk(end.0, end.1)
+                        || !cells.iter().all(|&(x, z)| gap(x, z))
+                        || end.1 <= dm.half()
+                    {
+                        continue;
+                    }
+                    // Nothing on the upper floor's edges along the way (but railings, which
+                    // the bridge's ends open: `place_consoles`).
+                    let path = std::iter::once((ix, iz)).chain(cells.iter().copied());
+                    if path
+                        .clone()
+                        .any(|(x, z)| !matches!(g.wall(1, x, z, dir), Wall::None | Wall::Rail))
+                    {
+                        continue;
+                    }
+                    let a = dm.cell_centre(ix, iz);
+                    let b = dm.cell_centre(end.0, end.1);
+                    let (lo, hi) = (a.min(b), a.max(b));
+                    let w = CELL / 2.0 - 0.2;
+                    let side = if dir == 1 {
+                        Vec3::new(0.0, 0.0, w)
+                    } else {
+                        Vec3::new(w, 0.0, 0.0)
+                    };
+                    // (From the near ends' edges, a little onto the floor either side.)
+                    let along = if dir == 1 { Vec3::X } else { Vec3::Z } * (CELL / 2.0 - 0.1);
+                    out.push(Bridge {
+                        min: lo + along - side + Vec3::Y * (STOREY - 0.12),
+                        max: hi - along + side + Vec3::Y * STOREY,
+                        ends: [a + Vec3::Y * STOREY, b + Vec3::Y * STOREY],
+                    });
+                    break;
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Seconds a blackout breaker keeps its quarter dark.
@@ -53,11 +153,12 @@ pub const MAST_RANGE: f32 = 18.0;
 
 impl ConsoleKind {
     /// The kinds standing in the arena (on pedestals).
-    pub const PEDESTALS: [ConsoleKind; 4] = [
+    pub const PEDESTALS: [ConsoleKind; 5] = [
         ConsoleKind::Vault,
         ConsoleKind::Mast,
         ConsoleKind::Beacon,
         ConsoleKind::Breaker,
+        ConsoleKind::Bridge,
     ];
 
     pub fn name(self) -> &'static str {
@@ -66,6 +167,7 @@ impl ConsoleKind {
             ConsoleKind::Mast => "sensor mast",
             ConsoleKind::Beacon => "forward beacon",
             ConsoleKind::Breaker => "blackout breaker",
+            ConsoleKind::Bridge => "light bridge",
         }
     }
 
@@ -78,6 +180,7 @@ impl ConsoleKind {
             // (A moment, so it doesn't flip back and forth.)
             ConsoleKind::Beacon => 5.0,
             ConsoleKind::Breaker => BREAKER_TIME + 30.0,
+            ConsoleKind::Bridge => BRIDGE_TIME + 10.0,
         }
     }
 
@@ -88,6 +191,7 @@ impl ConsoleKind {
             ConsoleKind::Mast => "mast",
             ConsoleKind::Beacon => "beacon",
             ConsoleKind::Breaker => "breaker",
+            ConsoleKind::Bridge => "bridge",
         }
     }
 
@@ -212,6 +316,39 @@ pub fn console_defs(level: &Level, _rules: &crate::rules::Rules) -> Vec<ConsoleD
     level.consoles.iter().map(ConsoleDef::pedestal).collect()
 }
 
+/// The light bridge console `def` raises (the bridge nearest it).
+pub fn bridge_for(level: &Level, def: &ConsoleDef) -> Option<Bridge> {
+    if def.kind != ConsoleKind::Bridge {
+        return None;
+    }
+    level
+        .bridges
+        .iter()
+        .min_by(|a, b| {
+            a.mid()
+                .distance(def.pos)
+                .total_cmp(&b.mid().distance(def.pos))
+        })
+        .copied()
+}
+
+/// The light bridges standing (`up`: whether console k has its bridge up), as colliders.
+pub fn bridge_colliders(
+    level: &Level,
+    defs: &[ConsoleDef],
+    up: impl Fn(usize) -> bool,
+) -> Vec<crate::collide::Collider> {
+    defs.iter()
+        .enumerate()
+        .filter(|(k, _)| up(*k))
+        .filter_map(|(_, d)| bridge_for(level, d))
+        .map(|b| crate::collide::Collider::Box {
+            min: b.min,
+            max: b.max,
+        })
+        .collect()
+}
+
 /// A click on a console's puzzle in `PlayerCmd::poke` (and `PuzzleAim`): its index plus this
 /// (below it: a turret box's).
 pub const CONSOLE_POKE: u8 = 128;
@@ -228,19 +365,31 @@ pub fn consoles_per_half(size: ArenaSize) -> usize {
 
 /// Turns `n` of the blocks in each half into consoles (mirrored pairs, each kind once), as
 /// the turret boxes (`level::place_boxes`): open floor in front of their +z and -z sides,
-/// spread out, away from the boxes too.
-pub(crate) fn place_consoles(g: &mut Grid, movers: &[Mover], n: usize, mode: GameMode, seed: u64) {
+/// spread out, away from the boxes too. A light bridge's console stands near its bridge (a
+/// gap of `bridge_spans`, if the arena has one): the bridges it gets (`Level::bridges`).
+pub(crate) fn place_consoles(
+    g: &mut Grid,
+    movers: &[Mover],
+    n: usize,
+    mode: GameMode,
+    seed: u64,
+) -> Vec<Bridge> {
     let dm = g.dims;
     let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0xC025_01E5_0000_0002);
+    let spans = bridge_spans(g);
     let mut kinds: Vec<ConsoleKind> = ConsoleKind::PEDESTALS
         .into_iter()
-        .filter(|k| k.in_mode(mode))
+        .filter(|k| k.in_mode(mode) && (*k != ConsoleKind::Bridge || !spans.is_empty()))
         .collect();
     // (Shuffled.)
     for i in (1..kinds.len()).rev() {
         kinds.swap(i, rng.random_range(0..=i));
     }
     kinds.truncate(n);
+    // (The light bridge's first: it has the fewest places to go.)
+    kinds.sort_by_key(|k| *k != ConsoleKind::Bridge);
+    let span = (!spans.is_empty()).then(|| spans[rng.random_range(0..spans.len())]);
+    let mut bridges = Vec::new();
     let open = |g: &Grid, ix: usize, iz: usize| {
         g.ground[dm.idx(ix, iz)] == Ground::Open && !crate::level::on_track(movers, dm, ix, iz)
     };
@@ -270,20 +419,61 @@ pub(crate) fn place_consoles(g: &mut Grid, movers: &[Mover], n: usize, mode: Gam
                 .map(|p| p.distance(c))
                 .fold(f32::MAX, f32::min)
         };
-        let far = cells.iter().map(apart).fold(0.0, f32::max);
+        let near = |&(ix, iz): &(usize, usize)| match (kind, span) {
+            (ConsoleKind::Bridge, Some(s)) => {
+                let d = dm.cell_centre(ix, iz) - s.mid();
+                glam::Vec2::new(d.x, d.z).length() <= BRIDGE_NEAR
+            }
+            _ => true,
+        };
+        let far = cells
+            .iter()
+            .filter(|c| near(c))
+            .map(apart)
+            .fold(0.0, f32::max);
         let good: Vec<(usize, usize)> = cells
             .iter()
             .copied()
-            .filter(|c| apart(c) >= (far * 0.8).max(4.0))
+            .filter(|c| near(c) && apart(c) >= (far * 0.8).max(4.0))
             .collect();
         if good.is_empty() {
-            break;
+            continue;
         }
         let (ix, iz) = good[rng.random_range(0..good.len())];
         g.set_ground(ix, iz, Ground::Console { kind });
         placed.push(dm.cell_centre(ix, iz));
         cells.retain(|&c| c != (ix, iz));
+        if let (ConsoleKind::Bridge, Some(s)) = (kind, span) {
+            // The railings at its ends open (and their mirror images).
+            for (end, other) in [(s.ends[0], s.ends[1]), (s.ends[1], s.ends[0])] {
+                let (Some((x, z)), d) = (dm.cell_at(end), other - end) else {
+                    continue;
+                };
+                let dir = if d.x.abs() > d.z.abs() {
+                    if dm
+                        .step(x, z, 1, 1)
+                        .is_some_and(|n| (dm.cell_centre(n.0, n.1) - end).x * d.x > 0.0)
+                    {
+                        1
+                    } else {
+                        3
+                    }
+                } else if dm
+                    .step(x, z, 0, 1)
+                    .is_some_and(|n| (dm.cell_centre(n.0, n.1) - end).z * d.z > 0.0)
+                {
+                    0
+                } else {
+                    2
+                };
+                if g.wall(1, x, z, dir) == Wall::Rail {
+                    g.set_wall(1, crate::level::edge(x, z, dir), Wall::None);
+                }
+            }
+            bridges = vec![s, s.mirrored()];
+        }
     }
+    bridges
 }
 
 #[cfg(test)]
@@ -303,10 +493,12 @@ mod tests {
             ] {
                 let level = Level::generate_for(seed, size, mode);
                 let dm = level.dims();
+                // (A light bridge only where there's a gap for one.)
+                let spans = !bridge_spans(&level.grid).is_empty();
                 let want = consoles_per_half(size).min(
                     ConsoleKind::PEDESTALS
                         .iter()
-                        .filter(|k| k.in_mode(mode))
+                        .filter(|k| k.in_mode(mode) && (**k != ConsoleKind::Bridge || spans))
                         .count(),
                 );
                 // (Fewer where the arena has no room for them all, far enough apart.)
@@ -337,5 +529,26 @@ mod tests {
             }
         }
         assert!(full * 10 >= arenas * 8, "all of them in {full} of {arenas}");
+        let bridged = (0..24u64)
+            .filter(|&seed| {
+                let level = Level::generate_for(seed, ArenaSize::Large, GameMode::Classic);
+                let n = level
+                    .consoles
+                    .iter()
+                    .filter(|c| c.kind == ConsoleKind::Bridge)
+                    .count();
+                assert!(n == 0 && level.bridges.is_empty() || n == 2 && level.bridges.len() == 2);
+                for b in &level.bridges {
+                    assert!(level.consoles.iter().any(|c| c.kind == ConsoleKind::Bridge
+                        && (c.pos - b.mid()).truncate().length() < 12.0));
+                }
+                n > 0
+            })
+            .count();
+        println!("light bridges in {bridged} of 24 large arenas");
+        assert!(
+            bridged >= 8,
+            "light bridges in {bridged} of 24 large arenas"
+        );
     }
 }

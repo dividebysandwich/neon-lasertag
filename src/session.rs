@@ -18,7 +18,8 @@
 //! front of the nearest one (`warp-box`, `warp-box=M`), every player but the bots at the first
 //! one (`warp-box-all`, hosting), clicking its puzzle (`box-hint=N`, `box-poke=J`, and
 //! `box-click`, which works in a remote game too) or solving it at once (`solve-box`); consoles:
-//! in front of one (`warp-console`, `warp-console=K`, `warp-console=vault`), clicking the
+//! in front of one (`warp-console`, `warp-console=K`, `warp-console=vault`), at a light
+//! bridge's end (`warp-bridge`), clicking the
 //! nearest one's puzzle (`console-hint=N`), giving it a puzzle of a kind (`console-game=circuit`)
 //! or solving it (`solve-console`); arena events (`blackout`, `overdrive`) and the last
 //! minute's double points (`double`); freezing the game (`freeze`), the free camera
@@ -370,6 +371,7 @@ fn dev_script(
         // (`warp-console`), facing it; clicking the nearest one's hint (`console-hint`, or
         // `console-hint=N` N times) or solving it at once (`solve-console`).
         a if a == "warp-console"
+            || a == "warp-bridge"
             || a.starts_with("warp-console=")
             || a.starts_with("console-hint")
             || a.starts_with("console-game=")
@@ -418,23 +420,46 @@ fn dev_script(
                         }
                         return;
                     }
-                    let k = match a.strip_prefix("warp-console=") {
-                        Some(arg) => match arg.parse::<usize>() {
-                            Ok(k) => k,
-                            Err(_) => match defs.iter().position(|d| d.kind.id() == arg) {
-                                Some(k) => k,
-                                None => return,
+                    if a == "warp-bridge" {
+                        // Behind the nearest light bridge's end, on the upper floor, facing over it.
+                        let Some(b) = sim
+                            .level
+                            .bridges
+                            .iter()
+                            .min_by(|a, b| a.mid().distance(at).total_cmp(&b.mid().distance(at)))
+                            .copied()
+                        else {
+                            return;
+                        };
+                        let dir = (b.ends[1] - b.ends[0]).normalize_or(Vec3::X);
+                        let yaw = lt_sim::sim::yaw_of(dir);
+                        sim.teleport(me, b.ends[0] - dir * 1.0, yaw);
+                        yaw
+                    } else {
+                        let k = match a.strip_prefix("warp-console=") {
+                            Some(arg) => match arg.parse::<usize>() {
+                                Ok(k) => k,
+                                Err(_) => match defs.iter().position(|d| d.kind.id() == arg) {
+                                    Some(k) => k,
+                                    None => return,
+                                },
                             },
-                        },
-                        None => near,
-                    };
-                    let Some(d) = defs.get(k) else { return };
-                    let f = d.faces[0];
-                    let mut feet = f.centre + f.normal * 1.0;
-                    feet.y = d.floor;
-                    let yaw = lt_sim::sim::yaw_of(-f.normal);
-                    sim.teleport(me, feet, yaw);
-                    yaw
+                            None => near,
+                        };
+                        let Some(d) = defs.get(k) else { return };
+                        info!(
+                            "dev: console {k} ({}) at {:.1}, its bridge {:?}",
+                            d.kind.name(),
+                            d.pos,
+                            lt_sim::console::bridge_for(&sim.level, d)
+                        );
+                        let f = d.faces[0];
+                        let mut feet = f.centre + f.normal * 1.0;
+                        feet.y = d.floor;
+                        let yaw = lt_sim::sim::yaw_of(-f.normal);
+                        sim.teleport(me, feet, yaw);
+                        yaw
+                    }
                 };
                 face(w, yaw);
             });
