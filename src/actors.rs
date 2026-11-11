@@ -23,6 +23,9 @@ pub struct ActorMeshes {
     beam_mat: Handle<GlowMaterial>,
     /// A ring of the charge gun's coil.
     coil: Handle<Mesh>,
+    /// The prism lance's laser sight: its beam (1 m long) and its dot.
+    sight_beam: Handle<Mesh>,
+    sight_dot: Handle<Mesh>,
 }
 
 #[derive(Component)]
@@ -68,6 +71,9 @@ struct AvatarParts {
     grenade: Entity,
     /// The shield's beam of light (a child of `root`), with its light on the player.
     beam: Entity,
+    /// The prism lance's laser sight (in the world): a thin beam from the muzzle and a dot
+    /// where it meets the arena.
+    sight: [Entity; 2],
     /// Every part twice: as it is (`solid`), and as a cloaked player's shimmer (`ghost`, in
     /// `ghost_mat`, faded with the distance).
     solid: Vec<Entity>,
@@ -206,6 +212,8 @@ fn make_meshes(
         ring: meshes.add(Torus::new(0.95, 1.0)),
         halo: meshes.add(Sphere::new(1.0).mesh().ico(2).unwrap()),
         coil: meshes.add(Torus::new(0.026, 0.034)),
+        sight_beam: meshes.add(Cylinder::new(SIGHT_RADIUS, 1.0)),
+        sight_dot: meshes.add(Sphere::new(0.012).mesh().ico(2).unwrap()),
     });
 }
 
@@ -515,6 +523,16 @@ fn spawn_avatar(
         Visibility::Inherited,
         ChildOf(beam),
     ));
+    let sight = [&meshes.sight_beam, &meshes.sight_dot].map(|mesh| {
+        commands
+            .spawn((
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(palette.bolt_for(team)),
+                Transform::IDENTITY,
+                Visibility::Hidden,
+            ))
+            .id()
+    });
     AvatarParts {
         root,
         body,
@@ -540,12 +558,17 @@ fn spawn_avatar(
         flashes,
         grenade,
         beam,
+        sight,
         solid,
         ghost,
         ghost_mat,
         team: p.team,
     }
 }
+
+/// The laser sight's beam's radius (m; thickened up to `SIGHT_THICKEN` times seen from afar).
+const SIGHT_RADIUS: f32 = 0.0025;
+const SIGHT_THICKEN: f32 = 3.0;
 
 /// The shield's beam: from this high above the feet, and its light (lumens).
 const BEAM_HEIGHT: f32 = 3.2;
@@ -580,6 +603,12 @@ fn with_decoys(snap: &lt_sim::Snapshot) -> Vec<PlayerSnap> {
         })
     });
     snap.players.iter().cloned().chain(decoys).collect()
+}
+
+/// The point of the segment from `a` to `b` closest to `p`.
+fn closest_on(a: Vec3, b: Vec3, p: Vec3) -> Vec3 {
+    let ab = b - a;
+    a + ab * ((p - a).dot(ab) / ab.length_squared().max(1e-6)).clamp(0.0, 1.0)
 }
 
 fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
@@ -632,6 +661,9 @@ fn sync_players(
             commands.entity(v.gun).despawn();
             commands.entity(v.gun2).despawn();
             commands.entity(v.grenade).despawn();
+            for e in v.sight {
+                commands.entity(e).despawn();
+            }
         }
     }
     // (The decoys drawn as their players, under ids no player has.)
@@ -649,6 +681,9 @@ fn sync_players(
             commands.entity(v.gun).despawn();
             commands.entity(v.gun2).despawn();
             commands.entity(v.grenade).despawn();
+            for e in v.sight {
+                commands.entity(e).despawn();
+            }
         }
     }
     // Tagging someone out sets a canine's tail wagging.
@@ -865,6 +900,50 @@ fn sync_players(
         }
         if cloaked && let Some(mut m) = glows.get_mut(&v.ghost_mat) {
             m.neon.color.w = CLOAK_GLOW * seen;
+        }
+        // A prism lance's laser sight, from its muzzle along the barrel to where it meets the
+        // arena (one's own only in VR: on the flat screen the crosshair shows the aim; not a
+        // cloaked enemy's). One's own aims as this frame's input has it (the scope steadies it).
+        let sight = (alive && p.weapon == Weapon::Lance && (!me || vr) && (me || !cloaked))
+            .then_some(gun_hand)
+            .flatten()
+            .map(|h| {
+                if mine {
+                    (
+                        mover.feet + local.cmd.muzzle.pos,
+                        local.cmd.muzzle.forward(),
+                    )
+                } else {
+                    let g = &hands[h.index()];
+                    (base + g.pos + g.rot * models.muzzle, g.rot * Vec3::NEG_Z)
+                }
+            });
+        set_vis(&mut vis, v.sight[0], false);
+        set_vis(&mut vis, v.sight[1], false);
+        if let Some((from, dir)) = sight {
+            let reach = game.rules.lance_range;
+            let end = game
+                .world
+                .ray(from, from + dir * reach)
+                .map_or(from + dir * reach, |h| h.1);
+            let len = from.distance(end);
+            // (Thicker seen from afar, and the dot as big to the eye however far.)
+            let eye = viewer.unwrap_or(from);
+            let near = eye.distance(closest_on(from, end, eye));
+            let thick = (near / 4.0).clamp(1.0, SIGHT_THICKEN);
+            if len > 0.05
+                && let Ok(mut t) = transforms.get_mut(v.sight[0])
+            {
+                *t = Transform::from_translation((from + end) / 2.0)
+                    .with_rotation(Quat::from_rotation_arc(Vec3::Y, dir))
+                    .with_scale(Vec3::new(thick, len, thick));
+                set_vis(&mut vis, v.sight[0], true);
+            }
+            if let Ok(mut t) = transforms.get_mut(v.sight[1]) {
+                *t = Transform::from_translation(end - dir * 0.01)
+                    .with_scale(Vec3::splat((eye.distance(end) / 4.0).clamp(1.0, 6.0)));
+                set_vis(&mut vis, v.sight[1], true);
+            }
         }
         // The shield's beam, flickering in its last two seconds.
         let flicker = p.shield > 2.0 || (real.elapsed_secs() * 10.0).fract() < 0.6;

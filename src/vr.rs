@@ -270,7 +270,6 @@ impl Plugin for VrPlugin {
                     wrist_glance,
                     holster,
                     crate::scope::place_scope,
-                    laser_sight,
                 )
                     .chain()
                     .in_set(PoseSet)
@@ -295,11 +294,6 @@ impl Plugin for VrPlugin {
                         .and_then(resource_exists::<Models>)
                         .and_then(not(resource_exists::<Wrist>)),
                 ),
-            )
-            .add_systems(
-                Update,
-                spawn_sight
-                    .run_if(resource_exists::<Palette>.and_then(not(resource_exists::<Sight>))),
             )
             .add_systems(
                 Update,
@@ -872,98 +866,6 @@ fn place_rig(
             Quat::from_rotation_y(body) * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2 + 0.3);
         rig_t * Transform::from_translation(at).with_rotation(rot)
     });
-}
-
-/// The prism lance's laser sight: a thin beam from its muzzle and a dot where it meets the
-/// arena (the beam hidden while looking through the scope, src/scope.rs: it would run down the
-/// middle of its view).
-#[derive(Resource)]
-struct Sight {
-    beam: Entity,
-    dot: Entity,
-    team: Option<Team>,
-}
-
-fn spawn_sight(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, palette: Res<Palette>) {
-    let beam = commands
-        .spawn((
-            Mesh3d(meshes.add(Cylinder::new(0.0025, 1.0))),
-            MeshMaterial3d(palette.bolt_for(None)),
-            Transform::default(),
-            Visibility::Hidden,
-        ))
-        .id();
-    let dot = commands
-        .spawn((
-            Mesh3d(meshes.add(Sphere::new(0.012).mesh().ico(2).unwrap())),
-            MeshMaterial3d(palette.bolt_for(None)),
-            Transform::default(),
-            Visibility::Hidden,
-        ))
-        .id();
-    commands.insert_resource(Sight {
-        beam,
-        dot,
-        team: None,
-    });
-}
-
-#[allow(clippy::too_many_arguments)]
-fn laser_sight(
-    mut commands: Commands,
-    sight: Option<ResMut<Sight>>,
-    vr: Res<VrState>,
-    game: Res<Game>,
-    local: Res<LocalCmd>,
-    mover: Res<Mover>,
-    palette: Res<Palette>,
-    scope: Option<Res<crate::scope::Scope>>,
-    lenses: Query<&crate::scope::ScopeLens>,
-    mut q: Query<(&mut Transform, &mut Visibility), Without<crate::scope::ScopeLens>>,
-) {
-    let Some(mut sight) = sight else { return };
-    let scoped = crate::scope::scope_on(scope.as_deref(), &lenses);
-    let me = game
-        .me
-        .and_then(|me| game.snap.players.iter().find(|p| p.id == me));
-    let team = me.map(|p| p.team);
-    if team != sight.team {
-        sight.team = team;
-        for e in [sight.beam, sight.dot] {
-            commands
-                .entity(e)
-                .insert(MeshMaterial3d(palette.bolt_for(team)));
-        }
-    }
-    let on =
-        vr.gun.is_some() && me.is_some_and(|p| p.weapon == Weapon::Lance && p.respawn.is_none());
-    let from = mover.feet + local.cmd.muzzle.pos;
-    let dir = local.cmd.muzzle.forward();
-    let reach = game.rules.lance_range;
-    let end = game
-        .world
-        .ray(from, from + dir * reach)
-        .map_or(from + dir * reach, |h| h.1);
-    let len = from.distance(end);
-    let show = |v: &mut Visibility, yes: bool| {
-        *v = if yes {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-    };
-    if let Ok((mut t, mut v)) = q.get_mut(sight.beam) {
-        show(&mut v, on && len > 0.05 && !scoped);
-        *t = Transform::from_translation((from + end) / 2.0)
-            .with_rotation(Quat::from_rotation_arc(Vec3::Y, dir))
-            .with_scale(Vec3::new(1.0, len, 1.0));
-    }
-    if let Ok((mut t, mut v)) = q.get_mut(sight.dot) {
-        show(&mut v, on);
-        // (As big to the eye however far.)
-        *t = Transform::from_translation(end - dir * 0.01)
-            .with_scale(Vec3::splat((len / 4.0).clamp(1.0, 6.0)));
-    }
 }
 
 /// The blaster in its holster (with a faint ring) while no hand holds it.

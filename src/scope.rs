@@ -209,11 +209,6 @@ pub fn place_scope(
     }
 }
 
-/// Whether the scope is held up to an eye (the laser sight's beam would block its view).
-pub fn scope_on(scope: Option<&Scope>, lenses: &Query<&ScopeLens>) -> bool {
-    scope.is_some_and(|s| lenses.get(s.lens).is_ok_and(|l| l.on))
-}
-
 /// `--vr`: the scope's view drawn by Bevy (into `VIEW_SIZE`² pixels).
 pub struct BevyScopePlugin;
 
