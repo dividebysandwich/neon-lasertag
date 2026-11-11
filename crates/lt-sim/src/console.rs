@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::level::{
     ArenaSize, BOX_H, BOX_HALF, GameMode, Grid, Ground, Level, Mover, Wall, mirror_point,
 };
+use crate::rules::SecondaryKind;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ConsoleKind {
@@ -34,6 +35,10 @@ pub enum ConsoleKind {
     /// A light bridge's switch: for `BRIDGE_TIME` a bridge of hard light (`Level::bridges`, the
     /// one nearest it) spans a gap between two parts of the upper floor, for anyone to cross.
     Bridge,
+    /// Megatarget mode: secondary target `side`'s puzzle (where it is one:
+    /// `rules::SecondaryKind`), on the target's wall. Solving it charges the solver and their
+    /// team mates in its pocket as a hit on the target does.
+    Secondary(u8),
 }
 
 /// Seconds a light bridge stands.
@@ -168,6 +173,7 @@ impl ConsoleKind {
             ConsoleKind::Beacon => "forward beacon",
             ConsoleKind::Breaker => "blackout breaker",
             ConsoleKind::Bridge => "light bridge",
+            ConsoleKind::Secondary(_) => "secondary target",
         }
     }
 
@@ -181,6 +187,7 @@ impl ConsoleKind {
             ConsoleKind::Beacon => 5.0,
             ConsoleKind::Breaker => BREAKER_TIME + 30.0,
             ConsoleKind::Bridge => BRIDGE_TIME + 10.0,
+            ConsoleKind::Secondary(_) => 0.0,
         }
     }
 
@@ -192,6 +199,8 @@ impl ConsoleKind {
             ConsoleKind::Beacon => "beacon",
             ConsoleKind::Breaker => "breaker",
             ConsoleKind::Bridge => "bridge",
+            ConsoleKind::Secondary(0) => "secondary0",
+            ConsoleKind::Secondary(_) => "secondary1",
         }
     }
 
@@ -281,6 +290,8 @@ pub struct ConsoleDef {
     pub floor: f32,
     pub faces: [PanelFrame; 2],
     pub nfaces: usize,
+    /// The kind of puzzle it always has (otherwise any: `MinigameKind::of` its seed).
+    pub game: Option<crate::minigame::MinigameKind>,
 }
 
 impl ConsoleDef {
@@ -307,13 +318,57 @@ impl ConsoleDef {
             floor: c.pos.y,
             faces: [c.frame(0), c.frame(1)],
             nfaces: 2,
+            game: None,
+        }
+    }
+
+    /// Megatarget mode: secondary target `side`'s puzzle `game`, on its wall.
+    fn secondary(m: &crate::level::Mega, side: usize, game: crate::minigame::MinigameKind) -> Self {
+        let p = m.secondaries[side];
+        let floor = m.pockets[side].0.y;
+        let frame = PanelFrame {
+            centre: p.centre() + p.normal * ((p.max - p.min).dot(p.normal.abs()) / 2.0 + 0.01),
+            right: Vec3::Y.cross(p.normal),
+            up: Vec3::Y,
+            normal: p.normal,
+        };
+        let c = p.centre();
+        ConsoleDef {
+            kind: ConsoleKind::Secondary(side as u8),
+            pos: Vec3::new(c.x, floor, c.z),
+            bounds: (p.min, p.max),
+            floor,
+            faces: [frame, frame],
+            nfaces: 1,
+            game: Some(game),
         }
     }
 }
 
-/// The puzzles of a match on `level` with `rules`, in the order the sim has them.
-pub fn console_defs(level: &Level, _rules: &crate::rules::Rules) -> Vec<ConsoleDef> {
-    level.consoles.iter().map(ConsoleDef::pedestal).collect()
+/// Megatarget mode: how each secondary target charges players (`Rules::secondary`; `Random`
+/// picks each one's way by the arena's seed). Never `Random`.
+pub fn secondary_kinds(level: &Level, rules: &crate::rules::Rules) -> [SecondaryKind; 2] {
+    [0u64, 1].map(|side| match rules.secondary {
+        SecondaryKind::Random => {
+            let mut rng = ChaCha8Rng::seed_from_u64(level.seed ^ 0x5EC0_17DA ^ side << 40);
+            SecondaryKind::PICKS[rng.random_range(0..SecondaryKind::PICKS.len())]
+        }
+        k => k,
+    })
+}
+
+/// The puzzles of a match on `level` with `rules`, in the order the sim has them: the arena's
+/// consoles, then the secondary targets' puzzles (Megatarget mode).
+pub fn console_defs(level: &Level, rules: &crate::rules::Rules) -> Vec<ConsoleDef> {
+    let mut defs: Vec<ConsoleDef> = level.consoles.iter().map(ConsoleDef::pedestal).collect();
+    if let Some(m) = &level.mega {
+        for (side, kind) in secondary_kinds(level, rules).into_iter().enumerate() {
+            if let Some(game) = kind.minigame() {
+                defs.push(ConsoleDef::secondary(m, side, game));
+            }
+        }
+    }
+    defs
 }
 
 /// The light bridge console `def` raises (the bridge nearest it).

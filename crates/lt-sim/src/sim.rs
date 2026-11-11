@@ -790,6 +790,8 @@ pub struct Sim {
     pub boxes: Vec<BoxState>,
     /// The consoles' puzzles (as `console_defs`).
     pub consoles: Vec<ConsoleState>,
+    /// Megatarget mode: how each secondary target charges players (`console::secondary_kinds`).
+    pub secondary: [crate::rules::SecondaryKind; 2],
     console_defs: Arc<Vec<crate::console::ConsoleDef>>,
     /// Barriers standing.
     pub barriers: Vec<Barrier>,
@@ -833,6 +835,7 @@ impl Sim {
     }
 
     pub fn with_level(level: Arc<Level>, rules: Rules) -> Sim {
+        let secondary = crate::console::secondary_kinds(&level, &rules);
         let world = level.world_at(0);
         let max_dist = (level.base_centre(Team::Red) - level.base_centre(Team::Blue))
             .length()
@@ -886,6 +889,7 @@ impl Sim {
             boxes: Vec::new(),
             consoles: Vec::new(),
             console_defs: Arc::new(Vec::new()),
+            secondary,
             barriers: Vec::new(),
             sensors: Vec::new(),
             decoys: Vec::new(),
@@ -3498,7 +3502,17 @@ impl Sim {
             }
             return true;
         }
+        // (The secondary targets that are puzzles don't count hits: `Rules::secondary`.)
         let side = mega.secondaries.iter().position(on);
+        let side = side.filter(|&i| self.secondary[i] == crate::rules::SecondaryKind::Shoot);
+        if side.is_none() && !on(&mega.core) && mega.secondaries.iter().any(on) {
+            self.events.push(SimEvent::BoltImpact {
+                pos: q,
+                normal: -(b.vel.normalize_or_zero()),
+                team: b.team,
+            });
+            return true;
+        }
         let core = on(&mega.core);
         if side.is_none() && !core {
             return false;
@@ -3526,30 +3540,13 @@ impl Sim {
             return true;
         }
         let pi = shooter.unwrap();
-        let points = if side.is_some() {
-            self.rules.secondary_points
-        } else {
-            self.rules.megatarget_points
-        };
-        self.award(b.owner_team, Some(b.owner), points);
-        let power_time = self.rules.power_time;
-        let p = &mut self.players[pi];
-        p.target_hits += 1;
         match side {
             Some(i) => {
-                p.mega_hits |= 1 << i;
-                let charged = p.mega_hits == 0b11;
-                if charged {
-                    p.power = Some(power_time);
-                }
-                self.events.push(SimEvent::SecondaryHit {
-                    side: i as u8,
-                    by: b.owner,
-                    pos: q,
-                    charged,
-                });
+                self.charge_secondary(i, pi, q);
             }
             None => {
+                self.award(b.owner_team, Some(b.owner), self.rules.megatarget_points);
+                self.players[pi].target_hits += 1;
                 self.events.push(SimEvent::MegaHit {
                     by: b.owner,
                     pos: q,
@@ -3557,6 +3554,33 @@ impl Sim {
                 self.send_home(pi);
             }
         }
+        true
+    }
+
+    /// Megatarget mode: player `pi` charged at secondary target `side` (a hit on it, or its
+    /// puzzle solved; at `pos`): the points, and once both are, the power. Nothing if they
+    /// have the power already or this one charged them already.
+    pub(crate) fn charge_secondary(&mut self, side: usize, pi: usize, pos: Vec3) -> bool {
+        let p = &self.players[pi];
+        if p.power.is_some() || p.mega_hits & (1 << side) != 0 || !p.alive() {
+            return false;
+        }
+        let (team, id) = (p.team, p.id);
+        self.award(team, Some(id), self.rules.secondary_points);
+        let power_time = self.rules.power_time;
+        let p = &mut self.players[pi];
+        p.target_hits += 1;
+        p.mega_hits |= 1 << side;
+        let charged = p.mega_hits == 0b11;
+        if charged {
+            p.power = Some(power_time);
+        }
+        self.events.push(SimEvent::SecondaryHit {
+            side: side as u8,
+            by: id,
+            pos,
+            charged,
+        });
         true
     }
 }
@@ -6621,6 +6645,7 @@ mod tests {
                 mode: crate::level::GameMode::Megatarget,
                 pickup_pairs: 0,
                 turret_range: if turrets { 24.0 } else { 0.0 },
+                secondary: crate::rules::SecondaryKind::Shoot,
                 match_time: 1000.0,
                 ..Rules::default()
             },

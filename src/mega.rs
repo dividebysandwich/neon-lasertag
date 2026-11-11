@@ -105,6 +105,7 @@ fn accent(accents: &mut Assets<AccentMaterial>, c: Vec3, i: f32) -> Handle<Accen
 pub fn spawn(
     commands: &mut Commands,
     level: &Level,
+    secondary: [lt_sim::rules::SecondaryKind; 2],
     palette: &Palette,
     meshes: &mut Assets<Mesh>,
     accents: &mut Assets<AccentMaterial>,
@@ -113,7 +114,7 @@ pub fn spawn(
 ) {
     let Some(m) = &level.mega else { return };
     spawn_core(commands, m, palette, meshes, accents, glows);
-    spawn_secondaries(commands, m, palette, meshes, accents);
+    spawn_secondaries(commands, m, secondary, palette, meshes, accents);
     spawn_turrets(commands, m, palette, meshes, accents);
     spawn_shields(commands, m, meshes, accents, glows, assets);
 }
@@ -329,6 +330,7 @@ fn facing(n: Vec3) -> Quat {
 fn spawn_secondaries(
     commands: &mut Commands,
     m: &Mega,
+    secondary: [lt_sim::rules::SecondaryKind; 2],
     palette: &Palette,
     meshes: &mut Assets<Mesh>,
     accents: &mut Assets<AccentMaterial>,
@@ -340,6 +342,10 @@ fn spawn_secondaries(
         meshes.add(Torus::new(0.42, 0.45)),
     ];
     for (side, t) in m.secondaries.iter().enumerate() {
+        // (A puzzle there instead: src/consoles.rs.)
+        if secondary[side] != lt_sim::rules::SecondaryKind::Shoot {
+            continue;
+        }
         let mat = accent(accents, TO_HIT, 7.0);
         let c = t.centre();
         let root = commands

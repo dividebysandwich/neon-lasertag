@@ -89,8 +89,23 @@ impl Sim {
     pub(super) fn init_consoles(&mut self) {
         self.console_defs = std::sync::Arc::new(console_defs(&self.level, &self.rules));
         self.consoles = (0..self.console_defs.len())
-            .map(|_| ConsoleState::new(self.console_rng.random()))
+            .map(|_| ConsoleState::new(0))
             .collect();
+        for k in 0..self.consoles.len() {
+            let seed = self.console_seed(k);
+            self.consoles[k] = ConsoleState::new(seed);
+        }
+    }
+
+    /// A new seed for console `k`'s puzzle (one of its kind, if it always has one kind).
+    fn console_seed(&mut self, k: usize) -> u32 {
+        let want = self.console_defs[k].game;
+        loop {
+            let seed: u32 = self.console_rng.random();
+            if want.is_none_or(|g| crate::minigame::MinigameKind::of(seed) == g) {
+                return seed;
+            }
+        }
     }
 
     /// Once a tick: the consoles' timers, and what they do while they work.
@@ -202,7 +217,7 @@ impl Sim {
             self.players[pi].feet,
         );
         let def = self.console_defs[k];
-        let seed = self.console_rng.random();
+        let seed = self.console_seed(k);
         self.consoles[k] = ConsoleState {
             owner: self.consoles[k].owner,
             active: self.consoles[k].active,
@@ -258,6 +273,22 @@ impl Sim {
                 let st = &mut self.consoles[k];
                 st.owner = Some(team);
                 st.active = crate::console::BRIDGE_TIME;
+            }
+            ConsoleKind::Secondary(side) => {
+                // The solver, and their team mates in the pocket.
+                let side = side as usize;
+                let pos = def.faces[0].centre;
+                let Some(m) = self.level.mega.clone() else {
+                    return;
+                };
+                let mut who: Vec<usize> = vec![pi];
+                who.extend((0..self.players.len()).filter(|&j| {
+                    let p = &self.players[j];
+                    j != pi && p.alive() && p.team == team && m.in_pocket(side, p.feet)
+                }));
+                for j in who {
+                    self.charge_secondary(side, j, pos);
+                }
             }
         }
     }
@@ -585,5 +616,74 @@ mod tests {
         run(&mut sim, crate::console::BRIDGE_TIME);
         let y = sim.player(red).unwrap().feet.y;
         assert!(y < 0.5, "still up at {y}");
+    }
+
+    #[test]
+    fn solved_secondary_puzzles_charge_the_solver_and_team_mates_in_the_pocket() {
+        use crate::rules::SecondaryKind;
+        for kind in [SecondaryKind::Circuit, SecondaryKind::Lights] {
+            let rules = Rules {
+                match_time: 1000.0,
+                spawn_protect: 0.0,
+                pickup_pairs: 0,
+                powerup_pairs: 0,
+                turret_range: 0.0,
+                event_first: (5000.0, 5000.0),
+                mode: GameMode::Megatarget,
+                secondary: kind,
+                ..Rules::default()
+            };
+            let mut sim = Sim::new(9, rules);
+            assert_eq!(sim.secondary, [kind, kind]);
+            let red = sim.add_player("red", Some(Team::Red), false).unwrap();
+            let mate = sim.add_player("mate", Some(Team::Red), false).unwrap();
+            let blue = sim.add_player("blue", Some(Team::Blue), false).unwrap();
+            let k = sim
+                .console_defs()
+                .iter()
+                .position(|d| d.kind == ConsoleKind::Secondary(0))
+                .unwrap();
+            assert_eq!(sim.consoles[k].game.kind(), kind.minigame().unwrap());
+            let m = sim.level.mega.clone().unwrap();
+            let (a, b) = m.pockets[0];
+            let mid = (a + b) / 2.0;
+            to_console(&mut sim, k, red);
+            sim.teleport(mate, mid + Vec3::Z * 1.0, 0.0);
+            sim.teleport(blue, mid - Vec3::Z * 1.0, 0.0);
+            sim.step();
+            // Shooting it does nothing.
+            sim.drain_events();
+            let i = sim.consoles[k].game.hint(&sim.consoles[k].state).unwrap();
+            click(&mut sim, red, k, i);
+            solve(&mut sim, red, k);
+            let ev = sim.drain_events();
+            let hit = |id| {
+                ev.iter()
+                    .any(|e| matches!(e, SimEvent::SecondaryHit { by, side: 0, .. } if *by == id))
+            };
+            assert!(hit(red) && hit(mate), "{kind:?}");
+            assert!(!hit(blue), "{kind:?}: not the enemy");
+            assert_eq!(sim.player(red).unwrap().mega_hits, 1);
+            assert_eq!(sim.player(blue).unwrap().mega_hits, 0);
+            assert_eq!(sim.scores[0], 2 * sim.rules.secondary_points);
+        }
+    }
+
+    #[test]
+    fn random_secondaries_come_in_every_kind() {
+        use crate::rules::SecondaryKind;
+        let mut seen = std::collections::HashSet::new();
+        for seed in 0..40 {
+            let level = Level::generate_for(seed, ArenaSize::Small, GameMode::Megatarget);
+            let kinds = crate::console::secondary_kinds(&level, &Rules::default());
+            assert_eq!(
+                kinds,
+                crate::console::secondary_kinds(&level, &Rules::default())
+            );
+            seen.extend(kinds);
+        }
+        for k in SecondaryKind::PICKS {
+            assert!(seen.contains(&k), "{k:?} never");
+        }
     }
 }

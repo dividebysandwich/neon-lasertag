@@ -4,6 +4,7 @@
 //!     lt-server [--port 27420] [--name NAME] [--seed N] [--bots 8] [--difficulty normal]
 //!               [--arena small|medium|large|random] [--mode classic|megatarget|prism|infection]
 //!               [--master URL] [--private] [--no-lan] [--lock-teams]
+//!               [--secondary random|shoot|circuit|lights]
 
 use std::time::{Duration, Instant};
 
@@ -31,6 +32,8 @@ struct Args {
     lock_teams: bool,
     /// Match modifiers (`Rules::modifiers`).
     modifiers: Vec<lt_sim::ArenaEvent>,
+    /// Megatarget mode: how the secondary targets charge players (`Rules::secondary`).
+    secondary: lt_sim::rules::SecondaryKind,
 }
 
 fn args() -> Args {
@@ -47,6 +50,7 @@ fn args() -> Args {
         lan: true,
         lock_teams: false,
         modifiers: Vec::new(),
+        secondary: lt_sim::rules::SecondaryKind::Random,
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -67,6 +71,14 @@ fn args() -> Args {
                 Some(m) => a.mode = m,
                 None => eprintln!("--mode takes classic, megatarget, prism or infection"),
             },
+            "--secondary" => match it
+                .next()
+                .as_deref()
+                .and_then(lt_sim::rules::SecondaryKind::parse)
+            {
+                Some(k) => a.secondary = k,
+                None => eprintln!("--secondary takes random, shoot, circuit or lights"),
+            },
             "--master" => a.master = it.next().unwrap_or(a.master),
             "--private" => a.private = true,
             "--no-lan" => a.lan = false,
@@ -83,7 +95,7 @@ fn args() -> Args {
                 println!(
                     "lt-server [--port N] [--name NAME] [--seed N] [--bots N] [--difficulty easy|normal|hard] \
                      [--arena small|medium|large|random] [--mode classic|megatarget|prism|infection] [--master URL] [--private] [--no-lan] [--lock-teams] \
-                     [--modifiers dark,lowgrav,mirror]"
+                     [--modifiers dark,lowgrav,mirror] [--secondary random|shoot|circuit|lights]"
                 );
                 std::process::exit(0);
             }
@@ -107,6 +119,7 @@ fn new_match(seed: u64, args: &Args, warmup: bool) -> (Sim, Bots) {
             warmup: if warmup { WARMUP } else { 0.0 },
             team_switch: !args.lock_teams,
             modifiers: args.modifiers.clone(),
+            secondary: args.secondary,
             ..Rules::for_mode(args.mode)
         },
     );

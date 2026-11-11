@@ -197,6 +197,7 @@ reflections); on a weaker PC, turn **Reflections** off in Options.
 | `--difficulty easy\|normal\|hard` | Bot difficulty |
 | `--arena small\|medium\|large\|random` | Arena size (`random` picks one per match) |
 | `--mode classic\|megatarget\|prism\|infection` | Game mode (default `megatarget`) |
+| `--secondary random\|shoot\|circuit\|lights` | Megatarget: how the secondary targets charge you (default `random`: each its own way) |
 | `--team red\|blue\|auto` | Your team in local and hosted games (default `auto`: the smaller one) |
 | `--lock-teams` | Local and hosted games: nobody changes sides during a match |
 | `--match-time S` | Match length in seconds (local games) |

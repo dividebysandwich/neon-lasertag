@@ -5,6 +5,7 @@
 //!          [--host [PORT]] [--public] [--server-name NAME] [--connect HOST[:PORT]] [--autopilot]
 //!          [--difficulty easy|normal|hard] [--arena small|medium|large|random]
 //!          [--mode classic|megatarget|prism|infection]
+//!          [--secondary random|shoot|circuit|lights]
 //!          [--left-handed] [--match-time SECS]
 //!          [--screenshot FILE --after SECS] [--quit-after SECS]
 //! ```
@@ -101,6 +102,8 @@ pub struct Args {
     pub arena: lt_sim::level::SizeChoice,
     /// What local and hosted games are played for (`--mode`).
     pub game_mode: lt_sim::level::GameMode,
+    /// Megatarget mode: how the secondary targets charge players (`--secondary`).
+    pub secondary: lt_sim::rules::SecondaryKind,
     /// One's own team in local and hosted games (`--team`; none: the smaller one), and whether
     /// players may switch teams during a match (`--lock-teams` turns it off).
     pub team: Option<lt_sim::Team>,
@@ -133,6 +136,7 @@ impl Args {
             difficulty: Difficulty::default(),
             arena: lt_sim::level::SizeChoice::default(),
             game_mode: lt_sim::level::GameMode::Megatarget,
+            secondary: lt_sim::rules::SecondaryKind::Random,
             team: None,
             team_switch: true,
             modifiers: Vec::new(),
@@ -179,6 +183,13 @@ impl Args {
                 {
                     Some(s) => a.arena = s,
                     None => eprintln!("--arena: small, medium, large or random"),
+                },
+                "--secondary" => match next(&mut i)
+                    .as_deref()
+                    .and_then(lt_sim::rules::SecondaryKind::parse)
+                {
+                    Some(k) => a.secondary = k,
+                    None => eprintln!("--secondary: random, shoot, circuit or lights"),
                 },
                 "--mode" => match next(&mut i)
                     .as_deref()
@@ -233,6 +244,7 @@ impl Args {
         if let Some(t) = self.match_time {
             r.match_time = t;
         }
+        r.secondary = self.secondary;
         r
     }
 }
@@ -620,6 +632,7 @@ fn build_arena(
     mega::spawn(
         &mut commands,
         &game.level,
+        lt_sim::console::secondary_kinds(&game.level, &game.rules),
         &palette,
         &mut meshes,
         &mut accents,

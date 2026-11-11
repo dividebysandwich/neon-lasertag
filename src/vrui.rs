@@ -2242,7 +2242,7 @@ fn event_banner(
     if near && !*was_near {
         queue.push(crate::hud::Banner {
             title: "FORCEFIELD",
-            sub: "IT TAGS YOU OUT - HIT BOTH SECONDARY TARGETS TO GET THROUGH".to_string(),
+            sub: "IT TAGS YOU OUT - CHARGE UP AT BOTH SECONDARY TARGETS TO GET THROUGH".to_string(),
             color: crate::neonui::PINK,
             time: 3.0,
             pickup: None,

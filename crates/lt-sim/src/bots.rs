@@ -1620,7 +1620,9 @@ impl Bot {
             Some(Errand::Puzzle { k, .. }) => {
                 !Self::wants_puzzle(sim, p, k)
                     || self.errand_time > PUZZLE_TIME
-                    || k >= crate::console::CONSOLE_POKE && !self.free_for_consoles()
+                    || k.checked_sub(crate::console::CONSOLE_POKE)
+                        .and_then(|c| sim.console_defs().get(c as usize))
+                        .is_some_and(|d| !self.free_for_console(d.kind))
             }
             None => false,
         };
@@ -1693,26 +1695,28 @@ impl Bot {
                     .iter()
                     .enumerate()
                     .map(|(k, b)| (k as u8, b.pos, vec![b.frame(0), b.frame(1)]));
-                let free = self.free_for_consoles();
-                let consoles =
-                    sim.console_defs()
-                        .iter()
-                        .enumerate()
-                        .filter(|_| free)
-                        .map(|(k, d)| {
-                            (
-                                crate::console::CONSOLE_POKE + k as u8,
-                                d.pos,
-                                d.faces().to_vec(),
-                            )
-                        });
+                let consoles = sim
+                    .console_defs()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, d)| self.free_for_console(d.kind))
+                    .map(|(k, d)| {
+                        (
+                            crate::console::CONSOLE_POKE + k as u8,
+                            d.pos,
+                            d.faces().to_vec(),
+                        )
+                    });
                 let best = boxes
                     .chain(consoles)
                     .filter(|(k, at, _)| {
                         Self::wants_puzzle(sim, p, *k)
                             && at.distance(p.feet) < PUZZLE_SIGHT
-                            // (Attackers on their way leave their own half's to the others.)
-                            && (self.role != Role::Offense || Team::of_z(at.z) != p.team)
+                            // (Attackers on their way leave their own half's to the others; not
+                            // the secondary targets', in the middle.)
+                            && (self.role != Role::Offense
+                                || Team::of_z(at.z) != p.team
+                                || *k >= crate::console::CONSOLE_POKE + Self::pedestals(sim))
                             && !mates.iter().any(|m| m.distance(*at) < 2.5)
                     })
                     .filter_map(|(k, at, faces)| {
@@ -1742,10 +1746,21 @@ impl Bot {
         }
     }
 
-    /// Whether the plan leaves time for a console's puzzle (not while pushing in, answering an
-    /// alarm or going for the megatarget or a prism).
-    fn free_for_consoles(&self) -> bool {
-        matches!(self.plan, Plan::Hold | Plan::Engage)
+    /// Whether the plan leaves time for a console of `kind`'s puzzle: not while pushing in,
+    /// answering an alarm or going for a prism; going for the megatarget, only the secondary
+    /// targets'.
+    fn free_for_console(&self, kind: crate::console::ConsoleKind) -> bool {
+        match kind {
+            crate::console::ConsoleKind::Secondary(_) => {
+                matches!(self.plan, Plan::Hold | Plan::Engage | Plan::Mega)
+            }
+            _ => matches!(self.plan, Plan::Hold | Plan::Engage),
+        }
+    }
+
+    /// How many of the consoles in play are the arena's own (the rest: the secondary targets').
+    fn pedestals(sim: &Sim) -> u8 {
+        sim.level.consoles.len() as u8
     }
 
     /// Whether puzzle `k` (as `Errand::Puzzle`) is worth solving for `p`.
@@ -1772,6 +1787,10 @@ impl Bot {
                 crate::console::ConsoleKind::Breaker => true,
                 // (Not that bots walk over it: it's for the players.)
                 crate::console::ConsoleKind::Bridge => true,
+                // (Not with the power already, nor charged there already.)
+                crate::console::ConsoleKind::Secondary(side) => {
+                    p.power.is_none() && p.mega_hits & (1 << side) == 0
+                }
             }
     }
 
@@ -2392,6 +2411,8 @@ impl Bot {
             if let Some(t) = (0..2)
                 .filter(|_| p.power.is_none())
                 .filter(|i| p.mega_hits & (1 << i) == 0)
+                // (Not those that are puzzles.)
+                .filter(|&i| sim.secondary[i] == crate::rules::SecondaryKind::Shoot)
                 .map(|i| m.secondaries[i])
                 .find(|t| t.centre().distance(eye) < 12.0 && seen(t.min, t.max))
             {
@@ -3748,6 +3769,13 @@ mod tests {
 
     #[test]
     fn bots_go_for_the_megatarget() {
+        for kind in crate::rules::SecondaryKind::PICKS {
+            bots_go_for_the_megatarget_with(kind);
+        }
+    }
+
+    fn bots_go_for_the_megatarget_with(secondary: crate::rules::SecondaryKind) {
+        println!("secondary targets: {secondary:?}");
         let mut totals = [0usize; 6];
         for seed in [3u64, 8] {
             let mut sim = Sim::new(
@@ -3755,6 +3783,7 @@ mod tests {
                 Rules {
                     mode: level::GameMode::Megatarget,
                     match_time: 300.0,
+                    secondary,
                     ..crate::Rules::default()
                 },
             );

@@ -52,12 +52,15 @@ pub fn kind_color(kind: ConsoleKind) -> Vec3 {
         ConsoleKind::Beacon => Vec3::new(0.7, 0.45, 1.0),
         ConsoleKind::Breaker => Vec3::new(1.0, 0.35, 0.1),
         ConsoleKind::Bridge => Vec3::new(0.1, 0.85, 1.0),
+        ConsoleKind::Secondary(_) => Vec3::new(1.0, 0.5, 0.05),
     }
 }
 
-/// The banner for solving a console of `kind`: its title and what it did.
-pub fn solved_banner(kind: ConsoleKind) -> (&'static str, &'static str) {
-    match kind {
+/// The banner for solving a console of `kind`: its title and what it did (none for a secondary
+/// target's: its charge has its own).
+pub fn solved_banner(kind: ConsoleKind) -> Option<(&'static str, &'static str)> {
+    Some(match kind {
+        ConsoleKind::Secondary(_) => return None,
         ConsoleKind::Vault => (
             "SUPPLY VAULT CRACKED",
             "A SPECIAL WEAPON IS YOURS - IT RESETS FOR A MINUTE",
@@ -78,7 +81,7 @@ pub fn solved_banner(kind: ConsoleKind) -> (&'static str, &'static str) {
             "LIGHT BRIDGE UP",
             "IT SPANS THE GAP IN THE UPPER FLOOR FOR 25 S - FOR EVERYONE",
         ),
-    }
+    })
 }
 
 #[derive(Component)]
@@ -253,6 +256,7 @@ pub fn spawn(
                 }
                 icon_part(commands, &mast_tip, Transform::from_xyz(0.0, 0.28, 0.0));
             }
+            ConsoleKind::Secondary(_) => {}
             ConsoleKind::Bridge => {
                 icon_part(commands, &bridge_icon, Transform::from_xyz(0.0, 0.08, 0.0));
                 for x in [-0.17, 0.17] {

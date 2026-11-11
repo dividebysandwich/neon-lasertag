@@ -193,6 +193,9 @@ pub struct Rules {
     /// Megatarget mode: seconds to get into the megatarget's room after hitting both secondary
     /// targets.
     pub power_time: f32,
+    /// Megatarget mode: what charges a player at the secondary targets (`Random`: each one's
+    /// own way, by the arena's seed: `console::secondary_kinds`).
+    pub secondary: SecondaryKind,
     /// Turrets: seconds off after their deactivation target is hit, seconds between shots,
     /// reach (m), aiming error (radians, standard deviation) and turning speed (radians a
     /// second).
@@ -206,6 +209,53 @@ pub struct Rules {
     pub box_every: f32,
     pub box_off: f32,
     pub box_guard: f32,
+}
+
+/// Megatarget mode: how a player charges up at a secondary target.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SecondaryKind {
+    /// Each target its own way, picked by the arena's seed from `SecondaryKind::PICKS`.
+    #[default]
+    Random,
+    /// Shooting it.
+    Shoot,
+    /// Solving a circuit puzzle on it (`minigame::circuit`).
+    Circuit,
+    /// Solving a lights puzzle on it (`minigame::lights`).
+    Lights,
+}
+
+impl SecondaryKind {
+    /// The ways `Random` picks from.
+    pub const PICKS: [SecondaryKind; 3] = [
+        SecondaryKind::Shoot,
+        SecondaryKind::Circuit,
+        SecondaryKind::Lights,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            SecondaryKind::Random => "random",
+            SecondaryKind::Shoot => "shoot",
+            SecondaryKind::Circuit => "circuit",
+            SecondaryKind::Lights => "lights",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<SecondaryKind> {
+        std::iter::once(SecondaryKind::Random)
+            .chain(Self::PICKS)
+            .find(|k| k.name().eq_ignore_ascii_case(s.trim()))
+    }
+
+    /// The click puzzle it is, if it's one.
+    pub fn minigame(self) -> Option<crate::minigame::MinigameKind> {
+        match self {
+            SecondaryKind::Circuit => Some(crate::minigame::MinigameKind::Circuit),
+            SecondaryKind::Lights => Some(crate::minigame::MinigameKind::Lights),
+            _ => None,
+        }
+    }
 }
 
 /// Seconds an Infection match lasts (others: `Rules::match_time`'s default): about as long as
@@ -346,6 +396,7 @@ impl Default for Rules {
             mode: GameMode::Classic,
             secondary_points: 100,
             megatarget_points: 1000,
+            secondary: SecondaryKind::Random,
             power_time: 60.0,
             turret_off: 15.0,
             turret_every: 0.6,

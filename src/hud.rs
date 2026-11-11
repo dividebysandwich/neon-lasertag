@@ -894,7 +894,7 @@ pub fn feed_entries(e: &SimEvent, game: &Game) -> Vec<(String, Color, f32)> {
             let who = game.name_of(by);
             out.push((
                 format!(
-                    "{who} hit a secondary target +{}",
+                    "{who} charged at a secondary target +{}",
                     pts(game.rules.secondary_points)
                 ),
                 neonui::AMBER,
@@ -1115,7 +1115,7 @@ fn update(
                 neonui::AMBER,
             ),
             Some(p) if near_forcefield(&game, p) => (
-                "FORCEFIELD! it tags you out\nhit both secondary targets to get through"
+                "FORCEFIELD! it tags you out\ncharge up at both secondary targets to get through"
                     .to_string(),
                 neonui::PINK,
             ),
@@ -1285,7 +1285,7 @@ pub fn next_hint(
             since > 5.0,
             "YOUR GOAL",
             if mega {
-                "TAG OUT ENEMIES - HIT BOTH SECONDARY TARGETS AT THE SIDES TO OPEN THE MEGATARGET ROOM"
+                "TAG OUT ENEMIES - SHOOT OR SOLVE BOTH SECONDARY TARGETS AT THE SIDES TO OPEN THE MEGATARGET ROOM"
             } else {
                 "TAG OUT ENEMIES AND HIT THE TARGETS UNDER THE ROOFS IN THEIR HALF"
             }
@@ -1358,7 +1358,7 @@ pub fn rules_lines(rules: &lt_sim::Rules, mode: lt_sim::level::GameMode) -> Vec<
     match mode {
         GameMode::Megatarget => {
             out.push(format!(
-                "HIT BOTH SECONDARY TARGETS ({} EACH) TO PASS THE FORCEFIELDS FOR {:.0} S",
+                "SHOOT OR SOLVE BOTH SECONDARY TARGETS ({} EACH) TO PASS THE FORCEFIELDS FOR {:.0} S",
                 rules.secondary_points, rules.power_time
             ));
             out.push(format!(
@@ -2749,7 +2749,7 @@ pub fn mega_banner_for(e: &SimEvent, game: &Game) -> Option<Banner> {
         )),
         SimEvent::PowerLost { player } if player == me => Some(banner(
             "POWER LOST",
-            "HIT BOTH SECONDARY TARGETS AGAIN".to_string(),
+            "CHARGE UP AT BOTH SECONDARY TARGETS AGAIN".to_string(),
             neonui::PINK,
             false,
         )),
@@ -2774,7 +2774,7 @@ pub fn mega_banner_for(e: &SimEvent, game: &Game) -> Option<Banner> {
         )),
         // Consoles: one's own solve.
         SimEvent::ConsoleSolved { by, kind, team, .. } if by == me => {
-            let (title, sub) = crate::consoles::solved_banner(kind);
+            let (title, sub) = crate::consoles::solved_banner(kind)?;
             Some(banner(
                 title,
                 sub.to_string(),
