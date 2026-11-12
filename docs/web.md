@@ -33,7 +33,7 @@ says so.
 
 | Parameter | Meaning |
 |---|---|
-| `?name=` | The player's name (default "Player") |
+| `?name=` | The player's name for this visit (default: the one set in OPTIONS, else "Player") |
 | `?master=` | Another master server for the list (default `https://lt-master.playspoon.com`) |
 | `?relay=` | Another relay to join through (default: the master server's) |
 | `?gl` | The WebGL2 build |

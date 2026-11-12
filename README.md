@@ -229,6 +229,9 @@ summary of the rules.
 
 Seated VR players can use **Calibrate height** in Options to play at full height.
 
+Your player name is set at the top of Options (in VR, on its on-screen keyboard) and kept with
+the other settings.
+
 On the flat screen the floors, walls and players are glossy and mirror the neon (screen-space
 reflections); on a weaker PC, turn **Reflections** off in Options.
 
@@ -239,7 +242,7 @@ reflections); on a weaker PC, turn **Reflections** off in Options.
 | `--flat` | Start on the flat screen |
 | `--vr` | Start in VR (any OpenXR headset) |
 | `--gl-vr` | Start in VR with the foveated GL renderer (Steam Frame, Linux; needs `--features glvr`) |
-| `--name NAME` | Your player name |
+| `--name NAME` | Your player name for this run (else the one set in OPTIONS, else your login name) |
 | `--seed N` | Arena seed; starts a match straight away |
 | `--bots N` | Number of bots; starts a match straight away |
 | `--difficulty easy\|normal\|hard` | Bot difficulty |
@@ -283,7 +286,7 @@ Debug environment variables:
 | `LT_CHASE=dist,height,deg` | Follow the local player from outside (angle from behind), showing its avatar |
 | `LT_MENU=top\|botmatch\|multiplayer\|internet\|lan\|host-lan\|host-internet` | Open the start menu at that screen |
 | `LT_MASTER=URL` | Use another master server |
-| `LT_VR_MENU=1\|options` | Open the VR menu / options |
+| `LT_VR_MENU=1\|options\|controls\|name` | Open the VR menu / options / controls / name keyboard |
 | `LT_SCORES=1` | Show the flat-screen scores |
 | `LT_VR_FAKE_HANDS=1\|wrist\|scope` | Fake VR controllers (`scope`: the prism lance's scope held to the eye) |
 | `LT_HOLSTER=x,y,z` | Holster position from the eyes (default `0.23,-0.58,-0.07`) |

@@ -1,4 +1,4 @@
-//! The player's settings: the flat screen's key bindings, mouse sensitivity, inverted mouse
+//! The player's settings: the player's name; the flat screen's key bindings, mouse sensitivity, inverted mouse
 //! look, field of view, crouching (held or toggled), head bob and reflections, and the volumes of the sound effects and the music (in VR too);
 //! VR: the controller buttons of the actions that aren't gestures (`VrAction`).
 //! Changed in the options screen (src/options.rs) and kept in `settings.ron` in the user's
@@ -424,6 +424,9 @@ impl Binding {
 
 #[derive(Resource, Clone, Debug, PartialEq)]
 pub struct Settings {
+    /// The player's name (empty: the default, `Args::default_name`), as changed in the
+    /// options; `--name` or the page's `?name=` overrides it.
+    pub name: String,
     /// Mouse look speed, 1 = the default.
     pub sensitivity: f32,
     pub invert_y: bool,
@@ -498,6 +501,7 @@ pub fn sound_gain(settings: Option<&Settings>) -> f32 {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
+            name: String::new(),
             sensitivity: 1.0,
             invert_y: false,
             fov: FOV_DEFAULT,
@@ -757,6 +761,7 @@ impl Settings {
         };
         match ron::from_str::<Saved>(&text) {
             Ok(saved) => {
+                s.name = clean_name(&saved.name);
                 s.sensitivity = saved.sensitivity.clamp(0.1, 5.0);
                 s.invert_y = saved.invert_y;
                 s.fov = saved.fov.clamp(FOV_RANGE.0, FOV_RANGE.1);
@@ -807,6 +812,7 @@ impl Settings {
 
     pub fn save(&self) {
         let saved = Saved {
+            name: self.name.clone(),
             sensitivity: self.sensitivity,
             invert_y: self.invert_y,
             fov: self.fov,
@@ -849,6 +855,20 @@ impl Settings {
     }
 }
 
+/// The longest name (the server cuts longer ones: lt-net's server.rs).
+pub const NAME_MAX: usize = 24;
+
+/// Whether `c` may be typed into a name (the menus' font has the ASCII glyphs).
+pub fn name_char(c: char) -> bool {
+    c.is_ascii_graphic() || c == ' '
+}
+
+/// A name as kept: its typeable characters, trimmed, at most `NAME_MAX` long.
+pub fn clean_name(s: &str) -> String {
+    let s: String = s.chars().filter(|&c| name_char(c)).take(NAME_MAX).collect();
+    s.trim().to_string()
+}
+
 /// The browser build's localStorage key for the settings (the native file's text).
 #[cfg(target_arch = "wasm32")]
 const STORAGE_KEY: &str = "lasertag/settings.ron";
@@ -857,6 +877,7 @@ const STORAGE_KEY: &str = "lasertag/settings.ron";
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 struct Saved {
+    name: String,
     sensitivity: f32,
     invert_y: bool,
     fov: f32,
@@ -883,6 +904,7 @@ struct Saved {
 impl Default for Saved {
     fn default() -> Self {
         Saved {
+            name: String::new(),
             sensitivity: 1.0,
             invert_y: false,
             fov: FOV_DEFAULT,
@@ -921,6 +943,13 @@ mod tests {
             assert_eq!(Binding::parse(n), Some(Binding::Mouse(*b)));
         }
         assert_eq!(Binding::parse(WHEEL), Some(Binding::Wheel));
+    }
+
+    #[test]
+    fn names_are_cleaned() {
+        assert_eq!(clean_name("  Neo\n "), "Neo");
+        assert_eq!(clean_name(&"x".repeat(40)).len(), NAME_MAX);
+        assert_eq!(clean_name("\u{1F600}"), "");
     }
 
     #[test]

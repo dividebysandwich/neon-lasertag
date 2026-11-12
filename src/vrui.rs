@@ -7,7 +7,8 @@
 //! - The menu (the right menu button, or B / Y held; see src/vr.rs): Resume, New match (local
 //!   games: the next match on a new arena), Options, Main menu and Quit, floating in front of
 //!   the player; where the game allows it, Red and Blue buttons to change sides.
-//! - The options (from the start menu or the menu): volumes, the blaster's tilt, the holster's
+//! - The options (from the start menu or the menu): one's name (typed on a keyboard panel),
+//!   volumes, the blaster's tilt, the holster's
 //!   height and side, vibration, where the stick moves, and the height calibration; under
 //!   them the controls: which button jumps, dashes, crouches, takes a grenade, switches on the
 //!   shield, uses the gadget and (held) opens the menu.
@@ -22,7 +23,7 @@
 //!   behind: bottom), fading.
 //!
 //! `LT_VR_MENU=1` opens the menu at the start, `LT_VR_MENU=options` the options, `controls` the
-//! controls (testing).
+//! controls, `name` the name keyboard (testing).
 
 use bevy::prelude::*;
 use lt_sim::bots::Difficulty;
@@ -90,6 +91,8 @@ enum Kind {
     Options,
     /// The VR controls' buttons (from the options).
     Controls,
+    /// The keyboard for one's name (from the options), in small letters (true) or capitals.
+    Name(bool),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -115,6 +118,14 @@ enum Act {
     ControlsBack,
     /// The server list scrolled by rows.
     Scroll(i32),
+    /// The name keyboard: open it, type a character, delete the last, switch small letters
+    /// and capitals, keep the name, leave it as it was.
+    EditName,
+    Type(char),
+    Delete,
+    Case,
+    NameDone,
+    NameCancel,
 }
 
 /// The VR options' buttons (`build_options`).
@@ -196,6 +207,8 @@ struct Panel {
     /// The start menu: the choices it shows, and whether it was placed before the head was
     /// tracked (it is placed again then).
     shows: Option<LobbyKey>,
+    /// The keyboard: the name it shows.
+    typed: Option<String>,
     headless: bool,
 }
 
@@ -205,6 +218,9 @@ struct VrUi {
     /// The options are up (over the start menu or the menu), and the controls over them.
     options: bool,
     controls: bool,
+    /// The name being typed on the keyboard panel (over the options), and in small letters.
+    name: Option<String>,
+    lower: bool,
     /// The start menu's server list: the first row shown, and whether a stick was pushed up
     /// or down (last frame).
     list_top: usize,
@@ -1468,14 +1484,37 @@ fn build_end(b: &mut Builder, game: &Game) -> (Vec<Button>, Vec3) {
 #[allow(clippy::too_many_arguments)]
 /// The VR options panel (`Settings`): volumes, handedness, the blaster's tilt, the holster's
 /// height, vibration, which way the stick moves, and the height calibration.
-fn build_options(b: &mut Builder, s: &crate::settings::Settings, vignette: bool) -> Vec<Button> {
-    let size = Vec2::new(1.1, 1.396);
+fn build_options(
+    b: &mut Builder,
+    s: &crate::settings::Settings,
+    name: &str,
+    vignette: bool,
+) -> Vec<Button> {
+    let size = Vec2::new(1.1, 1.488);
     b.backing(size, Hue::Violet);
     let top = size.y / 2.0;
     b.title("OPTIONS", 0.058, top - 0.085);
     let (white, dim) = (b.mats.white.clone(), b.mats.dim.clone());
     let mut buttons = Vec::new();
-    let row_y = |k: usize| top - 0.24 - k as f32 * 0.092;
+    // (Row 0 under the name's.)
+    let row_y = |k: usize| top - 0.332 - k as f32 * 0.092;
+    b.text_w(
+        "NAME",
+        0.026,
+        BOLD,
+        Vec2::new(-0.48, top - 0.24),
+        Align::Left,
+        &white,
+        None,
+    );
+    buttons.push(b.button(
+        name,
+        Act::EditName,
+        Vec2::new(0.1, top - 0.24),
+        Vec2::new(0.77, 0.07),
+        Hue::Cyan,
+        false,
+    ));
     let label = |b: &mut Builder, k: usize, s: &str| {
         b.text_w(
             s,
@@ -1648,7 +1687,72 @@ fn build_options(b: &mut Builder, s: &crate::settings::Settings, vignette: bool)
             ("CONTROLS".into(), Act::Controls, Hue::Cyan, false),
             ("BACK".into(), Act::Opt(VrOpt::Back), Hue::Violet, false),
         ],
-        top - 1.306,
+        top - 1.398,
+        0.46,
+        0.09,
+    );
+    buttons
+}
+
+/// The keys of the name keyboard, by row (capitals; `Act::Case` switches to small letters).
+const KEY_ROWS: [&str; 4] = ["1234567890", "QWERTYUIOP", "ASDFGHJKL-", "ZXCVBNM_.!"];
+
+/// The keyboard for one's name: the name typed so far over the keys, Space, Delete and the
+/// case switch under them, then Done and Cancel.
+fn build_name(b: &mut Builder, typed: &str, lower: bool) -> Vec<Button> {
+    let size = Vec2::new(1.1, 0.95);
+    b.backing(size, Hue::Cyan);
+    let top = size.y / 2.0;
+    b.title("YOUR NAME", 0.058, top - 0.085);
+    let white = b.mats.white.clone();
+    let line = b.tint(Hue::Cyan).line.clone();
+    let field = Vec2::new(0.0, top - 0.21);
+    b.outline(field, Vec2::new(0.8, 0.08), 0.003, &line);
+    let shown = format!("{typed}_");
+    let h = 0.032f32.min(0.74 / vfont::width(&shown, 1.0, TEXT).max(0.01));
+    b.text(&shown, h, field, Align::Center, &white, None);
+    let mut buttons = Vec::new();
+    let (pitch, key) = (0.1, Vec2::new(0.088, 0.08));
+    for (r, row) in KEY_ROWS.iter().enumerate() {
+        let y = top - 0.33 - r as f32 * 0.093;
+        let x0 = -(row.len() as f32 - 1.0) * pitch / 2.0;
+        for (k, c) in row.chars().enumerate() {
+            let c = if lower { c.to_ascii_lowercase() } else { c };
+            buttons.push(b.button(
+                &c.to_string(),
+                Act::Type(c),
+                Vec2::new(x0 + k as f32 * pitch, y),
+                key,
+                Hue::Cyan,
+                false,
+            ));
+        }
+    }
+    button_row(
+        b,
+        &mut buttons,
+        vec![
+            (
+                (if lower { "ABC" } else { "abc" }).into(),
+                Act::Case,
+                Hue::Violet,
+                false,
+            ),
+            ("SPACE".into(), Act::Type(' '), Hue::Cyan, false),
+            ("DELETE".into(), Act::Delete, Hue::Amber, false),
+        ],
+        top - 0.33 - 4.0 * 0.093,
+        0.3,
+        0.08,
+    );
+    button_row(
+        b,
+        &mut buttons,
+        vec![
+            ("DONE".into(), Act::NameDone, Hue::Green, false),
+            ("CANCEL".into(), Act::NameCancel, Hue::Violet, false),
+        ],
+        -top + 0.09,
         0.46,
         0.09,
     );
@@ -1796,6 +1900,7 @@ fn panels(
     session: Res<Session>,
     mats: Res<UiMats>,
     settings: Res<crate::settings::Settings>,
+    args: Res<crate::Args>,
     no_vignette: Option<Res<crate::vr::NoVignette>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut transforms: Query<&mut Transform>,
@@ -1803,16 +1908,18 @@ fn panels(
     if !ui.started {
         ui.started = true;
         let v = std::env::var("LT_VR_MENU").unwrap_or_default();
-        ui.menu = v == "1" || v == "options" || v == "controls";
-        ui.options = v == "options" || v == "controls";
+        ui.menu = v == "1" || v == "options" || v == "controls" || v == "name";
+        ui.options = v == "options" || v == "controls" || v == "name";
         ui.controls = v == "controls";
+        if v == "name" {
+            ui.name = Some(args.name.clone());
+        }
     }
     if vr.menu_requests > 0 {
         vr.menu_requests = 0;
         // (The menu button closes the options too.)
         if ui.options {
             ui.options = false;
-            ui.controls = false;
         } else {
             ui.menu = !ui.menu;
         }
@@ -1824,8 +1931,10 @@ fn panels(
     }
     if !ui.options {
         ui.controls = false;
+        ui.name = None;
     }
     let want = match game.as_deref() {
+        _ if ui.name.is_some() => Some(Kind::Name(ui.lower)),
         _ if ui.controls => Some(Kind::Controls),
         _ if ui.options => Some(Kind::Options),
         _ if lobby => Some(Kind::Lobby),
@@ -1864,6 +1973,7 @@ fn panels(
             && (p.shows != Some(lobby_key(&model, ui.list_top))
                 || p.headless && input.head.is_some())
             || matches!(p.kind, Kind::Options | Kind::Controls) && settings.is_changed()
+            || matches!(p.kind, Kind::Name(_)) && p.typed != ui.name
     });
     // In front of the eyes, level, a little below them.
     let in_front = || {
@@ -1903,10 +2013,14 @@ fn panels(
                 (Kind::Menu, Some(g)) => (build_menu(&mut b, g, &settings), Vec3::ZERO),
                 (Kind::End, Some(g)) => build_end(&mut b, g),
                 (Kind::Options, _) => (
-                    build_options(&mut b, &settings, no_vignette.is_none()),
+                    build_options(&mut b, &settings, &args.name, no_vignette.is_none()),
                     Vec3::ZERO,
                 ),
                 (Kind::Controls, _) => (build_controls(&mut b, &settings), Vec3::ZERO),
+                (Kind::Name(lower), _) => (
+                    build_name(&mut b, ui.name.as_deref().unwrap_or(""), lower),
+                    Vec3::ZERO,
+                ),
                 _ => (Vec::new(), Vec3::ZERO),
             };
             ui.panel = Some(Panel {
@@ -1917,6 +2031,7 @@ fn panels(
                 countdown: None,
                 countdown_at,
                 shows: (kind == Kind::Lobby).then(|| lobby_key(&model, ui.list_top)),
+                typed: ui.name.clone(),
                 headless,
             });
         }
@@ -1980,6 +2095,7 @@ fn pointer(
     mut cmds: MessageWriter<SessionCmd>,
     mut model: ResMut<MenuModel>,
     mut settings: ResMut<crate::settings::Settings>,
+    mut args: ResMut<crate::Args>,
     mut transforms: Query<&mut Transform>,
     mut vis: Query<&mut Visibility>,
     mut laser_mats: Query<&mut MeshMaterial3d<AccentMaterial>>,
@@ -2139,6 +2255,31 @@ fn pointer(
             settings.save();
         }
         Act::Scroll(d) => ui.list_top = (ui.list_top as i32 + d).max(0) as usize,
+        Act::EditName => {
+            ui.name = Some(args.name.clone());
+            ui.lower = false;
+        }
+        Act::Type(c) => {
+            if let Some(n) = ui.name.as_mut()
+                && n.chars().count() < crate::settings::NAME_MAX
+            {
+                n.push(c);
+            }
+        }
+        Act::Delete => {
+            if let Some(n) = ui.name.as_mut() {
+                n.pop();
+            }
+        }
+        Act::Case => ui.lower = !ui.lower,
+        Act::NameDone => {
+            if let Some(n) = ui.name.take()
+                && n.trim() != args.name
+            {
+                args.set_name(&mut settings, Some(&mut model), &n);
+            }
+        }
+        Act::NameCancel => ui.name = None,
         Act::Opt(o) => {
             if matches!(o, VrOpt::Calibrate | VrOpt::ResetHeight) {
                 commands.insert_resource(crate::actors::RefitLegs(true));

@@ -96,7 +96,11 @@ pub struct Args {
     pub mode: Mode,
     pub seed: u64,
     pub bots: usize,
+    /// The player's name: `--name` (the page's `?name=`), else the options' (src/settings.rs),
+    /// else `default_name`. Changed in the options with `set_name`.
     pub name: String,
+    /// `name` came from the command line or the page.
+    pub name_given: bool,
     pub host: Option<u16>,
     /// `--host` on the internet: listed on the master server, the port opened on the router.
     pub public: bool,
@@ -135,7 +139,8 @@ impl Args {
             mode: Mode::Auto,
             seed: rand::random::<u32>() as u64,
             bots: 7,
-            name: std::env::var("USER").unwrap_or_else(|_| "Player".into()),
+            name: Args::default_name(),
+            name_given: false,
             host: None,
             public: false,
             server_name: None,
@@ -155,8 +160,11 @@ impl Args {
             menu: true,
         };
         #[cfg(target_arch = "wasm32")]
-        if let Some(name) = web::param("name") {
+        if let Some(name) = web::param("name").map(|n| settings::clean_name(&n))
+            && !name.is_empty()
+        {
             a.name = name;
+            a.name_given = true;
         }
         let argv: Vec<String> = std::env::args().skip(1).collect();
         let mut i = 0;
@@ -173,7 +181,12 @@ impl Args {
                 "--gl-vr" => a.mode = Mode::GlVr,
                 "--seed" => a.seed = next(&mut i).and_then(|v| v.parse().ok()).unwrap_or(a.seed),
                 "--bots" => a.bots = next(&mut i).and_then(|v| v.parse().ok()).unwrap_or(a.bots),
-                "--name" => a.name = next(&mut i).unwrap_or(a.name),
+                "--name" => {
+                    if let Some(n) = next(&mut i) {
+                        a.name = n;
+                        a.name_given = true;
+                    }
+                }
                 "--host" => {
                     let port = argv.get(i + 1).and_then(|v| v.parse().ok());
                     if port.is_some() {
@@ -243,6 +256,46 @@ impl Args {
         let chosen = ["--seed", "--bots", "--host", "--connect", "--autopilot"];
         a.menu = !argv.iter().any(|v| chosen.contains(&v.as_str()));
         a
+    }
+
+    /// The name without one chosen: the user's login, else "Player".
+    pub fn default_name() -> String {
+        std::env::var("USER")
+            .or_else(|_| std::env::var("USERNAME"))
+            .map(|n| settings::clean_name(&n))
+            .ok()
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| "Player".into())
+    }
+
+    /// The player renamed in the options (`name`: empty for the default): kept in the
+    /// settings, played under from the next game on, and the hosted game's name follows it
+    /// while it is the default one.
+    pub fn set_name(
+        &mut self,
+        settings: &mut settings::Settings,
+        menu: Option<&mut menu::MenuModel>,
+        name: &str,
+    ) {
+        let name = settings::clean_name(name);
+        if name == settings.name && !self.name_given {
+            return;
+        }
+        let before = self.hosted_name();
+        settings.name = name.clone();
+        settings.save();
+        self.name = if name.is_empty() {
+            Args::default_name()
+        } else {
+            name
+        };
+        self.name_given = false;
+        if let Some(m) = menu
+            && self.server_name.is_none()
+            && m.server_name == before
+        {
+            m.server_name = self.hosted_name();
+        }
     }
 
     /// The name a game hosted here goes by.
@@ -338,6 +391,10 @@ pub fn run() {
     #[cfg(windows)]
     win_console::leave_explorer_console();
     let mut args = Args::parse();
+    let settings = settings::Settings::load();
+    if !args.name_given && !settings.name.is_empty() {
+        args.name = settings.name.clone();
+    }
     if args.mode == Mode::Auto {
         args.mode = auto_mode();
         eprintln!("starting in {:?} mode", args.mode);
@@ -432,7 +489,7 @@ pub fn run() {
     })
     .init_resource::<BuiltArena>()
     .insert_resource(args.clone())
-    .insert_resource(settings::Settings::load())
+    .insert_resource(settings)
     .add_systems(Startup, setup)
     .add_systems(
         Update,
