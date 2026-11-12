@@ -123,10 +123,39 @@ pub fn asset_dir() -> PathBuf {
     PathBuf::from("assets")
 }
 
+/// The browser build's compiled-in files (build.rs): the ones read here rather than through
+/// the AssetServer, by their path under assets/.
+#[cfg(target_arch = "wasm32")]
+mod embedded {
+    include!(concat!(env!("OUT_DIR"), "/embedded.rs"));
+}
+
+/// A file under assets/ compiled into the browser build (models/*.glb, music/*.spectrum).
+#[cfg(target_arch = "wasm32")]
+pub fn embedded(rel: &str) -> Option<&'static [u8]> {
+    embedded::FILES
+        .iter()
+        .find(|(name, _)| *name == rel)
+        .map(|(_, bytes)| *bytes)
+}
+
+/// The compiled-in files' paths under assets/.
+#[cfg(target_arch = "wasm32")]
+pub fn embedded_names() -> impl Iterator<Item = &'static str> {
+    embedded::FILES.iter().map(|(name, _)| *name)
+}
+
 pub fn load_glb(rel: &str) -> anyhow::Result<GlbFile> {
-    let path = asset_dir().join(rel);
-    let (doc, buffers, _images) =
-        gltf::import(&path).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+    #[cfg(not(target_arch = "wasm32"))]
+    let (doc, buffers, _images) = {
+        let path = asset_dir().join(rel);
+        gltf::import(&path).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?
+    };
+    #[cfg(target_arch = "wasm32")]
+    let (doc, buffers, _images) = {
+        let bytes = embedded(rel).ok_or_else(|| anyhow::anyhow!("{rel}: not compiled in"))?;
+        gltf::import_slice(bytes).map_err(|e| anyhow::anyhow!("{rel}: {e}"))?
+    };
     let mut out = GlbFile::default();
     for mesh in doc.meshes() {
         let name = mesh.name().unwrap_or("").to_string();

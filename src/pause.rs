@@ -16,7 +16,7 @@ use crate::settings::{Action, Settings};
 #[derive(Component)]
 struct PauseRoot;
 
-#[derive(Component, Clone, Copy)]
+#[derive(Component, Clone, Copy, PartialEq)]
 enum PauseButton {
     Resume,
     Options,
@@ -117,7 +117,11 @@ fn show(
                                     ("OPTIONS", PauseButton::Options, neonui::VIOLET),
                                     ("LEAVE TO MAIN MENU", PauseButton::Leave, neonui::MAGENTA),
                                     ("QUIT GAME", PauseButton::Quit, neonui::PINK),
-                                ] {
+                                ]
+                                .into_iter()
+                                // A browser tab is closed, not quit.
+                                .filter(|(_, b, _)| !(crate::WEB && *b == PauseButton::Quit))
+                                {
                                     neonui::button(
                                         p,
                                         text,

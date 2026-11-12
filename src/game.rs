@@ -8,6 +8,7 @@ use std::sync::Arc;
 use bevy::prelude::*;
 use lt_net::client::{Client, ClientEvent};
 use lt_net::server::Server;
+#[cfg(not(target_arch = "wasm32"))]
 use lt_net::{LanAnnouncer, PortMapper, PortStatus, Reporter};
 use lt_sim::bots::Bots;
 use lt_sim::collide::World;
@@ -37,8 +38,10 @@ pub struct Hosting {
 }
 
 /// Ticks between a hosting game's reports to the LAN and the master server.
+#[cfg(not(target_arch = "wasm32"))]
 const REPORT_TICKS: u64 = 120;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub struct HostNet {
     port: u16,
     lan: LanAnnouncer,
@@ -47,19 +50,39 @@ pub struct HostNet {
     said: String,
 }
 
+/// The browser build hosts nothing (it has no UDP: `Server::listen` fails there).
+#[cfg(target_arch = "wasm32")]
+pub enum HostNet {}
+
+#[cfg(target_arch = "wasm32")]
 impl HostNet {
-    fn new(h: &Hosting, port: u16) -> HostNet {
+    fn new(_: &Hosting, _: u16) -> Option<HostNet> {
+        None
+    }
+
+    fn tick(&mut self, _: &Server, _: &Sim, _: &Bots) {
+        match *self {}
+    }
+
+    pub fn status(&self) -> String {
+        match *self {}
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl HostNet {
+    fn new(h: &Hosting, port: u16) -> Option<HostNet> {
         let internet = h.internet.then(|| {
             let master =
                 std::env::var("LT_MASTER").unwrap_or_else(|_| lt_net::DEFAULT_MASTER.to_string());
             (Reporter::new(&master), PortMapper::open(port))
         });
-        HostNet {
+        Some(HostNet {
             port,
             lan: LanAnnouncer::new(),
             internet,
             said: String::new(),
-        }
+        })
     }
 
     /// Tells the network about the server now and then; logs what happens.
@@ -333,7 +356,7 @@ impl Game {
         let net = host
             .as_ref()
             .zip(server.as_ref())
-            .map(|(h, s)| HostNet::new(h, s.port().unwrap_or(h.port)));
+            .and_then(|(h, s)| HostNet::new(h, s.port().unwrap_or(h.port)));
         let snap = sim.snapshot();
         let names = sim
             .players

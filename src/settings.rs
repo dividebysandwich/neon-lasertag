@@ -4,6 +4,7 @@
 //! Changed in the options screen (src/options.rs) and kept in `settings.ron` in the user's
 //! config directory (`$XDG_CONFIG_HOME/lasertag`, `~/.config/lasertag`, `%APPDATA%\lasertag`).
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
 use bevy::prelude::*;
@@ -704,6 +705,37 @@ impl Settings {
         }
     }
 
+    /// The saved settings' text.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn read_saved() -> Option<String> {
+        Self::path().and_then(|p| std::fs::read_to_string(p).ok())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn write_saved(text: &str) {
+        let Some(path) = Self::path() else { return };
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Err(e) = std::fs::write(&path, text) {
+            warn!("can't save {}: {e}", path.display());
+        }
+    }
+
+    /// The browser build keeps them in the site's localStorage.
+    #[cfg(target_arch = "wasm32")]
+    fn read_saved() -> Option<String> {
+        crate::web::load(STORAGE_KEY)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn write_saved(text: &str) {
+        if let Err(e) = crate::web::store(STORAGE_KEY, text) {
+            warn!("can't save the settings: {e}");
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn path() -> Option<PathBuf> {
         let base = std::env::var_os("XDG_CONFIG_HOME")
             .filter(|v| !v.is_empty())
@@ -720,7 +752,7 @@ impl Settings {
 
     pub fn load() -> Settings {
         let mut s = Settings::default();
-        let Some(text) = Self::path().and_then(|p| std::fs::read_to_string(p).ok()) else {
+        let Some(text) = Self::read_saved() else {
             return s;
         };
         match ron::from_str::<Saved>(&text) {
@@ -774,7 +806,6 @@ impl Settings {
     }
 
     pub fn save(&self) {
-        let Some(path) = Self::path() else { return };
         let saved = Saved {
             sensitivity: self.sensitivity,
             invert_y: self.invert_y,
@@ -814,14 +845,13 @@ impl Settings {
             Ok(t) => t,
             Err(e) => return warn!("settings: {e}"),
         };
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        if let Err(e) = std::fs::write(&path, text) {
-            warn!("can't save {}: {e}", path.display());
-        }
+        Self::write_saved(&text);
     }
 }
+
+/// The browser build's localStorage key for the settings (the native file's text).
+#[cfg(target_arch = "wasm32")]
+const STORAGE_KEY: &str = "lasertag/settings.ron";
 
 /// The file's contents (names rather than key codes, so it reads well and survives updates).
 #[derive(Serialize, Deserialize)]

@@ -169,11 +169,14 @@ fn show(
                         button(r, Opt::ObjectiveMarkers, 204.0, "", Some(OptText::ObjectiveMarkers));
                         r.spawn(Node { width: Val::Px(8.0), ..default() });
                     });
-                    p.spawn(row()).with_children(|r| {
-                        name(r, "Reflections (off: faster)");
-                        button(r, Opt::Reflections, 204.0, "", Some(OptText::Reflections));
-                        r.spawn(Node { width: Val::Px(8.0), ..default() });
-                    });
+                    // WebGL2 has no deferred rendering: no reflections there.
+                    if !crate::WEBGL2 {
+                        p.spawn(row()).with_children(|r| {
+                            name(r, "Reflections (off: faster)");
+                            button(r, Opt::Reflections, 204.0, "", Some(OptText::Reflections));
+                            r.spawn(Node { width: Val::Px(8.0), ..default() });
+                        });
+                    }
                     p.spawn(Node { height: Val::Px(8.0), ..default() });
                     for a in Action::ALL {
                         p.spawn(row()).with_children(|r| {

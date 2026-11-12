@@ -4,7 +4,8 @@
 //! G-buffer), which can't multisample, so SMAA stands in for MSAA while they're on.
 //! Off, everything is drawn forward with MSAA and the surfaces are matte as before.
 //!
-//! VR keeps forward rendering: the headsets' frame budgets have no room for it.
+//! VR keeps forward rendering: the headsets' frame budgets have no room for it, and so does
+//! the browser's WebGL2 build (`crate::WEBGL2`), which has no deferred rendering.
 
 use bevy::anti_alias::taa::TemporalAntiAliasing;
 use bevy::core_pipeline::prepass::{DeferredPrepass, DepthPrepass, MotionVectorPrepass};
@@ -68,7 +69,7 @@ fn apply(
     mut std: ResMut<Assets<StandardMaterial>>,
     mut done: Local<Option<bool>>,
 ) {
-    let on = settings.reflections;
+    let on = settings.reflections && !crate::WEBGL2;
     for (e, has) in &cams {
         if has == on {
             continue;

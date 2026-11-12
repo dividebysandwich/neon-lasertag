@@ -45,6 +45,8 @@ impl Screen {
         match self {
             Screen::Top => None,
             Screen::Botmatch | Screen::Multiplayer => Some(Screen::Top),
+            // The browser build has only the internet's servers (no LAN): straight there.
+            Screen::Internet if crate::WEB => Some(Screen::Top),
             Screen::Internet | Screen::Lan => Some(Screen::Multiplayer),
             Screen::Host { internet: true } => Some(Screen::Internet),
             Screen::Host { internet: false } => Some(Screen::Lan),
@@ -198,18 +200,29 @@ pub struct MenuModel {
     pub address: String,
     pub port: u16,
     master: String,
+    /// The browser build joins through this master server's relay (`?relay=` for another).
+    #[cfg(target_arch = "wasm32")]
+    relay: String,
     slot: ListSlot,
     pub internet: InternetList,
     lan: Option<LanBrowser>,
     pub lan_servers: Vec<LanServer>,
     /// The LAN can't be listened to (the port is taken?).
     pub lan_error: Option<String>,
+    /// Why the last server couldn't be joined (shown over the list).
+    pub join_error: Option<String>,
     /// Counts changes to the lists (to redraw them).
     pub rev: u32,
 }
 
 impl MenuModel {
     pub fn new(args: &Args) -> Self {
+        // The browser build's page may name another (`?master=`).
+        #[cfg(target_arch = "wasm32")]
+        let master = crate::web::param("master");
+        #[cfg(not(target_arch = "wasm32"))]
+        let master = std::env::var("LT_MASTER").ok();
+        let master = master.unwrap_or_else(|| lt_net::DEFAULT_MASTER.to_string());
         MenuModel {
             screen: Screen::Top,
             bots: args.bots,
@@ -222,13 +235,15 @@ impl MenuModel {
             server_name: args.hosted_name(),
             address: String::new(),
             port: args.host.unwrap_or(lt_net::protocol::DEFAULT_PORT),
-            master: std::env::var("LT_MASTER")
-                .unwrap_or_else(|_| lt_net::DEFAULT_MASTER.to_string()),
+            master: master.clone(),
+            #[cfg(target_arch = "wasm32")]
+            relay: crate::web::param("relay").unwrap_or(master),
             slot: ListSlot::default(),
             internet: InternetList::Idle,
             lan: None,
             lan_servers: Vec::new(),
             lan_error: None,
+            join_error: None,
             rev: 0,
         }
     }
@@ -308,6 +323,45 @@ impl MenuModel {
         }
     }
 
+    /// Joins the server at `addr` ("host[:port]").
+    #[cfg(not(target_arch = "wasm32"))]
+    fn join(&mut self, addr: &str) -> Option<Start> {
+        self.join_error = None;
+        Some(Start::Join(addr.to_string()))
+    }
+
+    /// The browser build joins through the master server's relay, so only a server on its
+    /// list (by address, or by name): the [`Start::Join`] is the relay's WebSocket URL to it.
+    #[cfg(target_arch = "wasm32")]
+    fn join(&mut self, addr: &str) -> Option<Start> {
+        let with_port = format!("{addr}:{}", lt_net::protocol::DEFAULT_PORT);
+        let found = match &self.internet {
+            InternetList::Listed(l) => l
+                .iter()
+                .find(|e| {
+                    e.addr == addr
+                        || e.addr == with_port
+                        || e.report.name.eq_ignore_ascii_case(addr)
+                })
+                .map(|e| e.id.clone()),
+            _ => None,
+        };
+        self.rev += 1;
+        match found {
+            Some(id) => {
+                self.join_error = None;
+                Some(Start::Join(lt_net::relay_url(&self.relay, &id)))
+            }
+            None => {
+                self.join_error = Some(format!(
+                    "{addr} is not on the server list: in the browser only listed servers \
+                     can be joined"
+                ));
+                None
+            }
+        }
+    }
+
     pub fn apply(&mut self, act: &MenuAct) -> Outcome {
         let start = match act {
             MenuAct::Go(s) => {
@@ -334,9 +388,10 @@ impl MenuModel {
                     port: self.port,
                 })))
             }
-            MenuAct::Join(addr) => Some(Start::Join(addr.clone())),
+            MenuAct::Join(addr) => self.join(addr),
             MenuAct::JoinTyped if !self.address.trim().is_empty() => {
-                Some(Start::Join(self.address.trim().to_string()))
+                let addr = self.address.trim().to_string();
+                self.join(&addr)
             }
             MenuAct::JoinTyped => None,
             MenuAct::Refresh => {
@@ -870,19 +925,21 @@ fn page(p: &mut ChildSpawnerCommands, model: &MenuModel) {
         Screen::Top => {
             p.spawn(neonui::panel(neonui::MAGENTA, None))
                 .with_children(|p| {
-                    big_buttons(
-                        p,
-                        &[
-                            ("BOTMATCH", MenuAct::Go(Screen::Botmatch), neonui::CYAN),
-                            (
-                                "MULTIPLAYER",
-                                MenuAct::Go(Screen::Multiplayer),
-                                neonui::MAGENTA,
-                            ),
-                            ("OPTIONS", MenuAct::Options, neonui::VIOLET),
-                            ("QUIT", MenuAct::Quit, neonui::PINK),
-                        ],
-                    );
+                    // The browser build: the internet's servers only, and no quitting (the tab
+                    // is closed).
+                    let multiplayer = if crate::WEB {
+                        Screen::Internet
+                    } else {
+                        Screen::Multiplayer
+                    };
+                    let items = [
+                        ("BOTMATCH", MenuAct::Go(Screen::Botmatch), neonui::CYAN),
+                        ("MULTIPLAYER", MenuAct::Go(multiplayer), neonui::MAGENTA),
+                        ("OPTIONS", MenuAct::Options, neonui::VIOLET),
+                        ("QUIT", MenuAct::Quit, neonui::PINK),
+                    ];
+                    let n = if crate::WEB { 3 } else { 4 };
+                    big_buttons(p, &items[..n]);
                 });
             p.spawn(neonui::gap(8.0));
             p.spawn(neonui::text(
@@ -1030,7 +1087,9 @@ fn page(p: &mut ChildSpawnerCommands, model: &MenuModel) {
                         "HOST LAN GAME"
                     };
                     let go = MenuAct::Go(Screen::Host { internet });
-                    bottom_row(p, &[(host, go, neonui::AMBER, 360.0)]);
+                    // A browser can't host (no UDP).
+                    let n = if crate::WEB { 0 } else { 1 };
+                    bottom_row(p, &[(host, go, neonui::AMBER, 360.0)][..n]);
                 });
         }
         Screen::Host { internet } => {
@@ -1270,6 +1329,9 @@ fn show_lists(
             server_row(&mut commands, parent, &s.addr, &s.report, s.joinable());
         }
         return;
+    }
+    if let Some(e) = &model.join_error {
+        say(&mut commands, e.clone(), neonui::PINK);
     }
     match &model.internet {
         InternetList::Idle | InternetList::Asking => {

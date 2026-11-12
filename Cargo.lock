@@ -4019,6 +4019,7 @@ dependencies = [
  "bevy_mod_openxr",
  "bevy_mod_xr",
  "embed-resource",
+ "getrandom 0.3.4",
  "glam",
  "glow 0.18.0",
  "gltf",
@@ -4033,6 +4034,8 @@ dependencies = [
  "ron",
  "serde",
  "ttf-parser",
+ "wasm-bindgen",
+ "web-sys",
  "windows-sys 0.61.2",
 ]
 

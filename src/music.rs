@@ -164,9 +164,11 @@ fn mood_of(name: &str) -> Option<Mood> {
     Mood::ALL.into_iter().find(|m| stem.starts_with(m.prefix()))
 }
 
-fn load(mut commands: Commands) {
+/// The music's file names, and a spectrum file's bytes (by the track's name).
+#[cfg(not(target_arch = "wasm32"))]
+fn music_files() -> (Vec<String>, impl Fn(&str) -> Result<Vec<u8>, String>) {
     let dir = crate::assets::asset_dir().join("music");
-    let mut names: Vec<String> = match std::fs::read_dir(&dir) {
+    let names = match std::fs::read_dir(&dir) {
         Ok(entries) => entries
             .flatten()
             .filter_map(|e| e.file_name().into_string().ok())
@@ -176,21 +178,43 @@ fn load(mut commands: Commands) {
             Vec::new()
         }
     };
+    let read = move |name: &str| {
+        let path = dir.join(name).with_extension("spectrum");
+        std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))
+    };
+    (names, read)
+}
+
+/// The browser build: the tracks are the compiled-in spectra's (the .ogg files are fetched
+/// with the page's assets).
+#[cfg(target_arch = "wasm32")]
+fn music_files() -> (Vec<String>, impl Fn(&str) -> Result<Vec<u8>, String>) {
+    let names = crate::assets::embedded_names()
+        .filter_map(|n| n.strip_prefix("music/")?.strip_suffix(".spectrum"))
+        .map(|stem| format!("{stem}.ogg"))
+        .collect();
+    let read = |name: &str| {
+        let rel = format!("music/{}", name.replace(".ogg", ".spectrum"));
+        crate::assets::embedded(&rel)
+            .map(<[u8]>::to_vec)
+            .ok_or(format!("{rel}: not compiled in"))
+    };
+    (names, read)
+}
+
+fn load(mut commands: Commands) {
+    let (mut names, read) = music_files();
     names.sort();
     let mut tracks = Tracks::default();
     for name in names {
         let Some(mood) = mood_of(&name) else { continue };
-        let path = dir.join(&name).with_extension("spectrum");
-        let data = match std::fs::read(&path) {
+        let data = match read(&name) {
             Ok(b) => SpectrumData::parse(&b).unwrap_or_else(|| {
-                warn!("{}: not a spectrum file", path.display());
+                warn!("{name}: not a spectrum file");
                 SpectrumData::default()
             }),
             Err(e) => {
-                warn!(
-                    "{}: {e}; the spectrum displays stay dark for it",
-                    path.display()
-                );
+                warn!("{e}; the spectrum displays stay dark for it");
                 SpectrumData::default()
             }
         };

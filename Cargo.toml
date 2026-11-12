@@ -33,6 +33,8 @@ dev = ["bevy/dynamic_linking"]
 xr = ["dep:bevy_mod_openxr", "dep:bevy_mod_xr", "dep:openxr"]
 # `--gl-vr`: the headset drawn by our own OpenGL renderer (src/glvr), foveated on the Steam Frame.
 glvr = ["xr", "dep:glow", "dep:khronos-egl", "dep:libloading"]
+# The browser build on WebGPU (docs/web.md); without it a wasm32 build draws with WebGL2.
+webgpu = ["bevy/webgpu"]
 
 [dependencies]
 bevy = { version = "0.19.1", features = ["trace", "bluenoise_texture"] }
@@ -58,6 +60,13 @@ lyon_tessellation = "1.0.23"
 # Closes the console window of a game started from Explorer (src/win_console.rs).
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
 
+# The browser build (docs/web.md): page parameters, localStorage for the settings, and the
+# browser's crypto for rand (with the cfg flag in .cargo/config.toml).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["Window", "Location", "Storage", "UrlSearchParams"] }
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
 [build-dependencies]
 # Links the icon, manifest and version (packaging/windows) into neon-lasertag.exe.
 embed-resource = "3"
@@ -72,3 +81,9 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+# The browser build (Trunk, web/index.html). Smaller and slower to build with
+# opt-level = "s", lto = "fat" and codegen-units = 1.
+[profile.wasm-release]
+inherits = "release"
+strip = true

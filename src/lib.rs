@@ -57,6 +57,8 @@ pub mod turretbox;
 pub mod vfont;
 pub mod vr;
 pub mod vrui;
+#[cfg(target_arch = "wasm32")]
+pub mod web;
 #[cfg(windows)]
 mod win_console;
 #[cfg(feature = "xr")]
@@ -73,6 +75,12 @@ use lt_sim::level::Level;
 use crate::arena::{ArenaPart, Kit};
 use crate::game::Game;
 use crate::materials::Palette;
+
+/// The browser build (docs/web.md): no VR, no hosting, joining through the master server's relay.
+pub const WEB: bool = cfg!(target_arch = "wasm32");
+/// The browser build without WebGPU draws with WebGL2: no screen-space reflections there
+/// (they need the deferred prepass), src/reflections.rs.
+pub const WEBGL2: bool = cfg!(all(target_arch = "wasm32", not(feature = "webgpu")));
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -146,6 +154,10 @@ impl Args {
             quit_after: None,
             menu: true,
         };
+        #[cfg(target_arch = "wasm32")]
+        if let Some(name) = web::param("name") {
+            a.name = name;
+        }
         let argv: Vec<String> = std::env::args().skip(1).collect();
         let mut i = 0;
         let next = |i: &mut usize| -> Option<String> {
@@ -331,7 +343,12 @@ pub fn run() {
         eprintln!("starting in {:?} mode", args.mode);
     }
     let mut app = App::new();
-    let asset_root = assets::asset_dir().to_string_lossy().to_string();
+    // In the browser the assets are beside the page (web/index.html copies them there).
+    let asset_root = if WEB {
+        "assets".to_string()
+    } else {
+        assets::asset_dir().to_string_lossy().to_string()
+    };
     let vr = match args.mode {
         #[cfg(feature = "xr")]
         Mode::Vr => xr::add_plugins(&mut app, &asset_root),
@@ -350,12 +367,25 @@ pub fn run() {
                     .set(WindowPlugin {
                         primary_window: Some(Window {
                             title: "Neon Lasertag".into(),
+                            // The browser build draws into the page's canvas (web/index.html),
+                            // as big as the page, and keeps the browser's keys (F5, Tab, ...)
+                            // for the game.
+                            canvas: WEB.then(|| "#lasertag".into()),
+                            fit_canvas_to_parent: true,
+                            prevent_default_event_handling: true,
                             ..default()
                         }),
                         ..default()
                     })
                     .set(AssetPlugin {
                         file_path: asset_root,
+                        // In the browser each asset is fetched: no .meta files to ask for
+                        // (a 404 each).
+                        meta_check: if WEB {
+                            bevy::asset::AssetMetaCheck::Never
+                        } else {
+                            default()
+                        },
                         ..default()
                     }),
             );
@@ -499,7 +529,8 @@ fn start_game(
     };
     *games += 1;
     match start.clone() {
-        menu::Start::Join(addr) => match Client::connect(&addr, &args.name) {
+        // In the browser `addr` is the relay's WebSocket URL to the server (src/menu.rs).
+        menu::Start::Join(addr) => match join(&addr, &args.name) {
             Ok(c) => {
                 info!("connecting to {addr}");
                 commands.insert_resource(Connecting(Some(c)));
@@ -562,10 +593,20 @@ fn start_game(
     }
 }
 
+/// Starts connecting to a server: over UDP, or in the browser through the master server's
+/// relay (`addr` is then its WebSocket URL).
+fn join(addr: &str, name: &str) -> std::io::Result<Client> {
+    #[cfg(target_arch = "wasm32")]
+    return Client::relayed(addr, name);
+    #[cfg(not(target_arch = "wasm32"))]
+    Client::connect(addr, name)
+}
+
 fn connect(
     mut commands: Commands,
     connecting: Option<ResMut<Connecting>>,
     game: Option<ResMut<Game>>,
+    mut menu: Option<ResMut<menu::MenuModel>>,
 ) {
     let Some(mut c) = connecting else { return };
     let Some(client) = c.0.as_mut() else { return };
@@ -581,6 +622,14 @@ fn connect(
             }
             ClientEvent::Disconnected(why) => {
                 error!("couldn't join: {why}");
+                if let Some(m) = menu.as_deref_mut() {
+                    m.join_error = Some(format!("couldn't join: {why}"));
+                    m.rev += 1;
+                    // The browser's players see why on the server list.
+                    if WEB {
+                        m.go(menu::Screen::Internet);
+                    }
+                }
                 commands.remove_resource::<Connecting>();
                 // Back to the start menu (flat screen).
                 commands.remove_resource::<menu::Start>();
