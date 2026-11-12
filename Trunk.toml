@@ -1,0 +1,14 @@
+# The browser build (docs/web.md): `trunk build --release`, `trunk serve --release`.
+[build]
+target = "web/index.html"
+dist = "dist/web"
+
+# Gzipped copies for the server, and the WebGL2 build in gl/ (web/post_build.sh).
+[[hooks]]
+stage = "post_build"
+command = "sh"
+command_arguments = ["web/post_build.sh"]
+
+# The WebGL2 build's page, written by web/post_build.sh.
+[watch]
+ignore = ["web/index.gl.html"]

@@ -1,3 +1,5 @@
 /target
 __pycache__/
 /dist
+# The WebGL2 build's page, written by web/post_build.sh.
+/web/index.gl.html

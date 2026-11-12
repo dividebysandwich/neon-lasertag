@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Neon Lasertag</title>
+  <link rel="icon" href="data:,">
+  <link data-trunk rel="rust" href="../Cargo.toml" data-bin="neon-lasertag"
+        data-cargo-no-default-features data-cargo-features="webgpu" data-cargo-profile="wasm-release"
+        data-wasm-opt="0" data-initializer="loader.js">
+  <!-- What the game fetches through Bevy's AssetServer; the models, the music's spectra and
+       the font are compiled in (build.rs). -->
+  <link data-trunk rel="copy-dir" href="../assets/sounds" data-target-path="assets/sounds">
+  <link data-trunk rel="copy-dir" href="../assets/music" data-target-path="assets/music">
+  <link data-trunk rel="copy-dir" href="../assets/shaders" data-target-path="assets/shaders">
+  <!-- window.LT_WASM_GZ, the download's gzipped size, written when the page is built (Trunk.toml). -->
+  <script src="version.js"></script>
+  <style>
+    html, body { margin: 0; height: 100%; height: 100dvh; background: #020208; color: #3ef;
+                 overflow: hidden; font: 16px/1.5 monospace; }
+    #lasertag { display: block; width: 100%; height: 100%; outline: none; touch-action: none; }
+    #status { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center;
+              justify-content: center; text-align: center; padding: 16px; box-sizing: border-box;
+              background: radial-gradient(ellipse at center, #10082a 0%, #020208 70%); }
+    #status.hidden { display: none; }
+    #status h1 { font-size: 40px; letter-spacing: 8px; margin: 0 0 32px; color: #f3c;
+                 text-shadow: 0 0 8px #f3c, 0 0 24px #f3c; }
+    #status h1 span { color: #3ef; text-shadow: 0 0 8px #3ef, 0 0 24px #3ef; }
+    #msg { margin-bottom: 16px; color: #f68; }
+    #progress { width: min(420px, 100%); }
+    #progress .row { display: flex; justify-content: space-between; font-size: 14px; }
+    #phase { letter-spacing: 2px; }
+    #bar { height: 14px; margin: 6px 0; border: 1px solid #3ef; background: #061018;
+           padding: 2px; position: relative; overflow: hidden; box-shadow: 0 0 8px #3ef6; }
+    #fill { height: 100%; width: 0; transition: width 0.2s; background: #3ef;
+            box-shadow: 0 0 8px #3ef; }
+    #bar.busy #fill { animation: pulse 1s ease-in-out infinite alternate; }
+    #bar.failed { border-color: #f44; }
+    #bar.failed #fill { background: #f44; }
+    @keyframes pulse { to { opacity: 0.35; } }
+    #bytes { color: #389; font-size: 14px; min-height: 1.5em; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <canvas id="lasertag" tabindex="0"></canvas>
+  <div id="status">
+    <h1>NEON <span>LASERTAG</span></h1>
+    <div id="msg"></div>
+    <div id="progress">
+      <div class="row"><span id="phase">LOADING</span><span id="pct"></span></div>
+      <div id="bar" role="progressbar" aria-label="Download" aria-valuemin="0" aria-valuemax="100">
+        <div id="fill"></div>
+      </div>
+      <div id="bytes"></div>
+    </div>
+  </div>
+  <script>
+    // The WebGPU build, else the WebGL2 build in gl/ (this page, marked data-gl, see
+    // web/post_build.sh; ?gl asks for it), else neither.
+    const status = document.getElementById("status");
+    const unsupported = () => {
+      document.getElementById("msg").innerHTML = "This browser has neither WebGPU nor WebGL2.<br>" +
+        "Use a current Chrome, Edge, Firefox or Safari, with hardware acceleration on.";
+      document.getElementById("progress").hidden = true;
+      throw new Error("no WebGPU or WebGL2");
+    };
+    if (document.documentElement.hasAttribute("data-gl")) {
+      if (!document.createElement("canvas").getContext("webgl2")) unsupported();
+    } else {
+      const gl = () => location.replace("gl/" + location.search);
+      if (!navigator.gpu || new URLSearchParams(location.search).has("gl")) gl();
+      else navigator.gpu.requestAdapter().then(a => a || gl(), gl);
+    }
+    // The game's audio starts before the player has touched the page, so the browser keeps it
+    // suspended: resume it on the first click or key.
+    const contexts = [];
+    const Native = window.AudioContext || window.webkitAudioContext;
+    if (Native) {
+      window.AudioContext = window.webkitAudioContext = class extends Native {
+        constructor(...args) { super(...args); contexts.push(this); }
+      };
+    }
+    const resume = () => contexts.forEach(c => c.state === "suspended" && c.resume());
+    ["pointerdown", "keydown"].forEach(e => window.addEventListener(e, resume, { capture: true }));
+    // The keys and the right mouse button (grenades) belong to the game.
+    const canvas = document.getElementById("lasertag");
+    canvas.addEventListener("contextmenu", e => e.preventDefault());
+    canvas.addEventListener("pointerdown", () => canvas.focus());
+    // Trunk's loader says when the game is running (also after a failure, see web/loader.js).
+    addEventListener("TrunkApplicationStarted", () => {
+      if (!("failed" in status.dataset)) status.classList.add("hidden");
+    });
+  </script>
+</body>
+</html>

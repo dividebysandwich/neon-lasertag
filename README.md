@@ -26,6 +26,8 @@ The start menu offers **Botmatch**, **Multiplayer** (Internet server list or LAN
   `xattr -dr com.apple.quarantine` on the unpacked folder before the first start.
 - **Steam Frame:** copy the aarch64 AppImage to the Frame, `chmod +x` it, start SteamVR and
   run it (from the desktop or as a non-Steam game).
+- **Browser:** `trunk serve --release` builds the browser version (flat screen, botmatches and
+  internet servers joined through the master server's relay); see [docs/web.md](docs/web.md).
 
 ## How to play
 
@@ -294,7 +296,7 @@ CI (`.github/workflows/build.yml`) builds, tests and packages every push and pul
 Linux x86_64/aarch64 tarballs and AppImages, a Windows zip and MSI, a macOS Apple silicon zip,
 and the dedicated server (`lt-server`) and master server (`lt-master`) for Linux. `/build` in a
 pull request comment replies with download links; pushing a `v*` tag publishes a GitHub
-release.
+release. The `web` job builds the browser version (`docs/web.md`) into a zip to serve.
 
 The packaging scripts also run locally on Linux:
 
