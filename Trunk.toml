@@ -2,6 +2,8 @@
 [build]
 target = "web/index.html"
 dist = "dist/web"
+# Relative URLs: the folder works wherever it is served, under a path too (GitHub Pages).
+public_url = "./"
 
 # Gzipped copies for the server, and the WebGL2 build in gl/ (web/post_build.sh).
 [[hooks]]

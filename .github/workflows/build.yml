@@ -183,6 +183,8 @@ jobs:
   web:
     name: wasm32 (browser)
     runs-on: ubuntu-24.04
+    outputs:
+      name: ${{ steps.package.outputs.name }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -210,6 +212,39 @@ jobs:
           name: ${{ steps.package.outputs.name }}
           path: dist/${{ steps.package.outputs.name }}.zip
           if-no-files-found: error
+
+  # The browser build on GitHub Pages (docs/web.md): each release, or a manual run of this
+  # workflow (Actions > Build > Run workflow). Releases only, as the page joins the servers
+  # players run, which are releases too.
+  pages:
+    name: GitHub Pages
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    needs: web
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.web.outputs.name }}
+          path: dist
+      # Pages compresses by itself and wouldn't send the .gz copies as such: left out.
+      - name: Unpack
+        run: |
+          unzip -q "dist/${{ needs.web.outputs.name }}.zip" -d dist
+          find "dist/${{ needs.web.outputs.name }}" -name '*.gz' -delete
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/${{ needs.web.outputs.name }}
+      - id: deploy
+        uses: actions/deploy-pages@v4
 
   release:
     name: Release

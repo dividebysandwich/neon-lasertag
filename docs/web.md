@@ -16,13 +16,21 @@ trunk build --release        # dist/web: serve the folder as it is
 `dist/web` and the WebGL2 one in `dist/web/gl` (see below). The `wasm-release` profile in
 `Cargo.toml` builds quickly. Its comment lists the settings for a smaller download, which take
 longer to build. Any static web server works, as long as it serves `.wasm` as
-`application/wasm`. CI builds the folder in the `web` job of `.github/workflows/build.yml` and
-uploads it as one zip (`lasertag-<ref>-web.zip`). Nothing is deployed automatically.
+`application/wasm`. Its URLs are relative (`public_url` in `Trunk.toml`), so it can be served
+under a path too. CI builds the folder in the `web` job of `.github/workflows/build.yml` and
+uploads it as one zip (`lasertag-<ref>-web.zip`).
 
 The build also writes gzipped copies (`*.wasm.gz`, `*.js.gz`, from `web/post_build.sh`). With
 nginx, `gzip_static on;` sends them to browsers that accept gzip, without compressing the wasm
 on every request. The hashed wasm and script names can be cached forever. `index.html` should
 not be.
+
+**GitHub Pages.** The `pages` job of the same workflow puts the folder (without the `.gz`
+copies: Pages compresses by itself) on <https://dividebysandwich.github.io/neon-lasertag/>: for
+each release tag (`v*`), and on a manual run of the workflow (Actions > Build > Run workflow,
+or `gh workflow run build.yml --ref main`). Releases only, since the page joins the servers
+players run. The repository's Pages source is "GitHub Actions" (Settings > Pages), and the
+`github-pages` environment allows the `main` branch and `v*` tags to deploy.
 
 **Browser.** The game runs on WebGPU: a current Chrome or Edge, Firefox 141 or later, or Safari
 26, with hardware acceleration on. Without WebGPU, or without a WebGPU adapter, the page goes on
