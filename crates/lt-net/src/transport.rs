@@ -17,7 +17,8 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::ErrorKind;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 /// Bytes of payload in one packet (stays under common path MTUs).
 const MTU: usize = 1200;
@@ -306,6 +307,14 @@ impl Endpoint {
         let socket = UdpSocket::bind(bind)?;
         socket.set_nonblocking(true)?;
         Ok(Self::client_over(Box::new(socket), target))
+    }
+
+    /// A client connecting through the master server's relay at `url` (a WebSocket URL,
+    /// [`crate::master::relay_url`]): the browser build's way to a game server.
+    #[cfg(target_arch = "wasm32")]
+    pub fn relay(url: &str) -> std::io::Result<Self> {
+        let ws = crate::websocket::WsDatagrams::open(url)?;
+        Ok(Self::client_over(Box::new(ws), crate::websocket::PEER))
     }
 
     /// A client connecting to `target` through any [`Datagrams`].

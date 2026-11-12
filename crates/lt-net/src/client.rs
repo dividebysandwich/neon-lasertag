@@ -1,7 +1,7 @@
 //! The client side: a connection to a server, sending this player's commands and receiving
 //! the world.
 
-use std::time::Instant;
+use web_time::Instant;
 
 use lt_sim::shot::HitClaim;
 use lt_sim::sim::Snapshot;
@@ -45,14 +45,26 @@ impl Client {
         } else {
             format!("{addr}:{}", crate::protocol::DEFAULT_PORT)
         };
-        Ok(Client {
-            endpoint: Endpoint::client(&addr)?,
+        Ok(Client::over(Endpoint::client(&addr)?, name))
+    }
+
+    /// Starts connecting through the master server's relay at `url` (a WebSocket URL,
+    /// [`crate::master::relay_url`]): the browser build's way to a game server.
+    #[cfg(target_arch = "wasm32")]
+    pub fn relayed(url: &str, name: &str) -> std::io::Result<Client> {
+        Ok(Client::over(Endpoint::relay(url)?, name))
+    }
+
+    /// Starts connecting over an endpoint made elsewhere ([`Endpoint::client_over`]).
+    pub fn over(endpoint: Endpoint, name: &str) -> Client {
+        Client {
+            endpoint,
             name: name.to_string(),
             seq: 0,
             recent: Vec::new(),
             last_tick: 0,
             connected: false,
-        })
+        }
     }
 
     pub fn rtt(&self) -> f32 {

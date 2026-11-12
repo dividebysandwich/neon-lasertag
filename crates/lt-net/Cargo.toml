@@ -12,11 +12,25 @@ lz4_flex = "0.11"
 serde.workspace = true
 anyhow.workspace = true
 rand.workspace = true
+# std's Instant on native; the browser's clock in the browser build (std's panics there).
+web-time = "1"
+
+# Sockets, the master server's HTTP and the router's port mapping: not in the browser build.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 socket2 = { version = "0.6", features = ["all"] }
 if-addrs = "0.13"
 ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
 igd-next = "0.18.0"
 natpmp = { version = "0.5.0", default-features = false }
+
+# The browser build: a WebSocket to the master server's relay, and fetch for the list.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["BinaryType", "CloseEvent", "MessageEvent", "Response", "WebSocket", "Window"] }
+serde_json.workspace = true
+getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [dev-dependencies]
 igd-next = "0.18.0"
@@ -24,3 +38,6 @@ glam.workspace = true
 # The reporter test: a real master server on an ephemeral port.
 lt-master = { path = "../lt-master" }
 tiny_http = "0.12.0"
+# The relay test: a game server reached through the master server's relay.
+tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+serde_json.workspace = true

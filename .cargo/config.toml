@@ -3,3 +3,9 @@
 # `cargo metaserver` builds it, `cargo metaserver-run` runs it.
 metaserver = "build --release -p lt-master"
 metaserver-run = "run --release -p lt-master"
+
+# The browser build (docs/web.md): getrandom 0.3 takes the browser's crypto only when asked
+# both by this flag and by its `wasm_js` feature (in the crates' wasm32 dependencies).
+[target.wasm32-unknown-unknown]
+runner = "wasm-server-runner"
+rustflags = ["--cfg", 'getrandom_backend="wasm_js"']

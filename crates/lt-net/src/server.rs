@@ -3,7 +3,7 @@
 //! back when the player goes.
 
 use std::collections::{HashMap, VecDeque};
-use std::time::Instant;
+use web_time::Instant;
 
 use lt_sim::bots::Bots;
 use lt_sim::shot::HitClaim;

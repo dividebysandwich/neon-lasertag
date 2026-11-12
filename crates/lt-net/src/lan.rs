@@ -13,7 +13,8 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use lt_master_proto::ServerReport;
 use serde::{Deserialize, Serialize};
@@ -92,10 +93,12 @@ impl Drop for LanAnnouncer {
 
 /// Where beacons go: the limited broadcast, each interface's broadcast, the loopback.
 fn targets(port: u16) -> Vec<SocketAddr> {
+    #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
     let mut out = vec![
         SocketAddr::from((Ipv4Addr::BROADCAST, port)),
         SocketAddr::from((Ipv4Addr::LOCALHOST, port)),
     ];
+    #[cfg(not(target_arch = "wasm32"))]
     if let Ok(ifs) = if_addrs::get_if_addrs() {
         for i in ifs {
             if let if_addrs::IfAddr::V4(v4) = i.addr
@@ -191,7 +194,16 @@ impl LanBrowser {
         Self::on_port(LAN_PORT)
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn on_port(_port: u16) -> io::Result<Self> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "a browser can't listen for games on the network",
+        ))
+    }
+
     /// Listens on `port` (tests).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn on_port(port: u16) -> io::Result<Self> {
         use socket2::{Domain, Protocol, Socket, Type};
         let s = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
