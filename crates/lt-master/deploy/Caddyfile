@@ -1,7 +1,13 @@
 # Caddy in front of the master server: HTTPS (certificates from Let's Encrypt, renewed by
 # Caddy) to the plain HTTP server on this machine, which believes X-Forwarded-For from it.
 # (Placeholder host name: change to the real one.)
+# The browser relay's WebSockets (/relay/<server id>) go to its own port.
 lt-master.playspoon.com {
-	encode gzip
-	reverse_proxy 127.0.0.1:27500
+	handle /relay/* {
+		reverse_proxy 127.0.0.1:27501
+	}
+	handle {
+		encode gzip
+		reverse_proxy 127.0.0.1:27500
+	}
 }

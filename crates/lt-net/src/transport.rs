@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 /// Bytes of payload in one packet (stays under common path MTUs).
 const MTU: usize = 1200;
 /// Every packet starts so; anything else is ignored.
-pub const MAGIC: [u8; 4] = *b"LTAG";
+pub const MAGIC: [u8; 4] = lt_master_proto::PACKET_MAGIC;
 /// No packet for this long: the connection is gone.
 pub const TIMEOUT: Duration = Duration::from_secs(10);
 /// A packet at least this often (it carries the acks).

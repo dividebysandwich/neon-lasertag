@@ -13,6 +13,20 @@ gets the list as a page. A server not heard of for 90 seconds is gone.
 | `GET /` | The same as a web page. |
 | `GET /health` | `{"ok":true}` |
 
+## The browser relay
+
+Browsers can't send UDP, so the browser build (`docs/web.md`) joins through the master server:
+it opens a WebSocket at `/relay/<id>` (the `id` from the list), and the relay passes each
+binary message on as one UDP datagram to that game server, from a socket of its own, and each
+datagram back as one message. The game server sees an ordinary client at the master server's
+address; game servers need nothing for it.
+
+It relays only to servers on the list (not to ones on this machine or its LAN, unless
+`--relay-internal`), only the game's packets (`LTAG` first), at most 4 relays per client
+address and 512 in all, at most 300 packets a second from each browser, and closes a relay
+after 15 seconds without packets. It listens on a port of its own (`--relay-bind`, default
+`127.0.0.1:27501`, `off` for none); the proxy sends `/relay/*` there (`deploy/Caddyfile`).
+
 The server speaks plain HTTP and keeps the list in memory (it fills again within half a
 minute after a restart). HTTPS comes from a reverse proxy (Caddy, Cloudflare and cloudflared,
 ...); a request from this machine or its LAN is a proxy's, and the client is in its
@@ -36,9 +50,10 @@ sudo systemctl reload caddy
 After an update, `install` the new binary again and `sudo systemctl restart lt-master`.
 `journalctl -u lt-master -f` shows its log.
 
-`lt-master --bind <addr:port> --threads <n>` (default `0.0.0.0:27500`, 4). The service binds
-`127.0.0.1:27500`, so only the proxy reaches it (stealth-master uses 8089; the two can share
-a machine).
+`lt-master --bind <addr:port> --threads <n> --relay-bind <addr:port>|off --relay-internal`
+(default `0.0.0.0:27500`, 4, `127.0.0.1:27501`). The service binds `127.0.0.1:27500` and
+`127.0.0.1:27501`, so only the proxy reaches them (stealth-master uses 8089 and 8090; the two
+can share a machine).
 
 Game servers report to `https://lt-master.playspoon.com` unless told otherwise: the dedicated
 server with `--master <url>` or `--private`.

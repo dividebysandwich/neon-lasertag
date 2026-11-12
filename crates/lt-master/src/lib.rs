@@ -1,12 +1,8 @@
 //! The master server's list and its answers, apart from the HTTP server around them
 //! ([`http`]): [`List::handle`] takes a request and gives the response.
 //!
-//! A relay (for clients that can't reach a game server directly) is not here yet. SM89 had a
-//! WebSocket-to-UDP one (`stealth-mission-89/crates/stealth-master/src/relay.rs`): it looks
-//! the server up with [`List::addr_of`], passes on only packets starting with the transport's
-//! magic (`LTAG` here), and caps relays per client address and their rate. A UDP forwarding
-//! relay would go in a `relay` module of its own, started from `main.rs` beside the HTTP
-//! workers and sharing the same `Arc<Mutex<List>>`.
+//! The browser build's WebSocket-to-UDP relay ([`relay`]) runs beside the HTTP workers on a
+//! port of its own and finds the game servers in the same list ([`List::addr_of`]).
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -19,6 +15,7 @@ use lt_master_proto::{
 
 pub mod http;
 mod page;
+pub mod relay;
 
 /// Seconds a game server waits at least between two reports (more are turned down).
 const MIN_REPORT_GAP: f64 = 5.0;

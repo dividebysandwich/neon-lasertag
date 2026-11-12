@@ -15,6 +15,13 @@ use serde::{Deserialize, Serialize};
 pub const DEFAULT_MASTER: &str = "https://lt-master.playspoon.com";
 /// The master server's default listen address.
 pub const DEFAULT_BIND: &str = "0.0.0.0:27500";
+/// The browser relay's default listen address (`lt-master --relay-bind`): a browser opens
+/// a WebSocket at `/relay/<server id>` there, behind the same HTTPS proxy as the list.
+pub const DEFAULT_RELAY_BIND: &str = "127.0.0.1:27501";
+/// The path a relay WebSocket opens, followed by the server's [`ServerEntry::id`].
+pub const RELAY_PATH: &str = "/relay/";
+/// The game transport's packets start with this (`lt-net`); the relay passes on nothing else.
+pub const PACKET_MAGIC: [u8; 4] = *b"LTAG";
 /// Seconds between a game server's reports, and after which one not heard of is gone.
 pub const REPORT_EVERY: u64 = 30;
 pub const EXPIRE_AFTER: u64 = 90;
